@@ -125,5 +125,6 @@
 <!-- adaptive-agent-development:project:start -->
 ## 项目专属规则
 
-请在这里填写项目硬性约束、文档权威关系、架构不变量和验证阶梯。
+- 本项目所有开发、测试、运行、装包一律在 conda 虚拟环境 `endtoend-parking`（`D:\conda\envs\endtoend-parking`，Python 3.12）中进行，禁止使用本地环境 `C:\Python314`，避免污染本机 Python。
+- 命令统一使用 `D:\conda\envs\endtoend-parking\python.exe`，或先执行 `conda activate endtoend-parking`。
 <!-- adaptive-agent-development:project:end -->

@@ -4,19 +4,23 @@
 
 ## 环境要求
 
-- Python 3.10+（当前验证环境为 Python 3.14 / numpy 2.4.5）
+- 本项目的开发、测试、运行、装包一律使用 conda 虚拟环境 `endtoend-parking`（Python 3.12，位于 `D:\conda\envs\endtoend-parking`），禁止使用本地环境 `C:\Python314`。
 - numpy（当前阶段唯一依赖）
 - 测试使用标准库 `unittest`，无需额外安装
 
 ## 安装
 
 ```bash
+conda activate endtoend-parking
 pip install numpy
 ```
 
 ## 快速开始
 
 ```bash
+# 激活环境（或直接用完整路径 D:\conda\envs\endtoend-parking\python.exe）
+conda activate endtoend-parking
+
 # 运行阶段一闭环演示：仿真环境 → LiDAR → BEV → 简单跟踪控制
 python scripts/run_sim.py
 ```

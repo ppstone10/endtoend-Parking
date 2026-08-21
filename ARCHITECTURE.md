@@ -5,8 +5,8 @@
 | 模块 | 目录 | 职责 |
 |---|---|---|
 | 统一接口 | `interfaces/` | 定义三阶段共用的数据契约：传感器帧、BEV、车辆状态、目标位姿、轨迹、控制指令；坐标统一为车辆中心局部坐标系 |
-| Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像转换为统一 BEV 表示 |
-| Python 仿真 | `sim/` | 二维矿区泊车环境、车辆运动模型、模拟传感器 |
+| Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
+| Python 仿真 | `sim/` | 二维矿区泊车环境、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应） |
 | 端到端网络 | `model/` | MineParkingNet：输入 BEV+目标位姿+运动状态，输出未来 N 个局部轨迹点 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 等生成专家轨迹，用于训练数据 |
@@ -17,9 +17,14 @@
 
 ```
 LiDARFrame/CameraFrame → sensor2bev → BEVTensor
+  LiDARFrame → LiDAR2BEV → [occupancy, height, density]
+  CameraFrame → Camera2BEV → [target]
+  BEVFusion 拼接两路并追加 [vehicle] → 统一 BEVTensor
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
 ```
+
+- Camera→BEV 与模拟相机共用同一套单应几何（`sim/camera_model.py` 与 `sensor2bev/camera_bev.py` 推导一致），保证渲染与反投影互逆。
 
 ## 统一接口（interfaces/）
 

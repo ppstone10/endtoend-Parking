@@ -60,6 +60,22 @@
 - 行为：`ControlCmd` 提供 `to_array` 输出 `(2,)` 数组。
 - 结果：`v` 为线速度，`omega` 为角速度。
 
+### `IFACE-BEV-002`：Camera→BEV 目标区域
+
+- 前置：相机图像（单通道或三通道）、内参、相机位姿（高度、俯仰角）、BEV 分辨率与覆盖范围。
+- 行为：将地面目标反投影到车辆中心局部 BEV，生成 `target` 通道，高于灰度阈值判定为目标区域。
+- 结果：输出单通道 `BEVTensor`，通道名为 `target`。
+- 边界：仅覆盖相机可见区域；ROI 外或反投影出图像范围的位置置 0。
+- 验收：车辆前方泊车位目标区域在 BEV 前向半区产生占据。
+
+### `IFACE-FUSION-001`：LiDAR/Camera BEV 融合
+
+- 前置：两路 BEVTensor 分辨率与 extent 一致。
+- 行为：按通道拼接 LiDAR（occupancy/height/density）与 Camera（target）BEV，并追加 `vehicle` 车辆轮廓通道。
+- 结果：输出多通道 `BEVTensor`，通道顺序为 `occupancy, height, density, target, vehicle`。
+- 异常与恢复：两路 BEV 分辨率或覆盖范围不一致时抛出 `ValueError`。
+- 验收：融合后张量通道数 = LiDAR 通道数 + Camera 通道数 + 1。
+
 ## 数据、接口与迁移（完整档）
 
 - 数据与状态：接口类型为不可变数据容器（dataclass），所有权归创建方；`BEVTensor` 通道语义由 `channels` 自描述。
@@ -76,6 +92,8 @@
 | `IFACE-STATE-001` | 数组往返转换 | `tests/test_interfaces.py::TestVehicleState` | `interfaces/state.py::VehicleState` | unittest 通过 | ✅ |
 | `IFACE-TRAJ-001` | horizon 与形状校验 | `tests/test_interfaces.py::TestTrajectory` | `interfaces/trajectory.py::Trajectory` | unittest 通过 | ✅ |
 | `IFACE-CTRL-001` | to_array 输出 | `tests/test_interfaces.py::TestControlCmd` | `interfaces/control.py::ControlCmd` | unittest 通过 | ✅ |
+| `IFACE-BEV-002` | 目标区域前向半区占据 | `tests/test_fusion.py::TestCamera2BEV` | `sensor2bev/camera_bev.py::Camera2BEV` | unittest 通过 | ✅ |
+| `IFACE-FUSION-001` | 通道顺序与数量、异常校验 | `tests/test_fusion.py::TestBEVFusion` | `sensor2bev/fusion.py::BEVFusion` | unittest 通过 | ✅ |
 
 ## 待人工确认
 
