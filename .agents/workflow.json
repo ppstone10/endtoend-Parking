@@ -1,0 +1,11 @@
+{
+  "name": "adaptive-agent-development",
+  "version": "0.6.0",
+  "skillsDirectory": ".agents/skills",
+  "instructionFile": "AGENTS.md",
+  "worklogDirectory": "docs/worklogs",
+  "traceDirectory": "docs/traces",
+  "specDirectory": "spec",
+  "historyOrder": "ascending",
+  "portableStandard": "Agent Skills"
+}
