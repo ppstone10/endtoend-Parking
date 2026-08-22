@@ -30,6 +30,11 @@ python scripts/run_sim.py
 python -m unittest discover -s tests -v
 ```
 
+```bash
+# 生成小批量训练样本（默认 5 条，可传数量参数）
+python scripts/generate_dataset.py 5
+```
+
 ## 目录结构
 
 ```
@@ -38,8 +43,8 @@ sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
 model/         MineParkingNet 端到端轨迹生成网络（骨架）
 controller/    MPC 轨迹跟踪控制器（骨架）
-planner/       Hybrid A* 等专家轨迹生成（骨架）
-dataset/       训练数据集生成与加载（骨架）
+planner/       Hybrid A* 专家轨迹生成（差分驱动）
+dataset/       训练样本生成（采样位姿对 + 专家轨迹 + 融合 BEV）
 scripts/       运行脚本
 tests/         单元测试
 docs/          任务日志与修改轨迹

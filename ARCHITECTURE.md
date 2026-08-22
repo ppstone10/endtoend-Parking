@@ -9,8 +9,8 @@
 | Python 仿真 | `sim/` | 二维矿区泊车环境、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应） |
 | 端到端网络 | `model/` | MineParkingNet：输入 BEV+目标位姿+运动状态，输出未来 N 个局部轨迹点 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪，输出 `[v_cmd, omega_cmd]` |
-| 专家轨迹 | `planner/` | Hybrid A* 等生成专家轨迹，用于训练数据 |
-| 数据管线 | `dataset/` | 训练数据生成与加载 |
+| 专家轨迹 | `planner/` | Hybrid A* 从起始状态到目标泊车位姿生成差分驱动可行轨迹（运动基元 + 栅格/yaw 离散 + 范围与节点上限约束） |
+| 数据管线 | `dataset/` | 随机采样泊车位姿对，规划专家轨迹并复用传感器→BEV 链路生成训练样本（`SensorBEVPipeline`） |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
 ## 数据流
@@ -20,6 +20,8 @@ LiDARFrame/CameraFrame → sensor2bev → BEVTensor
   LiDARFrame → LiDAR2BEV → [occupancy, height, density]
   CameraFrame → Camera2BEV → [target]
   BEVFusion 拼接两路并追加 [vehicle] → 统一 BEVTensor
+VehicleState + GoalPose → HybridAStarPlanner → Trajectory（专家轨迹）
+DatasetGenerator：采样位姿对 + SensorBEVPipeline(融合BEV) + 专家轨迹 → TrainingSample
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
 ```
