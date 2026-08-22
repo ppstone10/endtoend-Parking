@@ -41,6 +41,11 @@ python scripts/generate_dataset.py 5
 python scripts/train.py --samples 40 --epochs 30
 ```
 
+```bash
+# 闭环泊车演示：网络→MPC→车辆模型
+python scripts/run_closed_loop.py --samples 3 --steps 200
+```
+
 ## 目录结构
 
 ```
@@ -48,7 +53,7 @@ interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹�
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
 model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
-controller/    MPC 轨迹跟踪控制器（骨架）
+controller/    MPC 轨迹跟踪控制器（差分驱动滚动时域优化）
 planner/       Hybrid A* 专家轨迹生成（差分驱动）
 dataset/       训练样本生成（采样位姿对 + 专家轨迹 + 融合 BEV）
 scripts/       运行脚本

@@ -8,7 +8,7 @@
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
 | Python 仿真 | `sim/` | 二维矿区泊车环境、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应） |
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
-| 轨迹控制器 | `controller/` | MPC 轨迹跟踪，输出 `[v_cmd, omega_cmd]` |
+| 轨迹控制器 | `controller/` | MPC 轨迹跟踪：差分驱动模型预测 + 数值梯度下降求解，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 从起始状态到目标泊车位姿生成差分驱动可行轨迹（运动基元 + 栅格/yaw 离散 + 范围与节点上限约束） |
 | 数据管线 | `dataset/` | 随机采样泊车位姿对，规划专家轨迹并复用传感器→BEV 链路生成训练样本（`SensorBEVPipeline`） |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
