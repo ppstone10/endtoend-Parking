@@ -86,7 +86,7 @@ class SimulatedCamera:
     def _fill_polygon(
         self, image: np.ndarray, vertices: list[tuple[float, float]], value: int
     ) -> None:
-        """用扫描线法填充凸多边形。"""
+        """用扫描线法填充凸多边形，交点裁剪到图像范围内。"""
         h, w = image.shape
         ys = [v[1] for v in vertices]
         xs = [v[0] for v in vertices]
@@ -99,8 +99,11 @@ class SimulatedCamera:
                 if (y1 <= row < y2) or (y2 <= row < y1):
                     t = (row - y1) / (y2 - y1)
                     intersections.append(x1 + t * (x2 - x1))
-            if len(intersections) >= 2:
-                intersections.sort()
-                x_start = max(0, int(np.floor(intersections[0])))
-                x_end = min(w - 1, int(np.ceil(intersections[-1])))
-                image[row, x_start : x_end + 1] = value
+            if len(intersections) < 2:
+                continue
+            intersections.sort()
+            x_start = max(0, int(np.floor(intersections[0])))
+            x_end = min(w - 1, int(np.ceil(intersections[-1])))
+            if x_start > x_end:
+                continue
+            image[row, x_start : x_end + 1] = value

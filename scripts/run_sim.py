@@ -18,13 +18,14 @@ from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, Simulate
 
 
 def main() -> None:
+    # 车辆位于原点，泊车位在正前方 5m（相机视野内），侧墙为平行 x 轴的通道墙。
     env = ParkingEnvironment(
         world_size=40.0,
         obstacles=[
-            RectangleObstacle(x_min=-6.0, x_max=-1.0, y_min=-15.0, y_max=15.0),
-            RectangleObstacle(x_min=1.0, x_max=6.0, y_min=-15.0, y_max=15.0),
+            RectangleObstacle(x_min=-15.0, x_max=15.0, y_min=-6.0, y_max=-2.0),
+            RectangleObstacle(x_min=-15.0, x_max=15.0, y_min=2.0, y_max=6.0),
         ],
-        parking_spots=[GoalPose(x=6.0, y=0.0, yaw=0.0)],
+        parking_spots=[GoalPose(x=5.0, y=0.0, yaw=0.0)],
     )
     lidar = SimulatedLiDAR(env, beams=360, max_range=20.0, z=1.0)
     intrinsics = CameraIntrinsics(
@@ -35,7 +36,7 @@ def main() -> None:
     camera2bev = Camera2BEV(resolution=0.2, extent=(10.0, 10.0, 10.0, 10.0))
     fusion = BEVFusion()
 
-    x, y, yaw = 0.0, -8.0, 0.0
+    x, y, yaw = 0.0, 0.0, 0.0
     lidar_frame = lidar.capture(x, y, yaw)
     camera_frame = camera.capture(x, y, yaw)
     lidar_bev = lidar2bev.to_bev(lidar_frame, x, y, yaw)
