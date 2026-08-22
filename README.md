@@ -5,7 +5,7 @@
 ## 环境要求
 
 - 本项目的开发、测试、运行、装包一律使用 conda 虚拟环境 `endtoend-parking`（Python 3.12，位于 `D:\conda\envs\endtoend-parking`），禁止使用本地环境 `C:\Python314`。
-- numpy（当前阶段唯一依赖）
+- numpy、PyTorch（CPU 版即可）
 - 测试使用标准库 `unittest`，无需额外安装
 
 ## 安装
@@ -13,6 +13,7 @@
 ```bash
 conda activate endtoend-parking
 pip install numpy
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## 快速开始
@@ -35,13 +36,18 @@ python -m unittest discover -s tests -v
 python scripts/generate_dataset.py 5
 ```
 
+```bash
+# 生成数据并训练 MineParkingNet（输出 data_training.npz 与 mineparkingnet.pt）
+python scripts/train.py --samples 40 --epochs 30
+```
+
 ## 目录结构
 
 ```
 interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹、控制指令）
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
-model/         MineParkingNet 端到端轨迹生成网络（骨架）
+model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
 controller/    MPC 轨迹跟踪控制器（骨架）
 planner/       Hybrid A* 专家轨迹生成（差分驱动）
 dataset/       训练样本生成（采样位姿对 + 专家轨迹 + 融合 BEV）

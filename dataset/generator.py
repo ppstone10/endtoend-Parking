@@ -3,11 +3,14 @@
 批量生成样本（BEV + 目标位姿 + 状态 → 专家轨迹）。样本坐标约定：
 - BEV 为车辆中心局部系；
 - goal 与 expert_trajectory 为全局坐标（世界系），网络侧按需转换。
+
+落盘格式：单个 .npz 文件，键为各字段数组（见 save）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -72,6 +75,35 @@ class DatasetGenerator:
                 f"仅生成 {len(samples)}/{count} 条样本，尝试 {attempts} 次后仍未凑齐"
             )
         return samples
+
+    def save(self, samples: list[TrainingSample], path: str | Path) -> None:
+        """将样本批量写入 npz 文件（轨迹按最长补零，附 mask）。"""
+        max_horizon = max(s.expert_trajectory.horizon for s in samples)
+        bevs = np.stack([s.bev.data for s in samples]).astype(np.float32)
+        goals = np.array([[s.goal.x, s.goal.y, s.goal.yaw] for s in samples])
+        states = np.array([s.state.to_array() for s in samples])
+        trajs = np.zeros((len(samples), max_horizon, 3), dtype=np.float32)
+        masks = np.zeros((len(samples), max_horizon), dtype=np.float32)
+        for i, s in enumerate(samples):
+            n = s.expert_trajectory.horizon
+            trajs[i, :n] = s.expert_trajectory.points
+            masks[i, :n] = 1.0
+        dt = samples[0].expert_trajectory.dt
+        np.savez_compressed(
+            path,
+            bevs=bevs,
+            goals=goals,
+            states=states,
+            trajs=trajs,
+            masks=masks,
+            dt=np.array([dt]),
+        )
+
+    @staticmethod
+    def load(path: str | Path) -> dict[str, np.ndarray]:
+        """从 npz 文件加载样本字段字典。"""
+        with np.load(path) as data:
+            return {key: data[key] for key in data.files}
 
     def _random_pose_pair(self) -> tuple[VehicleState | None, GoalPose | None]:
         """随机采样无碰撞的起始/目标位姿，要求两点间距足够。"""

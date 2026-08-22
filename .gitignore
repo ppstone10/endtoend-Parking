@@ -7,3 +7,5 @@ venv/
 data/
 models/
 runs/
+*.pt
+data_training.npz
