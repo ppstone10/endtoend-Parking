@@ -11,6 +11,8 @@
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：差分驱动模型预测 + 数值梯度下降求解，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 从起始状态到目标泊车位姿生成差分驱动可行轨迹（运动基元 + 栅格/yaw 离散 + 范围与节点上限约束） |
 | 数据管线 | `dataset/` | 随机采样泊车位姿对，规划专家轨迹并复用传感器→BEV 链路生成训练样本（`SensorBEVPipeline`） |
+| 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
+| 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
 ## 数据流
@@ -25,9 +27,12 @@ DatasetGenerator：采样位姿对 + SensorBEVPipeline(融合BEV) + 专家轨迹
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
+ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚动循环
+  → 终止（到达双阈值/碰撞/超时/振荡）→ EpisodeResult（metrics/ 聚合）
 ```
 
 - Camera→BEV 与模拟相机共用同一套单应几何（`sim/camera_model.py` 与 `sensor2bev/camera_bev.py` 推导一致），保证渲染与反投影互逆。
+- MPC 进度锚定轨迹时间轴（单调推进），参考轨迹 dt 与控制周期不一致时按时间插值对齐；求解器为 CEM（纯 numpy）。
 
 ## 统一接口（interfaces/）
 
@@ -44,6 +49,8 @@ Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台�
 - 坐标统一使用车辆中心局部坐标系。
 - `interfaces/` 不依赖任何仿真、网络或硬件实现，反向依赖。
 - `sim/`、`sensor2bev/`、`model/`、`controller/` 只依赖 `interfaces/` 与 `numpy`，模块间不互相耦合。
+- `runtime/` 依赖 `interfaces/`、`metrics/` 与注入的轨迹源/MPC/车辆模型（依赖注入，不直接 import sim/model）；`metrics/` 无内部依赖。
+- 闭环执行统一经 `runtime/ClosedLoopEngine`，轨迹源策略可替换（Expert/Network/后续基线），指标口径唯一。
 - 低速泊车采用差分驱动运动模型，控制量为线速度 v 与角速度 omega。
 - BEV 以车辆为中心生成，语义通道由 `BEVTensor` 的 `channels` 说明。
 

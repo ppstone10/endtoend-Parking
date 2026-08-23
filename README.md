@@ -42,8 +42,11 @@ python scripts/train.py --samples 40 --epochs 30
 ```
 
 ```bash
-# 闭环泊车演示：网络→MPC→车辆模型
-python scripts/run_closed_loop.py --samples 3 --steps 200
+# 闭环泊车演示（滚动闭环引擎）：专家轨迹+MPC 基线（M1 地基，成功率验收）
+python scripts/run_closed_loop.py --source expert --samples 10
+
+# 端到端主线：感知→BEV→网络→MPC 滚动闭环（需先训练模型与数据集）
+python scripts/run_closed_loop.py --source network --data data_closed_loop.npz --samples 5
 ```
 
 ## 目录结构
@@ -53,9 +56,11 @@ interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹�
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
 model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
-controller/    MPC 轨迹跟踪控制器（差分驱动滚动时域优化）
+controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       Hybrid A* 专家轨迹生成（差分驱动）
 dataset/       训练样本生成（采样位姿对 + 专家轨迹 + 融合 BEV）
+runtime/       滚动闭环引擎（轨迹源→MPC→车辆，终止判定与失败分类）
+metrics/       回合指标定义与聚合（成功率/碰撞率/误差等）
 scripts/       运行脚本
 tests/         单元测试
 docs/          任务日志与修改轨迹
