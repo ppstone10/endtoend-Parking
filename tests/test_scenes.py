@@ -76,6 +76,28 @@ class TestSceneSemantics(unittest.TestCase):
         self.assertIn("crusher_slot", kinds)  # 破碎站
         self.assertGreaterEqual(len(bundle.spawn_zones), 2)
 
+    def test_spot_boxes_contain_vehicle(self):
+        """全部场景车位框必须能容纳 6×3 矿卡（长≥6、宽≥3，留余量）。"""
+        for name in ALL_SCENES:
+            with self.subTest(scene=name):
+                bundle = build_scene(name)
+                for s in bundle.spots:
+                    length, width = s.size
+                    self.assertGreaterEqual(
+                        length, 6.0, f"{name}/{s.id} 车位长度 {length} 小于车长 6m"
+                    )
+                    self.assertGreaterEqual(
+                        width, 3.0 + 0.25, f"{name}/{s.id} 车位宽度 {width} 余量不足"
+                    )
+
+    def test_s6_equipment_matches_truck_scale(self):
+        """S6 装载设备为挖掘机/装载机量级：单体不超过矿卡量级太多（≤8m）。"""
+        bundle = build_scene("S6_loading_face")
+        for obs in bundle.env.obstacles:
+            if obs.kind == "equipment":
+                x0, x1, y0, y1 = obs.bbox
+                self.assertLessEqual(max(x1 - x0, y1 - y0), 8.0)
+
 
 class TestParkingSpot(unittest.TestCase):
     def test_occupant_obstacle_bounds(self):

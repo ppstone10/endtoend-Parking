@@ -397,17 +397,21 @@ def s6_loading_face(
     rock_count: int = 3,
     seed: int = 0,
 ) -> SceneBundle:
-    """装载工作面：电铲多边形 + 台阶坡面 + 不规则矿堆；前进对位停稳。"""
+    """装载工作面：挖掘机/装载机多边形 + 台阶坡面 + 不规则矿堆；前进对位停稳。
+
+    装载设备为挖掘机/装载机量级（约 6×3m，与 6×3 矿卡配套），
+    现实参照 20~30t 级液压挖掘机或 ZL-50 装载机。
+    """
     rng = np.random.default_rng(seed)
     obstacles: list[Obstacle] = []
     # 台阶坡面（北侧长墙）。
     obstacles.append(RectangleObstacle(-30.0, 30.0, 10.0, 13.0, kind=KIND_WALL))
-    # 电铲：多边形 footprint（履带底盘近似）。
-    shovel = PolygonObstacle(
-        vertices=[(2.0, 6.0), (8.0, 6.0), (10.0, 9.0), (0.0, 9.0)],
+    # 挖掘机：履带底盘 + 回转平台多边形 footprint（约 6m × 2.8m）。
+    excavator = PolygonObstacle(
+        vertices=[(2.5, 6.0), (7.5, 6.0), (8.0, 7.4), (7.2, 8.8), (2.8, 8.8), (2.0, 7.4)],
         kind=KIND_EQUIPMENT,
     )
-    obstacles.append(shovel)
+    obstacles.append(excavator)
     # 装载位：电铲正前方，车头朝 +y（面向铲）。
     spots = [
         ParkingSpot(
@@ -436,8 +440,8 @@ def s6_loading_face(
         spots=spots,
         spawn_zones=[(-16.0, 14.0, -10.0, -2.0)],
         difficulty_knobs={"rock_count": rock_count},
-        description="装载工作面：电铲多边形 + 随机矿堆，前进对位（±0.5m/±15°）",
-        title_en="Loading face: shovel alignment with random rock piles"
+        description="装载工作面：挖掘机/装载机 + 随机矿堆，前进对位（±0.5m/±15°）",
+        title_en="Loading face: excavator alignment with random rock piles"
     )
 
 
@@ -480,7 +484,7 @@ def s7_fuel_station(
         spots.append(
             ParkingSpot(
                 id=f"F{i}", pose=GoalPose(cx, cy, 0.0),
-                size=(8.0, 3.0), tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+                size=(8.0, 3.5), tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
                 kind="fuel_bay",
                 occupied=(i in (occupied_pattern or [])),
             )
@@ -508,19 +512,23 @@ def s7_fuel_station(
 
 @register_scene("S8_weigh_station")
 def s8_weigh_station(seed: int = 0) -> SceneBundle:
-    """称重站：车道两侧导向墙 + 称重台标线；前进停在台心（±0.2m）。"""
+    """称重站：车道两侧导向墙 + 称重台标线；前进停在台心（±0.2m）。
+
+    称重台沿行驶方向 7m，完整覆盖 6m 车身（停稳时前后轴均在台上）。
+    """
     wall_t = 0.5
     lane_half = 3.0  # 车道半宽（车宽 3m + 余量）
+    pad_x_min, pad_x_max = 2.0, 9.0  # 台心 5.5，两侧各留 0.5m 余量
     obstacles: list[Obstacle] = [
         RectangleObstacle(-25.0, 25.0, lane_half, lane_half + wall_t, kind=KIND_WALL),
         RectangleObstacle(-25.0, 25.0, -lane_half - wall_t, -lane_half, kind=KIND_WALL),
         # 称重台（地面标线：可通行、不挡射线、非碰撞）。
-        RectangleObstacle(4.0, 7.0, -lane_half, lane_half, kind="line", emits_points=False, forbidden=False),
+        RectangleObstacle(pad_x_min, pad_x_max, -lane_half, lane_half, kind="line", emits_points=False, forbidden=False),
     ]
     spots = [
         ParkingSpot(
             id="W0", pose=GoalPose(5.5, 0.0, 0.0),
-            size=(3.0, 6.0), tol_pos=0.2, tol_yaw=np.deg2rad(10.0),
+            size=(7.0, 3.5), tol_pos=0.2, tol_yaw=np.deg2rad(10.0),
             kind="weigh_pad",
         )
     ]
