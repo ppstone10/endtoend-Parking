@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from interfaces import BEVTensor
+from interfaces import BEVConfig, BEVTensor
 
 
 class SensorBEVPipeline:
@@ -29,6 +29,16 @@ class SensorBEVPipeline:
         self.lidar2bev = lidar2bev
         self.camera2bev = camera2bev
         self.bev_fusion = bev_fusion
+        self.bev_config = BEVConfig(
+            resolution=lidar2bev.resolution,
+            extent=lidar2bev.extent,
+        )
+        camera_config = BEVConfig(
+            resolution=camera2bev.resolution,
+            extent=camera2bev.extent,
+        )
+        if camera_config != self.bev_config:
+            raise ValueError("SensorBEVPipeline 要求 LiDAR/Camera 使用同一 BEV 配置")
 
     def capture_bev(self, x: float, y: float, yaw: float) -> BEVTensor:
         """采集一帧融合 BEV。"""

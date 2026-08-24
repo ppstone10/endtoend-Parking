@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from interfaces import (
+    BEVConfig,
     BEVTensor,
     ControlCmd,
     GoalPose,
@@ -25,6 +26,16 @@ class TestLiDARFrame(unittest.TestCase):
 
 
 class TestBEVTensor(unittest.TestCase):
+    def test_default_config_is_40m_at_quarter_meter(self):
+        config = BEVConfig()
+        self.assertEqual(config.resolution, 0.25)
+        self.assertEqual(config.extent, (20.0, 20.0, 20.0, 20.0))
+        self.assertEqual(config.shape, (160, 160))
+
+    def test_config_rejects_fractional_grid_shape(self):
+        with self.assertRaises(ValueError):
+            BEVConfig(resolution=0.3, extent=(20.0, 20.0, 20.0, 20.0))
+
     def test_valid_tensor(self):
         data = np.zeros((3, 100, 100), dtype=np.float32)
         bev = BEVTensor(data=data, resolution=0.2, extent=(10, 10, 10, 10), channels=["a", "b", "c"])
@@ -39,6 +50,23 @@ class TestBEVTensor(unittest.TestCase):
         data = np.zeros((3, 50, 50), dtype=np.float32)
         with self.assertRaises(ValueError):
             BEVTensor(data=data, resolution=0.2, extent=(10, 10, 10, 10), channels=["a", "b", "c"])
+
+    def test_metadata_is_self_describing(self):
+        bev = BEVTensor(
+            data=np.zeros((2, 160, 160), dtype=np.float32),
+            resolution=0.25,
+            extent=(20.0, 20.0, 20.0, 20.0),
+            channels=["occupancy", "target"],
+        )
+        self.assertEqual(
+            bev.to_metadata(),
+            {
+                "resolution": 0.25,
+                "extent": [20.0, 20.0, 20.0, 20.0],
+                "channels": ["occupancy", "target"],
+                "shape": [2, 160, 160],
+            },
+        )
 
 
 class TestVehicleState(unittest.TestCase):

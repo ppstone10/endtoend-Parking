@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from interfaces import CameraIntrinsics, GoalPose
+from interfaces import BEVConfig, CameraIntrinsics, GoalPose
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
 
@@ -111,6 +111,19 @@ class TestBEVFusion(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             self.fusion.fuse(lidar_bev, camera_bev)
+
+    def test_shared_config_drives_both_converters(self):
+        config = BEVConfig()
+        lidar = LiDAR2BEV(config=config)
+        camera = Camera2BEV(config=config)
+        self.assertIs(lidar.config, config)
+        self.assertIs(camera.config, config)
+        self.assertEqual(lidar.resolution, 0.25)
+        self.assertEqual(lidar.extent, (20.0, 20.0, 20.0, 20.0))
+
+    def test_config_cannot_be_mixed_with_legacy_spatial_arguments(self):
+        with self.assertRaises(ValueError):
+            LiDAR2BEV(resolution=0.2, config=BEVConfig())
 
 
 if __name__ == "__main__":

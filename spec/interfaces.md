@@ -76,10 +76,18 @@
 - 异常与恢复：两路 BEV 分辨率或覆盖范围不一致时抛出 `ValueError`。
 - 验收：融合后张量通道数 = LiDAR 通道数 + Camera 通道数 + 1。
 
+### `IFACE-BEV-003`：共享 BEV 空间配置
+
+- 前置：`resolution` 为有限正数，`extent=(front, back, left, right)` 四项均为有限正数，纵横总范围都能被分辨率整除。
+- 行为：`BEVConfig` 作为场景与两路 Sensor2BEV 的共享只读配置；默认值为 40×40m@0.25m，即 160×160 栅格。场景可覆盖物理范围与分辨率，但同一融合管道中的两路配置必须相同。
+- 结果：`shape` 给出确定的 `(H, W)`；`BEVTensor.to_metadata()` 给出 JSON 可序列化的 `resolution`、`extent`、`channels` 与完整 `[C,H,W]` 形状。
+- 异常与恢复：配置非法、调用方同时传入 `config` 与旧式空间参数、或管道两路配置不一致时抛出 `ValueError`；已有显式 `resolution/extent` 构造方式继续有效。
+- 验收：S1–S8 默认 40×40m@0.25m；S9 使用 80×80m@0.5m，两类配置均保持 160×160 栅格。
+
 ## 数据、接口与迁移（完整档）
 
-- 数据与状态：接口类型为不可变数据容器（dataclass），所有权归创建方；`BEVTensor` 通道语义由 `channels` 自描述。
-- 接口与协议：`interfaces/` 暴露 `LiDARFrame`、`CameraFrame`、`CameraIntrinsics`、`BEVTensor`、`VehicleState`、`GoalPose`、`Trajectory`、`ControlCmd`。
+- 数据与状态：`BEVConfig` 为不可变数据容器；其他接口数据由创建方持有，`BEVTensor` 通道语义由 `channels` 自描述。
+- 接口与协议：`interfaces/` 暴露 `LiDARFrame`、`CameraFrame`、`CameraIntrinsics`、`BEVConfig`、`BEVTensor`、`VehicleState`、`GoalPose`、`Trajectory`、`ControlCmd`。
 - 迁移与回退：新增字段应保持向后兼容（dataclass 字段追加默认值）；废弃字段需先废弃后移除并记录。
 - 安全与隐私：本契约不涉及授权或敏感数据；点云/图像为本地仿真数据。
 
@@ -94,6 +102,7 @@
 | `IFACE-CTRL-001` | to_array 输出 | `tests/test_interfaces.py::TestControlCmd` | `interfaces/control.py::ControlCmd` | unittest 通过 | ✅ |
 | `IFACE-BEV-002` | 目标区域前向半区占据 | `tests/test_fusion.py::TestCamera2BEV` | `sensor2bev/camera_bev.py::Camera2BEV` | unittest 通过 | ✅ |
 | `IFACE-FUSION-001` | 通道顺序与数量、异常校验 | `tests/test_fusion.py::TestBEVFusion` | `sensor2bev/fusion.py::BEVFusion` | unittest 通过 | ✅ |
+| `IFACE-BEV-003` | 默认/场景覆盖、配置校验、两路共享与元数据 | `tests/test_interfaces.py::TestBEVTensor`; `tests/test_fusion.py::TestBEVFusion`; `tests/test_scenes.py::TestSceneRegistry` | `interfaces/bev.py::BEVConfig`; `BEVTensor.to_metadata`; `sim/scenes.py::SceneBundle`; `dataset/pipeline.py::SensorBEVPipeline` | 定向 unittest 通过 | ✅ |
 
 ## 待人工确认
 

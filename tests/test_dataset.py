@@ -1,11 +1,13 @@
 """数据集生成测试。"""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from dataset import DatasetGenerator, SensorBEVPipeline
-from interfaces import CameraIntrinsics, GoalPose, VehicleState
+from dataset import DatasetGenerator, SensorBEVPipeline, TrainingSample
+from interfaces import BEVConfig, BEVTensor, CameraIntrinsics, GoalPose, Trajectory, VehicleState
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
@@ -33,7 +35,43 @@ def _build_generator(seed: int = 0) -> DatasetGenerator:
     return DatasetGenerator(env=env, planner=planner, sensor_pipeline=pipeline, seed=seed)
 
 
+def _sample(task_meta: dict | None = None) -> TrainingSample:
+    config = BEVConfig()
+    bev = BEVTensor(
+        data=np.zeros((5, *config.shape), dtype=np.float32),
+        resolution=config.resolution,
+        extent=config.extent,
+        channels=["occupancy", "height", "density", "target", "vehicle"],
+    )
+    return TrainingSample(
+        bev=bev,
+        goal=GoalPose(4.0, 0.0, 0.0),
+        state=VehicleState(0.0, 0.0, 0.0),
+        expert_trajectory=Trajectory(
+            points=np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=np.float32),
+            dt=0.1,
+        ),
+        task_meta=task_meta,
+    )
+
+
 class TestDatasetGenerator(unittest.TestCase):
+    def test_pipeline_rejects_mismatched_spatial_configs(self):
+        env = ParkingEnvironment(world_size=40.0)
+        intrinsics = CameraIntrinsics(
+            fx=400.0, fy=400.0, cx=320.0, cy=240.0, image_width=640, image_height=480
+        )
+        with self.assertRaises(ValueError):
+            SensorBEVPipeline(
+                lidar_sensor=SimulatedLiDAR(env),
+                camera_sensor=SimulatedCamera(env, intrinsics),
+                lidar2bev=LiDAR2BEV(config=BEVConfig()),
+                camera2bev=Camera2BEV(
+                    config=BEVConfig(resolution=0.5, extent=(20.0, 20.0, 20.0, 20.0))
+                ),
+                bev_fusion=BEVFusion(),
+            )
+
     def test_generate_samples(self):
         generator = _build_generator(seed=1)
         samples = generator.generate(count=3)
@@ -56,6 +94,67 @@ class TestDatasetGenerator(unittest.TestCase):
             # 专家轨迹各点自由。
             for px, py in sample.expert_trajectory.points[:, :2]:
                 self.assertTrue(env.is_free(float(px), float(py)))
+
+    def test_schema_v2_roundtrip_exposes_bev_and_task_metadata(self):
+        generator = _build_generator()
+        samples = [_sample({"task_type": "T1_short"}), _sample()]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "dataset.npz"
+            generator.save(samples, path)
+            with np.load(path, allow_pickle=False) as raw:
+                self.assertEqual(raw["bev_meta"].dtype.kind, "U")
+                self.assertEqual(raw["task_meta"].dtype.kind, "U")
+            data = generator.load(path)
+
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["bev_meta"]["resolution"], 0.25)
+        self.assertEqual(data["bev_meta"]["extent"], [20.0, 20.0, 20.0, 20.0])
+        self.assertEqual(data["bev_meta"]["shape"], [5, 160, 160])
+        self.assertEqual(data["task_meta"], [{"task_type": "T1_short"}, {}])
+
+    def test_v1_archive_still_loads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "legacy.npz"
+            np.savez_compressed(path, bevs=np.zeros((1, 5, 4, 4)), dt=np.array([0.1]))
+            data = DatasetGenerator.load(path)
+
+        self.assertEqual(data["schema_version"], 1)
+        self.assertIsNone(data["bev_meta"])
+        self.assertIsNone(data["task_meta"])
+        self.assertEqual(data["bevs"].shape, (1, 5, 4, 4))
+
+    def test_unknown_explicit_schema_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "future.npz"
+            np.savez_compressed(path, schema_version=np.asarray(3, dtype=np.uint16))
+            with self.assertRaises(ValueError):
+                DatasetGenerator.load(path)
+
+    def test_schema_v2_rejects_metadata_not_aligned_with_arrays(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "misaligned.npz"
+            np.savez_compressed(
+                path,
+                schema_version=np.asarray(2, dtype=np.uint16),
+                bevs=np.zeros((2, 5, 4, 4), dtype=np.float32),
+                bev_meta=np.asarray(
+                    '{"channels":["a","b","c","d","e"],"extent":[1,1,1,1],'
+                    '"resolution":0.5,"shape":[5,4,4]}',
+                    dtype=np.str_,
+                ),
+                task_meta=np.asarray(["{}"], dtype=np.str_),
+            )
+            with self.assertRaises(ValueError):
+                DatasetGenerator.load(path)
+
+    def test_mixed_bev_metadata_is_rejected(self):
+        generator = _build_generator()
+        first = _sample()
+        second = _sample()
+        second.bev.channels[-1] = "other"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                generator.save([first, second], Path(temp_dir) / "invalid.npz")
 
 
 if __name__ == "__main__":

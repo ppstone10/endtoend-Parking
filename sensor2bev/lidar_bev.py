@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from interfaces import BEVTensor, LiDARFrame
+from interfaces import BEVConfig, BEVTensor, LiDARFrame
 
 # 标准通道顺序
 CH_OCCUPANCY = "occupancy"
@@ -25,13 +25,23 @@ class LiDAR2BEV:
 
     def __init__(
         self,
-        resolution: float = 0.2,
-        extent: tuple[float, float, float, float] = (10.0, 10.0, 10.0, 10.0),
+        resolution: float | None = None,
+        extent: tuple[float, float, float, float] | None = None,
         ground_z: float = 0.1,
         max_points: int = 10000,
+        *,
+        config: BEVConfig | None = None,
     ) -> None:
-        self.resolution = resolution
-        self.extent = extent
+        if config is not None and (resolution is not None or extent is not None):
+            raise ValueError("config 不能与 resolution/extent 同时传入")
+        if config is None:
+            config = BEVConfig(
+                resolution=0.25 if resolution is None else resolution,
+                extent=(20.0, 20.0, 20.0, 20.0) if extent is None else extent,
+            )
+        self.config = config
+        self.resolution = config.resolution
+        self.extent = config.extent
         self.ground_z = ground_z
         self.max_points = max_points
         self.channels = [CH_OCCUPANCY, CH_HEIGHT, CH_DENSITY]

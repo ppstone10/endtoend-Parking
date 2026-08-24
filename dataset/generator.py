@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -25,6 +27,7 @@ class TrainingSample:
     goal: GoalPose
     state: VehicleState
     expert_trajectory: Trajectory
+    task_meta: dict[str, Any] | None = None
 
 
 class DatasetGenerator:
@@ -77,7 +80,19 @@ class DatasetGenerator:
         return samples
 
     def save(self, samples: list[TrainingSample], path: str | Path) -> None:
-        """将样本批量写入 npz 文件（轨迹按最长补零，附 mask）。"""
+        """按 schema v2 写入 npz（轨迹补零，元数据使用 Unicode JSON）。"""
+        if not samples:
+            raise ValueError("不能保存空数据集")
+        bev_meta = samples[0].bev.to_metadata()
+        if any(sample.bev.to_metadata() != bev_meta for sample in samples[1:]):
+            raise ValueError("同一数据集内所有样本必须使用一致的 BEV 元数据")
+        dt = samples[0].expert_trajectory.dt
+        if any(
+            not np.isclose(sample.expert_trajectory.dt, dt)
+            for sample in samples[1:]
+        ):
+            raise ValueError("同一数据集内所有专家轨迹必须使用一致的 dt")
+
         max_horizon = max(s.expert_trajectory.horizon for s in samples)
         bevs = np.stack([s.bev.data for s in samples]).astype(np.float32)
         goals = np.array([[s.goal.x, s.goal.y, s.goal.yaw] for s in samples])
@@ -88,9 +103,16 @@ class DatasetGenerator:
             n = s.expert_trajectory.horizon
             trajs[i, :n] = s.expert_trajectory.points
             masks[i, :n] = 1.0
-        dt = samples[0].expert_trajectory.dt
+        bev_meta_json = self._encode_metadata(bev_meta, "bev_meta")
+        task_meta_json = np.asarray(
+            [self._encode_metadata(sample.task_meta or {}, "task_meta") for sample in samples],
+            dtype=np.str_,
+        )
         np.savez_compressed(
             path,
+            schema_version=np.asarray(2, dtype=np.uint16),
+            bev_meta=np.asarray(bev_meta_json, dtype=np.str_),
+            task_meta=task_meta_json,
             bevs=bevs,
             goals=goals,
             states=states,
@@ -100,10 +122,52 @@ class DatasetGenerator:
         )
 
     @staticmethod
-    def load(path: str | Path) -> dict[str, np.ndarray]:
-        """从 npz 文件加载样本字段字典。"""
-        with np.load(path) as data:
-            return {key: data[key] for key in data.files}
+    def load(path: str | Path) -> dict[str, Any]:
+        """加载 v1/v2 npz；v2 元数据解码为 Python 对象。"""
+        with np.load(path, allow_pickle=False) as data:
+            loaded = {key: data[key] for key in data.files}
+
+        if "schema_version" not in loaded:
+            loaded["schema_version"] = 1
+            loaded["bev_meta"] = None
+            loaded["task_meta"] = None
+            return loaded
+
+        version = int(np.asarray(loaded.pop("schema_version")).item())
+        if version != 2:
+            raise ValueError(f"不支持的数据集 schema 版本：{version}")
+        try:
+            bev_meta = json.loads(str(np.asarray(loaded["bev_meta"]).item()))
+            task_meta = [json.loads(str(value)) for value in loaded["task_meta"].tolist()]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("schema v2 元数据缺失或 JSON 无效") from exc
+        if not isinstance(bev_meta, dict) or not all(
+            key in bev_meta for key in ("resolution", "extent", "channels", "shape")
+        ):
+            raise ValueError("schema v2 的 bev_meta 字段不完整")
+        if "bevs" not in loaded or list(loaded["bevs"].shape[1:]) != bev_meta["shape"]:
+            raise ValueError("schema v2 的 bev_meta.shape 与 bevs 数组不一致")
+        if len(task_meta) != loaded["bevs"].shape[0] or any(
+            not isinstance(metadata, dict) for metadata in task_meta
+        ):
+            raise ValueError("schema v2 的 task_meta 必须与样本逐项对齐")
+        loaded["schema_version"] = version
+        loaded["bev_meta"] = bev_meta
+        loaded["task_meta"] = task_meta
+        return loaded
+
+    @staticmethod
+    def _encode_metadata(metadata: dict[str, Any], field_name: str) -> str:
+        try:
+            return json.dumps(
+                metadata,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} 必须可 JSON 序列化") from exc
 
     def _random_pose_pair(self) -> tuple[VehicleState | None, GoalPose | None]:
         """随机采样无碰撞的起始/目标位姿，要求两点间距足够。"""

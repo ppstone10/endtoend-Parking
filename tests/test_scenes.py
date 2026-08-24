@@ -17,6 +17,20 @@ ALL_SCENES = [
 
 
 class TestSceneRegistry(unittest.TestCase):
+    def test_scene_bev_configs_keep_common_grid_shape(self):
+        for name in ALL_SCENES[:-1]:
+            with self.subTest(scene=name):
+                self.assertEqual(
+                    build_scene(name).bev_config.extent,
+                    (20.0, 20.0, 20.0, 20.0),
+                )
+        default_scene = build_scene("S1_parking_lot")
+        long_range_scene = build_scene("S9_mine_complex")
+        self.assertEqual(default_scene.bev_config.extent, (20.0, 20.0, 20.0, 20.0))
+        self.assertEqual(long_range_scene.bev_config.extent, (40.0, 40.0, 40.0, 40.0))
+        self.assertEqual(default_scene.bev_config.shape, (160, 160))
+        self.assertEqual(long_range_scene.bev_config.shape, (160, 160))
+
     def test_all_nine_scenes_registered(self):
         for name in ALL_SCENES:
             self.assertIn(name, SCENE_REGISTRY)

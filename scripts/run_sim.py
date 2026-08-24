@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from interfaces import CameraIntrinsics, GoalPose
+from interfaces import BEVConfig, CameraIntrinsics, GoalPose
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
 
@@ -32,8 +32,9 @@ def main() -> None:
         fx=400.0, fy=400.0, cx=320.0, cy=240.0, image_width=640, image_height=480
     )
     camera = SimulatedCamera(env, intrinsics, height=1.5, pitch=np.deg2rad(30.0))
-    lidar2bev = LiDAR2BEV(resolution=0.2, extent=(10.0, 10.0, 10.0, 10.0))
-    camera2bev = Camera2BEV(resolution=0.2, extent=(10.0, 10.0, 10.0, 10.0))
+    bev_config = BEVConfig()
+    lidar2bev = LiDAR2BEV(config=bev_config)
+    camera2bev = Camera2BEV(config=bev_config)
     fusion = BEVFusion()
 
     x, y, yaw = 0.0, 0.0, 0.0

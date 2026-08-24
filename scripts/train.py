@@ -19,7 +19,7 @@ import numpy as np
 import torch
 
 from dataset import DatasetGenerator, SensorBEVPipeline
-from interfaces import CameraIntrinsics
+from interfaces import BEVConfig, CameraIntrinsics
 from model import MineParkingNet, loss_fn
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
@@ -36,15 +36,16 @@ def build_env() -> ParkingEnvironment:
     )
 
 
-def build_pipeline(env) -> SensorBEVPipeline:
+def build_pipeline(env, bev_config: BEVConfig | None = None) -> SensorBEVPipeline:
+    bev_config = bev_config or BEVConfig()
     intrinsics = CameraIntrinsics(
         fx=400.0, fy=400.0, cx=320.0, cy=240.0, image_width=640, image_height=480
     )
     return SensorBEVPipeline(
         lidar_sensor=SimulatedLiDAR(env, beams=360, max_range=20.0),
         camera_sensor=SimulatedCamera(env, intrinsics),
-        lidar2bev=LiDAR2BEV(resolution=0.2, extent=(10.0, 10.0, 10.0, 10.0)),
-        camera2bev=Camera2BEV(resolution=0.2, extent=(10.0, 10.0, 10.0, 10.0)),
+        lidar2bev=LiDAR2BEV(config=bev_config),
+        camera2bev=Camera2BEV(config=bev_config),
         bev_fusion=BEVFusion(),
     )
 

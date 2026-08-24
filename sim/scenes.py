@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from interfaces import GoalPose
+from interfaces import BEVConfig, GoalPose
 from sim.obstacles import (
     KIND_BERM,
     KIND_CLIFF,
@@ -45,6 +45,7 @@ class SceneBundle:
     difficulty_knobs: dict = field(default_factory=dict)
     description: str = ""
     title_en: str = ""
+    bev_config: BEVConfig = field(default_factory=BEVConfig)
 
     def free_spots(self) -> list[ParkingSpot]:
         return [s for s in self.spots if not s.occupied]
@@ -667,5 +668,6 @@ def s9_mine_complex(
         spawn_zones=[(-48.0, -40.0, -26.0, 6.0), (-40.0, 40.0, -26.0, 6.0)],
         difficulty_knobs={"rock_count": rock_count, "occupied": len(occupied_pattern or [])},
         description="综合矿场：道路串联停车场/卸载区/破碎站，路侧岩石，跨区远距任务",
-        title_en="Mine complex: road-linked lot, dump area and crusher"
+        title_en="Mine complex: road-linked lot, dump area and crusher",
+        bev_config=BEVConfig(resolution=0.5, extent=(40.0, 40.0, 40.0, 40.0)),
     )
