@@ -56,10 +56,10 @@
 
 ### `LOOP-GROUND-001`：地基基线（M1 出口判据）
 
-- 前置：专家轨迹源 + CEM-MPC，随机采样无碰撞位姿对（距离 3~12m）。
-- 行为：`scripts/run_closed_loop.py --source expert` 批量执行。
+- 前置：专家轨迹源 + CEM-MPC（collision_margin=0.15），矿卡 6×3m，随机采样无碰撞位姿对（距离 3~12m）。
+- 行为：`experiments/run_experiment.py --config experiments/configs/ground_baseline.json` 批量执行 200 回合。
 - 结果：成功率 ≥ 95%。
-- 验收：2026-08-23 实测 10/10 成功（100%），平均位置误差 0.21m、航向误差 8.1°、跟踪 RMS 0.04m。
+- 验收：2026-08-23 实测 197/200 成功（98.5%），碰撞率 1.5%，位置误差 0.24±0.71m，航向误差 7.7°，跟踪 RMS 0.037m，耗时 183s。
 
 ## 追溯
 
@@ -69,7 +69,7 @@
 | `LOOP-TERM-001` | 双阈值判定 | `tests/test_runtime.py::TestTerminalChecker` | `runtime/termination.py::TerminalChecker` | unittest 通过 | ✅ |
 | `LOOP-FAIL-001` | 失败分类 | `tests/test_runtime.py` 各失败用例 | `runtime/termination.py::classify_oscillation`、`runtime/engine.py` | unittest 通过 | ✅ |
 | `LOOP-SRC-001` | 轨迹源接口 | `tests/test_runtime.py::TestNetworkSourcePlumbing` | `runtime/sources.py` | unittest 通过 | ✅ |
-| `LOOP-GROUND-001` | 专家+MPC ≥95% | `scripts/run_closed_loop.py --source expert` | 引擎全链路 | 10/10 成功 | ✅ |
+| `LOOP-GROUND-001` | 专家+MPC ≥95% | `experiments/run_experiment.py` ground_baseline | 引擎全链路 | 197/200 成功（98.5%） | ✅ |
 
 ## 待人工确认
 

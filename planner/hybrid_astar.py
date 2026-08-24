@@ -62,10 +62,12 @@ class HybridAStarPlanner:
         omega_steps: int = 5,
         search_margin: float = 4.0,
         max_expansions: int = 20000,
+        collision_margin: float = 0.0,
     ) -> None:
         self.env = env
         self.vehicle_length = vehicle_length
         self.vehicle_width = vehicle_width
+        self.collision_margin = collision_margin
         self.xy_resolution = xy_resolution
         self.yaw_resolution = yaw_resolution
         self.motion_resolution = motion_resolution
@@ -185,6 +187,20 @@ class HybridAStarPlanner:
         dist = float(np.hypot(goal.x - node.x, goal.y - node.y))
         return dist / abs(self.plan_v)
 
+    def _splice_valid(self, x: float, y: float, yaw: float, goal: GoalPose) -> bool:
+        """校验位姿到目标的直线拼接段（按 motion_resolution 加密）。"""
+        dist = float(np.hypot(goal.x - x, goal.y - y))
+        n_splice = max(1, int(np.ceil(dist / self.motion_resolution)))
+        dyaw = float(np.arctan2(np.sin(goal.yaw - yaw), np.cos(goal.yaw - yaw)))
+        for k in range(1, n_splice + 1):
+            t = k / n_splice
+            sx = x + t * (goal.x - x)
+            sy = y + t * (goal.y - y)
+            syaw = self._norm_angle(yaw + t * dyaw)
+            if not self._pose_free(sx, sy, syaw):
+                return False
+        return True
+
     def _extract_trajectory(self, goal_node: _Node, goal: GoalPose) -> Trajectory:
         """回溯节点链合并插值点，并拼接目标点。"""
         xs: list[float] = []
@@ -205,6 +221,10 @@ class HybridAStarPlanner:
             ys = [n.y for n in chain]
             yaws = [n.yaw for n in chain]
         else:
+            # 拼接段（节点末位姿 → 精确目标）不经过运动基元的碰撞检查，
+            # 须逐点校验，防止贴墙目标产出带碰撞的拼接线。
+            if not self._splice_valid(xs[-1], ys[-1], yaws[-1], goal):
+                raise RuntimeError("终点拼接段与障碍物冲突，规划失败")
             xs.append(goal.x)
             ys.append(goal.y)
             yaws.append(goal.yaw)
@@ -228,9 +248,13 @@ class HybridAStarPlanner:
         return x_idx, y_idx, yaw_idx
 
     def _pose_free(self, x: float, y: float, yaw: float) -> bool:
-        """判断车辆矩形四角（及中心）是否全部位于自由空间。"""
-        half_l = self.vehicle_length / 2.0
-        half_w = self.vehicle_width / 2.0
+        """判断车辆矩形四角（及中心）是否全部位于自由空间。
+
+        collision_margin > 0 时将矩形各向外膨胀该裕度（C-space 膨胀），
+        使规划出的轨迹与障碍保持至少 margin 的净空，吸收跟踪误差。
+        """
+        half_l = self.vehicle_length / 2.0 + self.collision_margin
+        half_w = self.vehicle_width / 2.0 + self.collision_margin
         cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
         corners = [
             (x + half_l * cos_yaw - half_w * sin_yaw, y + half_l * sin_yaw + half_w * cos_yaw),

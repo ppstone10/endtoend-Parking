@@ -29,8 +29,10 @@
 
 - [x] P1.1 MPC 重写（FR-CTRL-01/02）：CEM 求解器替换数值梯度下降；终态项强惩罚；dt 对齐校验；终点渐进减速。出口：S 形倒车跟踪、扰动恢复单测通过。（2026-08-23 完成：8 项单测通过；另发现并修复进度锚定缺陷——参考窗口从车辆当前位置改为轨迹时间轴单调推进）
 - [x] P1.2 滚动闭环引擎（FR-LOOP-01/02/03）：新建 runtime/（engine/sources/termination/recorder）；NetworkSource/ExpertSource；失败自动分类；inject_obstacle 待 M2 任务层接入。出口：专家+MPC 200 实例 ≥95%。（2026-08-23 完成：10/10 成功 100%，实测平均位置误差 0.21m/航向 8.1°/跟踪 RMS 0.04m；大规模 200 实例验收待 P1.4 车辆参数化后统一跑）
-- [ ] P1.3 指标模块（FR-METRIC-01）：metrics/evaluation.py 八项指标；experiments runner 骨架。（2026-08-23 已完成 EpisodeResult+summarize 核心并接入引擎；runner 骨架待做）
-- [ ] P1.4 可视化骨架 + 车辆参数化提前：matplotlib 安装；viz/world_render、traj_render 初版；sim/vehicle_config.py 统一 6×3m。
+- [x] P1.3 指标模块（FR-METRIC-01）：metrics/evaluation.py 八项指标；experiments runner 骨架。（2026-08-23 完成：EpisodeResult+summarize 接入引擎；experiments/run_experiment.py 配置驱动 runner + ground_baseline 配置与结果落盘）
+- [x] P1.4 可视化骨架 + 车辆参数化提前：matplotlib 安装；viz/world_render、traj_render 初版；sim/vehicle_config.py 统一 6×3m。（2026-08-23 完成：viz/ 统一风格+世界/轨迹渲染+回合总图（PNG+PDF）；VehicleConfig 预设注入规划器/MPC/模型/碰撞；**200 回合地基验收 98.5% ≥ 95%，M1 出口判据达成**）
+
+**M1 里程碑（2026-08-23）达成**：专家轨迹+CEM-MPC 闭环 200 回合成功率 98.5%（位置 0.24±0.71m / 航向 7.7° / 跟踪 RMS 0.037m），全部指标自动统计，配置驱动批量实验与可视化骨架就绪。附带修复：规划器 C-space 膨胀裕度（碰撞率 11%→1.5%）、拼接段加密校验；已知限制（格点可达性空洞）移交 P2.7 Reeds-Shepp。
 
 ## M2 平台与数据（约 1.5~2 周）
 

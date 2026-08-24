@@ -1,0 +1,13 @@
+{
+  "name": "ground_baseline",
+  "description": "M1 地基验收：专家轨迹 + CEM-MPC 闭环，矿卡 6x3m，corridor 场景，200 回合",
+  "vehicle": "mining_truck",
+  "env": { "kind": "corridor" },
+  "planner": { "collision_margin": 0.15 },
+  "episodes": 200,
+  "seed": 7,
+  "replan_every": 1,
+  "max_steps": 600,
+  "terminal": { "tol_pos": 0.3, "tol_yaw_deg": 10.0 },
+  "task": { "distance_range": [3.0, 12.0] }
+}

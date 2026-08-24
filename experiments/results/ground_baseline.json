@@ -1,0 +1,3449 @@
+{
+  "episodes": 200,
+  "success_rate": 0.985,
+  "collision_rate": 0.015,
+  "final_pos_err_mean": 0.23601706774478834,
+  "final_pos_err_std": 0.7134177899973428,
+  "final_yaw_err_mean": 0.13444146198799423,
+  "final_yaw_err_std": 0.08325963153088853,
+  "path_length_mean": 8.85119783607536,
+  "path_length_std": 3.0175251576635693,
+  "parking_time_mean": 15.865500000000003,
+  "parking_time_std": 5.402625264628299,
+  "tracking_rms_mean": 0.036858346656976106,
+  "tracking_rms_std": 0.0065504653810502566,
+  "inference_ms_mean": 0.0,
+  "inference_ms_std": 0.0,
+  "failures": {
+    "collision": 3
+  },
+  "config": {
+    "name": "ground_baseline",
+    "description": "M1 地基验收：专家轨迹 + CEM-MPC 闭环，矿卡 6x3m，corridor 场景，200 回合",
+    "vehicle": "mining_truck",
+    "env": {
+      "kind": "corridor"
+    },
+    "planner": {
+      "collision_margin": 0.15
+    },
+    "episodes": 200,
+    "seed": 7,
+    "replan_every": 1,
+    "max_steps": 600,
+    "terminal": {
+      "tol_pos": 0.3,
+      "tol_yaw_deg": 10.0
+    },
+    "task": {
+      "distance_range": [
+        3.0,
+        12.0
+      ]
+    }
+  },
+  "elapsed_sec": 183.41643619997194,
+  "plan_failures": 43,
+  "per_episode": [
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 123,
+      "final_pos_err": 0.05459014928110022,
+      "final_yaw_err": 0.14658013019272986,
+      "path_length": 6.8855722772906205,
+      "parking_time": 12.3,
+      "tracking_rms": 0.032248773266244306,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 0,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 107,
+      "final_pos_err": 0.10548081548853093,
+      "final_yaw_err": 0.17243541682947267,
+      "path_length": 6.244151430444967,
+      "parking_time": 10.700000000000001,
+      "tracking_rms": 0.04887839560829784,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 1,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 241,
+      "final_pos_err": 0.20137163396189325,
+      "final_yaw_err": 0.13809183196502353,
+      "path_length": 13.566309392485982,
+      "parking_time": 24.1,
+      "tracking_rms": 0.033231432896856365,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 2,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 220,
+      "final_pos_err": 0.18363765354964745,
+      "final_yaw_err": 0.1460492054405347,
+      "path_length": 12.37375841813208,
+      "parking_time": 22.0,
+      "tracking_rms": 0.03431973775350026,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 3,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 187,
+      "final_pos_err": 0.09378766331140526,
+      "final_yaw_err": 0.158641052403836,
+      "path_length": 9.972922182043249,
+      "parking_time": 18.7,
+      "tracking_rms": 0.03975281215837586,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 4,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 158,
+      "final_pos_err": 0.2902233825988334,
+      "final_yaw_err": 0.17191094287430486,
+      "path_length": 9.346767142979722,
+      "parking_time": 15.8,
+      "tracking_rms": 0.0315194928856683,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 5,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 345,
+      "final_pos_err": 0.2582984356274192,
+      "final_yaw_err": 0.16179239159187705,
+      "path_length": 19.694629128654825,
+      "parking_time": 34.5,
+      "tracking_rms": 0.03474951299377974,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 6,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 195,
+      "final_pos_err": 0.27491203494141014,
+      "final_yaw_err": 0.11954953770103095,
+      "path_length": 11.168365949816454,
+      "parking_time": 19.5,
+      "tracking_rms": 0.03982785477130239,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 7,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 220,
+      "final_pos_err": 0.2768686793921469,
+      "final_yaw_err": 0.025720404456062405,
+      "path_length": 12.008832598885622,
+      "parking_time": 22.0,
+      "tracking_rms": 0.04006347946702132,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 8,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 248,
+      "final_pos_err": 0.1108936892789953,
+      "final_yaw_err": 0.1712256466091369,
+      "path_length": 13.62398038321593,
+      "parking_time": 24.8,
+      "tracking_rms": 0.03571107356216339,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 9,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 184,
+      "final_pos_err": 0.07953830140022271,
+      "final_yaw_err": 0.13808503003395178,
+      "path_length": 10.148775312802833,
+      "parking_time": 18.400000000000002,
+      "tracking_rms": 0.03403308601403833,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 10,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 197,
+      "final_pos_err": 0.08526339830919069,
+      "final_yaw_err": 0.17083517172772944,
+      "path_length": 10.929404116917178,
+      "parking_time": 19.700000000000003,
+      "tracking_rms": 0.037977005009350695,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 11,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 170,
+      "final_pos_err": 0.04397649265330024,
+      "final_yaw_err": 0.15173316148028382,
+      "path_length": 9.521203734781906,
+      "parking_time": 17.0,
+      "tracking_rms": 0.034881401292365985,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 12,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 203,
+      "final_pos_err": 0.29299638553788326,
+      "final_yaw_err": 0.1013060612784975,
+      "path_length": 10.904483767960699,
+      "parking_time": 20.3,
+      "tracking_rms": 0.03354688128467311,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 13,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 225,
+      "final_pos_err": 0.2680069766518,
+      "final_yaw_err": 0.1688372114186486,
+      "path_length": 12.586349130505685,
+      "parking_time": 22.5,
+      "tracking_rms": 0.03314924739144752,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 14,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 183,
+      "final_pos_err": 0.09337270116439698,
+      "final_yaw_err": 0.15979552181072768,
+      "path_length": 9.945157790810672,
+      "parking_time": 18.3,
+      "tracking_rms": 0.033516964575541625,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 15,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 107,
+      "final_pos_err": 0.11737930431396208,
+      "final_yaw_err": 0.13470461192282038,
+      "path_length": 6.295318642164218,
+      "parking_time": 10.700000000000001,
+      "tracking_rms": 0.03694925244069302,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 16,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 203,
+      "final_pos_err": 0.06948871165759717,
+      "final_yaw_err": 0.15696384798071983,
+      "path_length": 11.584939027538233,
+      "parking_time": 20.3,
+      "tracking_rms": 0.03247577500451186,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 17,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 108,
+      "final_pos_err": 0.29751458834441485,
+      "final_yaw_err": 0.05372437918397058,
+      "path_length": 6.434820387583223,
+      "parking_time": 10.8,
+      "tracking_rms": 0.0333211914363666,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 18,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 152,
+      "final_pos_err": 0.2698519761399964,
+      "final_yaw_err": 0.07407142345707311,
+      "path_length": 8.298874100896711,
+      "parking_time": 15.200000000000001,
+      "tracking_rms": 0.03319964536641682,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 19,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 163,
+      "final_pos_err": 0.062289179939842704,
+      "final_yaw_err": 0.17383027675873783,
+      "path_length": 9.24288166472717,
+      "parking_time": 16.3,
+      "tracking_rms": 0.03262567615613734,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 20,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 90,
+      "final_pos_err": 0.26831140203652326,
+      "final_yaw_err": 0.06626384054872014,
+      "path_length": 5.04333204882663,
+      "parking_time": 9.0,
+      "tracking_rms": 0.036464193190183354,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 21,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 233,
+      "final_pos_err": 0.020869941961660848,
+      "final_yaw_err": 0.15728453190117841,
+      "path_length": 12.764436794449173,
+      "parking_time": 23.3,
+      "tracking_rms": 0.032031635811557345,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 22,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 80,
+      "final_pos_err": 0.2616187096065372,
+      "final_yaw_err": 0.009328039763230045,
+      "path_length": 4.657151046972998,
+      "parking_time": 8.0,
+      "tracking_rms": 0.03224118525247832,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 23,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 214,
+      "final_pos_err": 0.16594092326616786,
+      "final_yaw_err": 0.10690474802411766,
+      "path_length": 12.185508501572269,
+      "parking_time": 21.400000000000002,
+      "tracking_rms": 0.03624676495262389,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 24,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 135,
+      "final_pos_err": 0.06660805037554131,
+      "final_yaw_err": 0.14858608740257728,
+      "path_length": 7.7108022325365315,
+      "parking_time": 13.5,
+      "tracking_rms": 0.035879591869981436,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 25,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 226,
+      "final_pos_err": 0.2851058633692203,
+      "final_yaw_err": 0.016508070375828243,
+      "path_length": 12.778325531833445,
+      "parking_time": 22.6,
+      "tracking_rms": 0.033798072857355504,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 26,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 140,
+      "final_pos_err": 0.23892725890810748,
+      "final_yaw_err": 0.027175212729450338,
+      "path_length": 7.2797634010446215,
+      "parking_time": 14.0,
+      "tracking_rms": 0.03675381202315031,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 27,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 119,
+      "final_pos_err": 0.10694562756506286,
+      "final_yaw_err": 0.13806273309046738,
+      "path_length": 6.93991758757305,
+      "parking_time": 11.9,
+      "tracking_rms": 0.04252886763350114,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 28,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 73,
+      "final_pos_err": 0.1593734682958667,
+      "final_yaw_err": 0.14045481112512936,
+      "path_length": 4.066413261410751,
+      "parking_time": 7.300000000000001,
+      "tracking_rms": 0.04610963012840676,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 29,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 112,
+      "final_pos_err": 0.2742746822189115,
+      "final_yaw_err": 0.1145074548643241,
+      "path_length": 6.185304185211961,
+      "parking_time": 11.200000000000001,
+      "tracking_rms": 0.04505678121381227,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 30,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 149,
+      "final_pos_err": 0.058559326098898294,
+      "final_yaw_err": 0.16538796386506086,
+      "path_length": 8.67867298292369,
+      "parking_time": 14.9,
+      "tracking_rms": 0.03484480925359702,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 31,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 147,
+      "final_pos_err": 0.21253386310498903,
+      "final_yaw_err": 0.1580997822634394,
+      "path_length": 8.026532970939337,
+      "parking_time": 14.700000000000001,
+      "tracking_rms": 0.03580480823179791,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 32,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 190,
+      "final_pos_err": 0.07456966794108344,
+      "final_yaw_err": 0.1627467479596434,
+      "path_length": 10.914244142157724,
+      "parking_time": 19.0,
+      "tracking_rms": 0.03657708722887735,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 33,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 247,
+      "final_pos_err": 0.1011825963057211,
+      "final_yaw_err": 0.15044916019295076,
+      "path_length": 13.995708117378895,
+      "parking_time": 24.700000000000003,
+      "tracking_rms": 0.035088245302728416,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 34,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 274,
+      "final_pos_err": 0.2785216271521996,
+      "final_yaw_err": 0.02403607349407213,
+      "path_length": 15.403732556728325,
+      "parking_time": 27.400000000000002,
+      "tracking_rms": 0.03403941079555902,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 35,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 92,
+      "final_pos_err": 0.2879863439017825,
+      "final_yaw_err": 0.09853603754631848,
+      "path_length": 5.048369480905438,
+      "parking_time": 9.200000000000001,
+      "tracking_rms": 0.05014853391033042,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 36,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 159,
+      "final_pos_err": 0.25970883066105455,
+      "final_yaw_err": 0.013844141410453514,
+      "path_length": 8.788370778813809,
+      "parking_time": 15.9,
+      "tracking_rms": 0.03323856020003264,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 37,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 187,
+      "final_pos_err": 0.24474713404186754,
+      "final_yaw_err": 0.17144461052843307,
+      "path_length": 10.64883998519019,
+      "parking_time": 18.7,
+      "tracking_rms": 0.042884407525715276,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 38,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 197,
+      "final_pos_err": 0.20703456248600022,
+      "final_yaw_err": 0.16833525836607643,
+      "path_length": 10.7538379461149,
+      "parking_time": 19.700000000000003,
+      "tracking_rms": 0.032842701785936394,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 39,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 170,
+      "final_pos_err": 0.07120902099048781,
+      "final_yaw_err": 0.1517706810004944,
+      "path_length": 9.273244350349659,
+      "parking_time": 17.0,
+      "tracking_rms": 0.03300914698366694,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 40,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 122,
+      "final_pos_err": 0.27542619362963744,
+      "final_yaw_err": 0.05658756277545354,
+      "path_length": 7.116327296195059,
+      "parking_time": 12.200000000000001,
+      "tracking_rms": 0.033387559244281946,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 41,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 80,
+      "final_pos_err": 0.24110539624517507,
+      "final_yaw_err": 0.014857767492053387,
+      "path_length": 4.715963058118685,
+      "parking_time": 8.0,
+      "tracking_rms": 0.038996109952356146,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 42,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 122,
+      "final_pos_err": 0.0843718655701103,
+      "final_yaw_err": 0.12832313045957044,
+      "path_length": 6.866148479213326,
+      "parking_time": 12.200000000000001,
+      "tracking_rms": 0.035651026276949244,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 43,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 187,
+      "final_pos_err": 0.07658886632431816,
+      "final_yaw_err": 0.1570524800536444,
+      "path_length": 10.1014632718772,
+      "parking_time": 18.7,
+      "tracking_rms": 0.03238030993798603,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 44,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 186,
+      "final_pos_err": 0.14414279769873176,
+      "final_yaw_err": 0.16144947563908144,
+      "path_length": 10.164263543209653,
+      "parking_time": 18.6,
+      "tracking_rms": 0.03288213992101447,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 45,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 203,
+      "final_pos_err": 0.2764007037377904,
+      "final_yaw_err": 0.14228395093799737,
+      "path_length": 11.267555328654062,
+      "parking_time": 20.3,
+      "tracking_rms": 0.032528145334919,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 46,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 111,
+      "final_pos_err": 0.11630045885089872,
+      "final_yaw_err": 0.1644586926959797,
+      "path_length": 6.172513349610404,
+      "parking_time": 11.100000000000001,
+      "tracking_rms": 0.037688647511723114,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 47,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 75,
+      "final_pos_err": 0.226633612142275,
+      "final_yaw_err": 0.1275742740770547,
+      "path_length": 4.245426522507618,
+      "parking_time": 7.5,
+      "tracking_rms": 0.036222316668248405,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 48,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 90,
+      "final_pos_err": 0.009283178740256845,
+      "final_yaw_err": 0.15969673938150697,
+      "path_length": 4.825244589984643,
+      "parking_time": 9.0,
+      "tracking_rms": 0.03041345294581221,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 49,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 200,
+      "final_pos_err": 0.09108982756213727,
+      "final_yaw_err": 0.12271871610521712,
+      "path_length": 10.91096274643692,
+      "parking_time": 20.0,
+      "tracking_rms": 0.03559790089097447,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 50,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 138,
+      "final_pos_err": 0.19160399565532737,
+      "final_yaw_err": 0.12148552487447484,
+      "path_length": 7.67009910001252,
+      "parking_time": 13.8,
+      "tracking_rms": 0.03469134001473329,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 51,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 152,
+      "final_pos_err": 0.2826844324622344,
+      "final_yaw_err": 0.057751989055494946,
+      "path_length": 8.351003820274038,
+      "parking_time": 15.200000000000001,
+      "tracking_rms": 0.03403152064954549,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 52,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 217,
+      "final_pos_err": 0.11898188812194349,
+      "final_yaw_err": 0.16341697605848296,
+      "path_length": 12.053171985069064,
+      "parking_time": 21.700000000000003,
+      "tracking_rms": 0.03373324153853773,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 53,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 250,
+      "final_pos_err": 0.08574700071022448,
+      "final_yaw_err": 0.12641412158242504,
+      "path_length": 14.23683273982816,
+      "parking_time": 25.0,
+      "tracking_rms": 0.032643491464368894,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 54,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 77,
+      "final_pos_err": 0.23312664050784998,
+      "final_yaw_err": 0.12115525732577456,
+      "path_length": 4.566344503461967,
+      "parking_time": 7.7,
+      "tracking_rms": 0.032574396651730175,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 55,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 190,
+      "final_pos_err": 0.23001125213396154,
+      "final_yaw_err": 0.1207334545202558,
+      "path_length": 10.735101673524841,
+      "parking_time": 19.0,
+      "tracking_rms": 0.03620072774549569,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 56,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 109,
+      "final_pos_err": 0.02904066067643726,
+      "final_yaw_err": 0.13817655378281238,
+      "path_length": 5.90544032586425,
+      "parking_time": 10.9,
+      "tracking_rms": 0.03556959478290736,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 57,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 88,
+      "final_pos_err": 0.29893303925903086,
+      "final_yaw_err": 0.09378979147623345,
+      "path_length": 4.863807574210504,
+      "parking_time": 8.8,
+      "tracking_rms": 0.03360387755147284,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 58,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 118,
+      "final_pos_err": 0.2783541450606556,
+      "final_yaw_err": 0.15011318194875115,
+      "path_length": 6.83088027163015,
+      "parking_time": 11.8,
+      "tracking_rms": 0.03368445357149744,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 59,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 145,
+      "final_pos_err": 0.12959932258145807,
+      "final_yaw_err": 0.16786849655534677,
+      "path_length": 8.135363421345406,
+      "parking_time": 14.5,
+      "tracking_rms": 0.03325331372008808,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 60,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 233,
+      "final_pos_err": 0.10780188265458279,
+      "final_yaw_err": 0.16133699563801618,
+      "path_length": 12.854671712431267,
+      "parking_time": 23.3,
+      "tracking_rms": 0.035260371389235746,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 61,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 192,
+      "final_pos_err": 0.06998281934954205,
+      "final_yaw_err": 0.17261037947677527,
+      "path_length": 10.897225836579214,
+      "parking_time": 19.200000000000003,
+      "tracking_rms": 0.03509293765963039,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 62,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 223,
+      "final_pos_err": 0.260867475997906,
+      "final_yaw_err": 0.17244614957130677,
+      "path_length": 12.636450903380105,
+      "parking_time": 22.3,
+      "tracking_rms": 0.035860484324902756,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 63,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 101,
+      "final_pos_err": 0.19182353041976652,
+      "final_yaw_err": 0.16806117951189264,
+      "path_length": 5.481388633753612,
+      "parking_time": 10.100000000000001,
+      "tracking_rms": 0.031669988222469074,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 64,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 112,
+      "final_pos_err": 0.2883887607207363,
+      "final_yaw_err": 0.003989387386445632,
+      "path_length": 5.953366655615938,
+      "parking_time": 11.200000000000001,
+      "tracking_rms": 0.03422113991897934,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 65,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 123,
+      "final_pos_err": 0.08872973769744735,
+      "final_yaw_err": 0.17226802731788496,
+      "path_length": 6.498286806344156,
+      "parking_time": 12.3,
+      "tracking_rms": 0.03370007281069739,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 66,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 215,
+      "final_pos_err": 0.06283927887953132,
+      "final_yaw_err": 0.15761621016049696,
+      "path_length": 12.035553717890988,
+      "parking_time": 21.5,
+      "tracking_rms": 0.03391532529387557,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 67,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 101,
+      "final_pos_err": 0.18566267174771964,
+      "final_yaw_err": 0.15169904027826095,
+      "path_length": 5.7441622495566715,
+      "parking_time": 10.100000000000001,
+      "tracking_rms": 0.03253106270620032,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 68,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 130,
+      "final_pos_err": 0.2762291485925314,
+      "final_yaw_err": 0.1617803354321381,
+      "path_length": 7.044064805901443,
+      "parking_time": 13.0,
+      "tracking_rms": 0.031213852997173785,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 69,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 168,
+      "final_pos_err": 0.2972931451155638,
+      "final_yaw_err": 0.06138954429470835,
+      "path_length": 9.3626939494069,
+      "parking_time": 16.8,
+      "tracking_rms": 0.043214114506948814,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 70,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 182,
+      "final_pos_err": 0.19160573584401905,
+      "final_yaw_err": 0.158572139994052,
+      "path_length": 10.407148434735674,
+      "parking_time": 18.2,
+      "tracking_rms": 0.03451959194005493,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 71,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 235,
+      "final_pos_err": 0.28079640146501844,
+      "final_yaw_err": 0.02968848541998781,
+      "path_length": 13.07608913127196,
+      "parking_time": 23.5,
+      "tracking_rms": 0.030728525854658115,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 72,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 173,
+      "final_pos_err": 0.20350764613162003,
+      "final_yaw_err": 0.05706633371855984,
+      "path_length": 9.528231598434715,
+      "parking_time": 17.3,
+      "tracking_rms": 0.0328108237856555,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 73,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 199,
+      "final_pos_err": 0.25787462280548556,
+      "final_yaw_err": 0.01783364625034902,
+      "path_length": 11.173184925963696,
+      "parking_time": 19.900000000000002,
+      "tracking_rms": 0.032496499376148825,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 74,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 58,
+      "final_pos_err": 0.14765200402315481,
+      "final_yaw_err": 0.16582903502141177,
+      "path_length": 3.575836697279749,
+      "parking_time": 5.800000000000001,
+      "tracking_rms": 0.044907012719389856,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 75,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 197,
+      "final_pos_err": 0.189150690568016,
+      "final_yaw_err": 0.1702299422136715,
+      "path_length": 11.211412613903871,
+      "parking_time": 19.700000000000003,
+      "tracking_rms": 0.036326828098591175,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 76,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 130,
+      "final_pos_err": 0.26133539830903046,
+      "final_yaw_err": 0.16093680560962365,
+      "path_length": 7.175562833727531,
+      "parking_time": 13.0,
+      "tracking_rms": 0.03105099932610566,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 77,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 156,
+      "final_pos_err": 0.2372856699604701,
+      "final_yaw_err": 0.1656472641241133,
+      "path_length": 8.809955047999388,
+      "parking_time": 15.600000000000001,
+      "tracking_rms": 0.03441473548499744,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 78,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 123,
+      "final_pos_err": 0.0882758660505948,
+      "final_yaw_err": 0.16704673030276165,
+      "path_length": 7.179657188909364,
+      "parking_time": 12.3,
+      "tracking_rms": 0.030727147756567767,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 79,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 263,
+      "final_pos_err": 0.059973781193409514,
+      "final_yaw_err": 0.14924699151459045,
+      "path_length": 14.383412359972723,
+      "parking_time": 26.3,
+      "tracking_rms": 0.03422022470774042,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 80,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 228,
+      "final_pos_err": 0.08906679123000458,
+      "final_yaw_err": 0.1236390558413847,
+      "path_length": 12.457522000217208,
+      "parking_time": 22.8,
+      "tracking_rms": 0.033342586398472034,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 81,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 115,
+      "final_pos_err": 0.2834705799890443,
+      "final_yaw_err": 0.10926866200696272,
+      "path_length": 6.318718585826955,
+      "parking_time": 11.5,
+      "tracking_rms": 0.03512290202604552,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 82,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 77,
+      "final_pos_err": 0.23822403472682982,
+      "final_yaw_err": 0.17365140794197598,
+      "path_length": 4.120319171674392,
+      "parking_time": 7.7,
+      "tracking_rms": 0.03604409210082986,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 83,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 75,
+      "final_pos_err": 0.06105597388170521,
+      "final_yaw_err": 0.16250477038648015,
+      "path_length": 4.329493806835746,
+      "parking_time": 7.5,
+      "tracking_rms": 0.033190287482172814,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 84,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 217,
+      "final_pos_err": 0.11526346153563068,
+      "final_yaw_err": 0.12974519044856006,
+      "path_length": 11.378091352480808,
+      "parking_time": 21.700000000000003,
+      "tracking_rms": 0.03269364683431216,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 85,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 153,
+      "final_pos_err": 0.05916561856398097,
+      "final_yaw_err": 0.15832699673653242,
+      "path_length": 8.313772148077915,
+      "parking_time": 15.3,
+      "tracking_rms": 0.030227751378450164,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 86,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 135,
+      "final_pos_err": 0.04353368663061481,
+      "final_yaw_err": 0.15256839228610541,
+      "path_length": 7.734887260600338,
+      "parking_time": 13.5,
+      "tracking_rms": 0.03635762856879035,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 87,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 139,
+      "final_pos_err": 0.28816733949257195,
+      "final_yaw_err": 0.035935838462723774,
+      "path_length": 7.473472876381288,
+      "parking_time": 13.9,
+      "tracking_rms": 0.03549027332931137,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 88,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 95,
+      "final_pos_err": 0.2870402190962411,
+      "final_yaw_err": 0.13045598673512382,
+      "path_length": 5.186098982586524,
+      "parking_time": 9.5,
+      "tracking_rms": 0.03778450130396324,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 89,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 235,
+      "final_pos_err": 0.17987950840158068,
+      "final_yaw_err": 0.14783996412072475,
+      "path_length": 12.593200113896733,
+      "parking_time": 23.5,
+      "tracking_rms": 0.035924037701511875,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 90,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 134,
+      "final_pos_err": 0.19647119544699604,
+      "final_yaw_err": 0.16149488312787863,
+      "path_length": 7.481282560659995,
+      "parking_time": 13.4,
+      "tracking_rms": 0.035386939557005316,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 91,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 223,
+      "final_pos_err": 0.09114439804927678,
+      "final_yaw_err": 0.15546722885239658,
+      "path_length": 12.320691208477236,
+      "parking_time": 22.3,
+      "tracking_rms": 0.042907585773406906,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 92,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 204,
+      "final_pos_err": 0.25807243633924765,
+      "final_yaw_err": 0.17397522044816174,
+      "path_length": 11.72319603771915,
+      "parking_time": 20.400000000000002,
+      "tracking_rms": 0.03699762174615236,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 93,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 110,
+      "final_pos_err": 0.26020249488234204,
+      "final_yaw_err": 0.0659259020392775,
+      "path_length": 6.634481495472218,
+      "parking_time": 11.0,
+      "tracking_rms": 0.09229254394940703,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 94,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 110,
+      "final_pos_err": 0.08146070819722002,
+      "final_yaw_err": 0.1739997732275778,
+      "path_length": 6.096013049879403,
+      "parking_time": 11.0,
+      "tracking_rms": 0.0356722541722718,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 95,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 167,
+      "final_pos_err": 0.21209747017684075,
+      "final_yaw_err": 0.15149841167054667,
+      "path_length": 9.593689085570627,
+      "parking_time": 16.7,
+      "tracking_rms": 0.03779576413838302,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 96,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 218,
+      "final_pos_err": 0.0905740042151346,
+      "final_yaw_err": 0.15066617544059913,
+      "path_length": 12.058700283361041,
+      "parking_time": 21.8,
+      "tracking_rms": 0.03544361506718778,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 97,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 115,
+      "final_pos_err": 0.2923175039315283,
+      "final_yaw_err": 0.14218348757234844,
+      "path_length": 6.275900491825864,
+      "parking_time": 11.5,
+      "tracking_rms": 0.030070033502488543,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 98,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 120,
+      "final_pos_err": 0.29348206695164364,
+      "final_yaw_err": 0.15959078030456142,
+      "path_length": 6.650546054216429,
+      "parking_time": 12.0,
+      "tracking_rms": 0.0368801073180924,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 99,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 208,
+      "final_pos_err": 0.28438755830802526,
+      "final_yaw_err": 0.17291653468002033,
+      "path_length": 11.39801216554811,
+      "parking_time": 20.8,
+      "tracking_rms": 0.034998143959907135,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 100,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 193,
+      "final_pos_err": 0.19239072527744128,
+      "final_yaw_err": 0.14906919436983435,
+      "path_length": 10.818295166952954,
+      "parking_time": 19.3,
+      "tracking_rms": 0.034863846417359484,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 101,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 198,
+      "final_pos_err": 0.09007070352890086,
+      "final_yaw_err": 0.1432729771406127,
+      "path_length": 10.838178625932773,
+      "parking_time": 19.8,
+      "tracking_rms": 0.03238372157747302,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 102,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 115,
+      "final_pos_err": 0.22687791503523025,
+      "final_yaw_err": 0.11153338152747343,
+      "path_length": 6.657984140255675,
+      "parking_time": 11.5,
+      "tracking_rms": 0.03289936821386992,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 103,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 224,
+      "final_pos_err": 0.29597329361888325,
+      "final_yaw_err": 0.10220771550661462,
+      "path_length": 12.468873345375613,
+      "parking_time": 22.400000000000002,
+      "tracking_rms": 0.0339682082447372,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 104,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 113,
+      "final_pos_err": 0.02145381554389268,
+      "final_yaw_err": 0.1116281551847236,
+      "path_length": 5.8682282644756665,
+      "parking_time": 11.3,
+      "tracking_rms": 0.032102676391458695,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 105,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 120,
+      "final_pos_err": 0.1318536309338649,
+      "final_yaw_err": 0.15125782336784654,
+      "path_length": 6.661300683928664,
+      "parking_time": 12.0,
+      "tracking_rms": 0.03249704741830975,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 106,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 135,
+      "final_pos_err": 0.12654305123422613,
+      "final_yaw_err": 0.17214112288158634,
+      "path_length": 7.418055965182824,
+      "parking_time": 13.5,
+      "tracking_rms": 0.03565761198611562,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 107,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 177,
+      "final_pos_err": 0.043671362302792664,
+      "final_yaw_err": 0.16570131829776116,
+      "path_length": 10.259180559330233,
+      "parking_time": 17.7,
+      "tracking_rms": 0.03487398714320034,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 108,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 196,
+      "final_pos_err": 0.12181621153206099,
+      "final_yaw_err": 0.17252233821331253,
+      "path_length": 10.812859863420881,
+      "parking_time": 19.6,
+      "tracking_rms": 0.03413350259939917,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 109,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 91,
+      "final_pos_err": 0.26330178849187147,
+      "final_yaw_err": 0.15122662980929946,
+      "path_length": 5.215345015898568,
+      "parking_time": 9.1,
+      "tracking_rms": 0.03187034569884633,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 110,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 179,
+      "final_pos_err": 0.09196757561921849,
+      "final_yaw_err": 0.16690436282501353,
+      "path_length": 9.960450324933419,
+      "parking_time": 17.900000000000002,
+      "tracking_rms": 0.037843992261507,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 111,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 105,
+      "final_pos_err": 0.07619295007036454,
+      "final_yaw_err": 0.1553938725114647,
+      "path_length": 5.979894909430598,
+      "parking_time": 10.5,
+      "tracking_rms": 0.031913588274693955,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 112,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 77,
+      "final_pos_err": 0.2522189405095785,
+      "final_yaw_err": 0.12436848842463924,
+      "path_length": 4.217415842724257,
+      "parking_time": 7.7,
+      "tracking_rms": 0.037620436219463566,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 113,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 153,
+      "final_pos_err": 0.13709926763456487,
+      "final_yaw_err": 0.14549604286342488,
+      "path_length": 8.176668431414273,
+      "parking_time": 15.3,
+      "tracking_rms": 0.03789332617625101,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 114,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 161,
+      "final_pos_err": 0.28072150088883613,
+      "final_yaw_err": 0.1582265387590578,
+      "path_length": 8.599586975653624,
+      "parking_time": 16.1,
+      "tracking_rms": 0.03430876344781271,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 115,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 110,
+      "final_pos_err": 0.18250171340938753,
+      "final_yaw_err": 0.15860565504987398,
+      "path_length": 6.180447411357631,
+      "parking_time": 11.0,
+      "tracking_rms": 0.05082541036722042,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 116,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 153,
+      "final_pos_err": 0.24602853826938795,
+      "final_yaw_err": 0.12423147539785473,
+      "path_length": 8.676406603096341,
+      "parking_time": 15.3,
+      "tracking_rms": 0.04993268725268742,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 117,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 112,
+      "final_pos_err": 0.11428465174388432,
+      "final_yaw_err": 0.16268366811482615,
+      "path_length": 6.234652354229116,
+      "parking_time": 11.200000000000001,
+      "tracking_rms": 0.042847175818062785,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 118,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 89,
+      "final_pos_err": 0.2634406333284739,
+      "final_yaw_err": 0.07230276913049913,
+      "path_length": 5.177663606253171,
+      "parking_time": 8.9,
+      "tracking_rms": 0.04359810388203016,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 119,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 145,
+      "final_pos_err": 0.24594004591362412,
+      "final_yaw_err": 0.17357494364546988,
+      "path_length": 8.01616216990055,
+      "parking_time": 14.5,
+      "tracking_rms": 0.03230206073872867,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 120,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 222,
+      "final_pos_err": 0.1441904254008312,
+      "final_yaw_err": 0.16694683377115216,
+      "path_length": 12.434970398130991,
+      "parking_time": 22.200000000000003,
+      "tracking_rms": 0.031932367134830136,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 121,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 171,
+      "final_pos_err": 0.16218688859351288,
+      "final_yaw_err": 0.1641541713743484,
+      "path_length": 8.922340397151899,
+      "parking_time": 17.1,
+      "tracking_rms": 0.032414590068507054,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 122,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 179,
+      "final_pos_err": 0.2435282914638083,
+      "final_yaw_err": 0.08315882078290748,
+      "path_length": 9.97599421530838,
+      "parking_time": 17.900000000000002,
+      "tracking_rms": 0.0324361827990604,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 123,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 219,
+      "final_pos_err": 0.25201803827561026,
+      "final_yaw_err": 0.10327594386346471,
+      "path_length": 12.18127806838353,
+      "parking_time": 21.900000000000002,
+      "tracking_rms": 0.038218130531527575,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 124,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 181,
+      "final_pos_err": 0.1953892633634639,
+      "final_yaw_err": 0.1603265535698244,
+      "path_length": 10.33110927898791,
+      "parking_time": 18.1,
+      "tracking_rms": 0.037703529614276136,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 125,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 129,
+      "final_pos_err": 0.08136640380974879,
+      "final_yaw_err": 0.17243707579116618,
+      "path_length": 7.42702510244586,
+      "parking_time": 12.9,
+      "tracking_rms": 0.035002029343776726,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 126,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 139,
+      "final_pos_err": 0.026542784461394988,
+      "final_yaw_err": 0.15537369700535833,
+      "path_length": 7.737070845459718,
+      "parking_time": 13.9,
+      "tracking_rms": 0.039793107780407865,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 127,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 165,
+      "final_pos_err": 0.16272297168619496,
+      "final_yaw_err": 0.14733260977531096,
+      "path_length": 9.09031960582751,
+      "parking_time": 16.5,
+      "tracking_rms": 0.03413830400739846,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 128,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 126,
+      "final_pos_err": 0.17226766450951378,
+      "final_yaw_err": 0.13898073341131467,
+      "path_length": 7.268986259224478,
+      "parking_time": 12.600000000000001,
+      "tracking_rms": 0.047998170297649426,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 129,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 96,
+      "final_pos_err": 0.049556204795012264,
+      "final_yaw_err": 0.13232676075013883,
+      "path_length": 5.418721379849188,
+      "parking_time": 9.600000000000001,
+      "tracking_rms": 0.03637599028471537,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 130,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 142,
+      "final_pos_err": 0.1930219557317579,
+      "final_yaw_err": 0.17308188335182506,
+      "path_length": 8.130492515165582,
+      "parking_time": 14.200000000000001,
+      "tracking_rms": 0.0486726739876632,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 131,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 123,
+      "final_pos_err": 0.1359689031858866,
+      "final_yaw_err": 0.15446360319428942,
+      "path_length": 7.073409716377296,
+      "parking_time": 12.3,
+      "tracking_rms": 0.03998388377174011,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 132,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 104,
+      "final_pos_err": 0.23116933871576836,
+      "final_yaw_err": 0.00706349073758407,
+      "path_length": 5.86846946439414,
+      "parking_time": 10.4,
+      "tracking_rms": 0.034718558331649635,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 133,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 217,
+      "final_pos_err": 0.14042666920459626,
+      "final_yaw_err": 0.12284082827706541,
+      "path_length": 12.439065979578704,
+      "parking_time": 21.700000000000003,
+      "tracking_rms": 0.041255412014076086,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 134,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 156,
+      "final_pos_err": 0.13242010872598564,
+      "final_yaw_err": 0.11699205454798789,
+      "path_length": 8.612897814000483,
+      "parking_time": 15.600000000000001,
+      "tracking_rms": 0.03398443011609554,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 135,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 140,
+      "final_pos_err": 0.28256169436589545,
+      "final_yaw_err": 0.04163318645657077,
+      "path_length": 7.808931171562384,
+      "parking_time": 14.0,
+      "tracking_rms": 0.03130268968106899,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 136,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 262,
+      "final_pos_err": 0.2321684570186438,
+      "final_yaw_err": 0.0534182901748845,
+      "path_length": 14.593994081772262,
+      "parking_time": 26.200000000000003,
+      "tracking_rms": 0.04757430353166649,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 137,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 90,
+      "final_pos_err": 0.2775240409929311,
+      "final_yaw_err": 0.1181001293548789,
+      "path_length": 4.855819507995332,
+      "parking_time": 9.0,
+      "tracking_rms": 0.03146080018395816,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 138,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 127,
+      "final_pos_err": 0.22461139234793567,
+      "final_yaw_err": 0.07723545957642651,
+      "path_length": 6.72685211514065,
+      "parking_time": 12.700000000000001,
+      "tracking_rms": 0.04060156931557831,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 139,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 179,
+      "final_pos_err": 0.0632965357739045,
+      "final_yaw_err": 0.14448675798711033,
+      "path_length": 9.825365503274963,
+      "parking_time": 17.900000000000002,
+      "tracking_rms": 0.034077940968676494,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 140,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 70,
+      "final_pos_err": 0.11189111193602844,
+      "final_yaw_err": 0.16327719498905016,
+      "path_length": 3.9846180651047134,
+      "parking_time": 7.0,
+      "tracking_rms": 0.041679142277751324,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 141,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 174,
+      "final_pos_err": 0.11881271591990127,
+      "final_yaw_err": 0.1407430711701969,
+      "path_length": 9.294359118243399,
+      "parking_time": 17.400000000000002,
+      "tracking_rms": 0.039169211142908916,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 142,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 225,
+      "final_pos_err": 0.12042131438566323,
+      "final_yaw_err": 0.1306082131122389,
+      "path_length": 12.870425767708944,
+      "parking_time": 22.5,
+      "tracking_rms": 0.03567346693853026,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 143,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 210,
+      "final_pos_err": 0.2085033337966285,
+      "final_yaw_err": 0.1697342542204352,
+      "path_length": 12.409770754950802,
+      "parking_time": 21.0,
+      "tracking_rms": 0.040719842846417074,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 144,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 138,
+      "final_pos_err": 0.24319073302694716,
+      "final_yaw_err": 0.060259656016725366,
+      "path_length": 7.550777424622975,
+      "parking_time": 13.8,
+      "tracking_rms": 0.035419091976883074,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 145,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 181,
+      "final_pos_err": 0.12974333747322872,
+      "final_yaw_err": 0.11640627531517403,
+      "path_length": 9.701308307559987,
+      "parking_time": 18.1,
+      "tracking_rms": 0.039795534303280325,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 146,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 153,
+      "final_pos_err": 0.2685529222816787,
+      "final_yaw_err": 0.05671309221600687,
+      "path_length": 8.421993514090214,
+      "parking_time": 15.3,
+      "tracking_rms": 0.047508171676316574,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 147,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": false,
+      "failure": "collision",
+      "steps": 267,
+      "final_pos_err": 9.84323852327779,
+      "final_yaw_err": 1.1192680334258052,
+      "path_length": 14.845302660352658,
+      "parking_time": 26.700000000000003,
+      "tracking_rms": 0.033841208590186994,
+      "inference_ms": 0.0,
+      "collision": true,
+      "meta": {
+        "episode": 148,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 209,
+      "final_pos_err": 0.2334857247923922,
+      "final_yaw_err": 0.1742854431729477,
+      "path_length": 11.471108996923688,
+      "parking_time": 20.900000000000002,
+      "tracking_rms": 0.034398295607659404,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 149,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 171,
+      "final_pos_err": 0.047784106130574364,
+      "final_yaw_err": 0.10894243679597818,
+      "path_length": 9.14317779832847,
+      "parking_time": 17.1,
+      "tracking_rms": 0.03250088078647764,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 150,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 238,
+      "final_pos_err": 0.16915322734533594,
+      "final_yaw_err": 0.16824867237714905,
+      "path_length": 13.464811344159129,
+      "parking_time": 23.8,
+      "tracking_rms": 0.03835173454026822,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 151,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 165,
+      "final_pos_err": 0.19638371111060995,
+      "final_yaw_err": 0.16631255526423974,
+      "path_length": 8.895052771614825,
+      "parking_time": 16.5,
+      "tracking_rms": 0.04154761177895286,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 152,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 133,
+      "final_pos_err": 0.15170490235483727,
+      "final_yaw_err": 0.13827594631088602,
+      "path_length": 7.270088544369248,
+      "parking_time": 13.3,
+      "tracking_rms": 0.043647974216432496,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 153,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 194,
+      "final_pos_err": 0.05229729713534997,
+      "final_yaw_err": 0.12777275269196542,
+      "path_length": 11.002916176094086,
+      "parking_time": 19.400000000000002,
+      "tracking_rms": 0.03468716326694205,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 154,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 94,
+      "final_pos_err": 0.028542736584689452,
+      "final_yaw_err": 0.09143445846633849,
+      "path_length": 5.0245286058366085,
+      "parking_time": 9.4,
+      "tracking_rms": 0.03511021961312339,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 155,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 204,
+      "final_pos_err": 0.21694138856680584,
+      "final_yaw_err": 0.1332491211043112,
+      "path_length": 11.071524231188368,
+      "parking_time": 20.400000000000002,
+      "tracking_rms": 0.039588822147037746,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 156,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 193,
+      "final_pos_err": 0.1485932967814059,
+      "final_yaw_err": 0.13964387642751167,
+      "path_length": 10.820278431600556,
+      "parking_time": 19.3,
+      "tracking_rms": 0.031826473309264205,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 157,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 230,
+      "final_pos_err": 0.24740461821338153,
+      "final_yaw_err": 0.06204262616026801,
+      "path_length": 13.022512774834404,
+      "parking_time": 23.0,
+      "tracking_rms": 0.04188353970899269,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 158,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 165,
+      "final_pos_err": 0.23997205104275862,
+      "final_yaw_err": 0.15060423652104357,
+      "path_length": 9.135667724438916,
+      "parking_time": 16.5,
+      "tracking_rms": 0.03438441353518426,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 159,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 234,
+      "final_pos_err": 0.2853378287846857,
+      "final_yaw_err": 0.05005132401778267,
+      "path_length": 13.39561749457663,
+      "parking_time": 23.400000000000002,
+      "tracking_rms": 0.0348632237666445,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 160,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 198,
+      "final_pos_err": 0.21871176486051683,
+      "final_yaw_err": 0.006731195936969779,
+      "path_length": 11.0222115644352,
+      "parking_time": 19.8,
+      "tracking_rms": 0.0396050753990071,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 161,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 121,
+      "final_pos_err": 0.12797876186577417,
+      "final_yaw_err": 0.13664630838506353,
+      "path_length": 6.9317444559294845,
+      "parking_time": 12.100000000000001,
+      "tracking_rms": 0.055646220809533825,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 162,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 113,
+      "final_pos_err": 0.2523486320714869,
+      "final_yaw_err": 0.14432452027807274,
+      "path_length": 7.184477839909411,
+      "parking_time": 11.3,
+      "tracking_rms": 0.036816464315297975,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 163,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 92,
+      "final_pos_err": 0.027318262466708345,
+      "final_yaw_err": 0.1289054748512947,
+      "path_length": 4.818801108342404,
+      "parking_time": 9.200000000000001,
+      "tracking_rms": 0.031141106587090527,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 164,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 84,
+      "final_pos_err": 0.09926098071894228,
+      "final_yaw_err": 0.17235419868764645,
+      "path_length": 4.947431927738109,
+      "parking_time": 8.4,
+      "tracking_rms": 0.0430172161975687,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 165,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 93,
+      "final_pos_err": 0.15920104561329806,
+      "final_yaw_err": 0.157829403449524,
+      "path_length": 4.621760535981549,
+      "parking_time": 9.3,
+      "tracking_rms": 0.03633869813075798,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 166,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 170,
+      "final_pos_err": 0.16499054980387248,
+      "final_yaw_err": 0.16542174892816355,
+      "path_length": 9.558600264933961,
+      "parking_time": 17.0,
+      "tracking_rms": 0.0657981543109732,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 167,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": false,
+      "failure": "collision",
+      "steps": 266,
+      "final_pos_err": 0.3344947412349749,
+      "final_yaw_err": 0.13443899539927148,
+      "path_length": 15.288321869688554,
+      "parking_time": 26.6,
+      "tracking_rms": 0.03264187867938735,
+      "inference_ms": 0.0,
+      "collision": true,
+      "meta": {
+        "episode": 168,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 104,
+      "final_pos_err": 0.13653630340520898,
+      "final_yaw_err": 0.16491707028054692,
+      "path_length": 6.025548078975233,
+      "parking_time": 10.4,
+      "tracking_rms": 0.040921440587669985,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 169,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 158,
+      "final_pos_err": 0.0746048947652604,
+      "final_yaw_err": 0.12457482764004736,
+      "path_length": 8.639400075135843,
+      "parking_time": 15.8,
+      "tracking_rms": 0.03243809619936831,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 170,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 92,
+      "final_pos_err": 0.10844074256712438,
+      "final_yaw_err": 0.16202896262840327,
+      "path_length": 5.331965569095256,
+      "parking_time": 9.200000000000001,
+      "tracking_rms": 0.04410609002273613,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 171,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 89,
+      "final_pos_err": 0.23904157875007742,
+      "final_yaw_err": 0.11141247429541834,
+      "path_length": 4.719817373511808,
+      "parking_time": 8.9,
+      "tracking_rms": 0.03756001848683996,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 172,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 121,
+      "final_pos_err": 0.17236852910469677,
+      "final_yaw_err": 0.16805295861089256,
+      "path_length": 6.244544625253386,
+      "parking_time": 12.100000000000001,
+      "tracking_rms": 0.03687706100200082,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 173,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 245,
+      "final_pos_err": 0.06231727285635683,
+      "final_yaw_err": 0.15912906103676167,
+      "path_length": 13.524137093734716,
+      "parking_time": 24.5,
+      "tracking_rms": 0.0322697193995939,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 174,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 211,
+      "final_pos_err": 0.25539199037941074,
+      "final_yaw_err": 0.010261446929512362,
+      "path_length": 11.496909569149071,
+      "parking_time": 21.1,
+      "tracking_rms": 0.03269201760221327,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 175,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 139,
+      "final_pos_err": 0.07121950316187557,
+      "final_yaw_err": 0.14511774401269076,
+      "path_length": 7.490168087651011,
+      "parking_time": 13.9,
+      "tracking_rms": 0.031905589384344006,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 176,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 73,
+      "final_pos_err": 0.156199662345269,
+      "final_yaw_err": 0.15870740736346914,
+      "path_length": 4.342209161097225,
+      "parking_time": 7.300000000000001,
+      "tracking_rms": 0.030212542647800218,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 177,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 147,
+      "final_pos_err": 0.257374242509668,
+      "final_yaw_err": 0.1406987284811343,
+      "path_length": 7.941853922150969,
+      "parking_time": 14.700000000000001,
+      "tracking_rms": 0.0319156005630271,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 178,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 105,
+      "final_pos_err": 0.19724690042948362,
+      "final_yaw_err": 0.14025907279531258,
+      "path_length": 5.8748655264538865,
+      "parking_time": 10.5,
+      "tracking_rms": 0.036021268498950515,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 179,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 107,
+      "final_pos_err": 0.11783474676105168,
+      "final_yaw_err": 0.11556380958734344,
+      "path_length": 6.127151490706101,
+      "parking_time": 10.700000000000001,
+      "tracking_rms": 0.04094971830267245,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 180,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 196,
+      "final_pos_err": 0.1417417386517485,
+      "final_yaw_err": 0.1744490826476743,
+      "path_length": 10.6930735880251,
+      "parking_time": 19.6,
+      "tracking_rms": 0.03454121323344315,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 181,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": false,
+      "failure": "collision",
+      "steps": 121,
+      "final_pos_err": 2.943302483993443,
+      "final_yaw_err": 0.1969860309484801,
+      "path_length": 6.8750721899620775,
+      "parking_time": 12.100000000000001,
+      "tracking_rms": 0.031641712990105667,
+      "inference_ms": 0.0,
+      "collision": true,
+      "meta": {
+        "episode": 182,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 119,
+      "final_pos_err": 0.08566242199353084,
+      "final_yaw_err": 0.10221291321533643,
+      "path_length": 7.233757264494768,
+      "parking_time": 11.9,
+      "tracking_rms": 0.03795772912311897,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 183,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 122,
+      "final_pos_err": 0.12350935624069322,
+      "final_yaw_err": 0.15513128911055518,
+      "path_length": 6.616709367279244,
+      "parking_time": 12.200000000000001,
+      "tracking_rms": 0.03781811628641673,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 184,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 82,
+      "final_pos_err": 0.1717668913053785,
+      "final_yaw_err": 0.12512708188720748,
+      "path_length": 4.458890389196594,
+      "parking_time": 8.200000000000001,
+      "tracking_rms": 0.05591911407178548,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 185,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 211,
+      "final_pos_err": 0.1270130635756347,
+      "final_yaw_err": 0.14195799048265245,
+      "path_length": 11.821111372867957,
+      "parking_time": 21.1,
+      "tracking_rms": 0.04251188697898838,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 186,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 156,
+      "final_pos_err": 0.22931535022769942,
+      "final_yaw_err": 0.17283673422040818,
+      "path_length": 8.688772991970422,
+      "parking_time": 15.600000000000001,
+      "tracking_rms": 0.03804955250215791,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 187,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 149,
+      "final_pos_err": 0.14518000600348435,
+      "final_yaw_err": 0.12899680328924212,
+      "path_length": 8.094050485160144,
+      "parking_time": 14.9,
+      "tracking_rms": 0.03822188370926496,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 188,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 248,
+      "final_pos_err": 0.29592846189951044,
+      "final_yaw_err": 0.1341111496304754,
+      "path_length": 13.295308362900359,
+      "parking_time": 24.8,
+      "tracking_rms": 0.03490254314897932,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 189,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 225,
+      "final_pos_err": 0.11761334693336843,
+      "final_yaw_err": 0.12099588064556091,
+      "path_length": 13.13283037067931,
+      "parking_time": 22.5,
+      "tracking_rms": 0.04130703700818706,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 190,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 79,
+      "final_pos_err": 0.2835119750386243,
+      "final_yaw_err": 0.08986954778746295,
+      "path_length": 4.366091781074602,
+      "parking_time": 7.9,
+      "tracking_rms": 0.03235188451191417,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 191,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 135,
+      "final_pos_err": 0.2581959869171966,
+      "final_yaw_err": 0.11390147595470701,
+      "path_length": 7.727584877580482,
+      "parking_time": 13.5,
+      "tracking_rms": 0.039728929903254495,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 192,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 212,
+      "final_pos_err": 0.11999379119576971,
+      "final_yaw_err": 0.14008380065932577,
+      "path_length": 12.351566192995413,
+      "parking_time": 21.200000000000003,
+      "tracking_rms": 0.035095718746139724,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 193,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 99,
+      "final_pos_err": 0.25587272260845256,
+      "final_yaw_err": 0.029709738215023117,
+      "path_length": 5.342053362867617,
+      "parking_time": 9.9,
+      "tracking_rms": 0.031093971160520605,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 194,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 240,
+      "final_pos_err": 0.09631571285540937,
+      "final_yaw_err": 0.16788301894799784,
+      "path_length": 13.625558210048684,
+      "parking_time": 24.0,
+      "tracking_rms": 0.03385659060965722,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 195,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 79,
+      "final_pos_err": 0.02979573119704633,
+      "final_yaw_err": 0.11443328417358375,
+      "path_length": 4.443018594669497,
+      "parking_time": 7.9,
+      "tracking_rms": 0.03352323131751491,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 196,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 232,
+      "final_pos_err": 0.2277956157918406,
+      "final_yaw_err": 0.16814483965984728,
+      "path_length": 12.665994741259418,
+      "parking_time": 23.200000000000003,
+      "tracking_rms": 0.04067793041227945,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 197,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 107,
+      "final_pos_err": 0.26944112076984134,
+      "final_yaw_err": 0.010047783080824968,
+      "path_length": 6.106047090916085,
+      "parking_time": 10.700000000000001,
+      "tracking_rms": 0.050622649832320114,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 198,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    },
+    {
+      "success": 1.0,
+      "failure": null,
+      "steps": 105,
+      "final_pos_err": 0.13398578876363287,
+      "final_yaw_err": 0.14172128098035874,
+      "path_length": 5.9931887359074985,
+      "parking_time": 10.5,
+      "tracking_rms": 0.04159255375066506,
+      "inference_ms": 0.0,
+      "collision": false,
+      "meta": {
+        "episode": 199,
+        "vehicle": "mining_truck",
+        "env": "corridor"
+      }
+    }
+  ]
+}

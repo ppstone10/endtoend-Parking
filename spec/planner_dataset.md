@@ -22,8 +22,10 @@
 
 - 规划与数据均在 `ParkingEnvironment` 世界坐标系中进行；BEV 为车辆中心局部系。
 - 差分驱动运动学：`[v, omega]`，规划参考速度 `plan_v`，最大角速度 `max_omega`。
-- 碰撞检测采用车辆矩形（长×宽）四角全部位于自由空间。
+- 碰撞检测采用车辆矩形（长×宽）四角全部位于自由空间；`collision_margin > 0` 时矩形各向外膨胀该裕度（C-space 膨胀），保证轨迹与障碍保持至少 margin 净空，吸收闭环跟踪误差。
+- 终点拼接段（节点末位姿 → 精确目标）按 motion_resolution 加密逐点校验，防止贴墙目标产出带碰撞拼接线；拼接冲突抛 `RuntimeError`。
 - 搜索需在起点-目标包围盒外加边距的范围内进行，并设探索节点上限防止发散。
+- 已知限制：运动基元步长粗于栅格时存在格点可达性空洞（近目标落不进精确目标格），由后续 Reeds-Shepp 解析扩展解决（P2.7）。
 
 ## 行为与验收
 
@@ -45,8 +47,9 @@
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
 |---|---|---|---|---|---|
-| `EXPTRAJ-PLAN-001` | 终点偏差≤0.6m、轨迹点自由 | `tests/test_planner.py` | `planner/hybrid_astar.py::HybridAStarPlanner` | unittest 4 项通过 | ✅ |
+| `EXPTRAJ-PLAN-001` | 终点偏差≤0.6m、轨迹点自由 | `tests/test_planner.py` | `planner/hybrid_astar.py::HybridAStarPlanner` | unittest 6 项通过 | ✅ |
 | `EXPTRAJ-DATA-001` | 样本含 5 通道 BEV 且位姿自由 | `tests/test_dataset.py` | `dataset/generator.py::DatasetGenerator` | unittest 2 项通过 | ✅ |
+| `EXPTRAJ-MARGIN-001` | 膨胀裕度语义与净空保持 | `tests/test_planner.py`（margin 两项测试） | `HybridAStarPlanner._pose_free`/`_splice_valid` | unittest 通过；200 回合地基基线碰撞率 11%→1.5% | ✅ |
 
 ## 待人工确认
 

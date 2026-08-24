@@ -67,6 +67,48 @@ class TestHybridAStarPlanner(unittest.TestCase):
         for px, py in traj.points[:, :2]:
             self.assertTrue(env.is_free(float(px), float(py)))
 
+    def test_collision_margin_rejects_tight_goal(self):
+        """膨胀裕度语义：贴墙目标无膨胀时自由、膨胀后冲突。
+
+        直接验证 _pose_free 的 C-space 膨胀行为与 plan 入口拒绝路径。
+        """
+        env = ParkingEnvironment(
+            world_size=40.0,
+            obstacles=[RectangleObstacle(x_min=-20.0, x_max=20.0, y_min=3.8, y_max=20.0)],
+        )
+        start = VehicleState(0.0, 0.0, 0.0)
+        goal = GoalPose(8.0, 2.0, 0.0)
+        plain = HybridAStarPlanner(env=env, vehicle_length=6.0, vehicle_width=3.0)
+        inflated = HybridAStarPlanner(
+            env=env, collision_margin=0.4, vehicle_length=6.0, vehicle_width=3.0
+        )
+        # 无膨胀：目标位姿自由；膨胀 0.4 后：角点 y_max=3.9 侵入墙体。
+        self.assertTrue(plain._pose_free(goal.x, goal.y, goal.yaw))
+        self.assertFalse(inflated._pose_free(goal.x, goal.y, goal.yaw))
+        with self.assertRaises(ValueError):
+            inflated.plan(start, goal)
+
+    def test_collision_margin_keeps_clearance(self):
+        """collision_margin > 0 时，轨迹上车身矩形与障碍保持至少 margin 净空。"""
+        env = _channel_env()
+        margin = 0.2
+        planner = HybridAStarPlanner(env=env, collision_margin=margin, vehicle_length=4.0, vehicle_width=2.0)
+        start = VehicleState(0.0, 0.0, 0.0)
+        goal = GoalPose(8.0, 0.0, 0.0)
+        traj = planner.plan(start, goal)
+        half_l, half_w = 2.0, 1.0
+        for px, py, pyaw in traj.points:
+            cos_yaw, sin_yaw = np.cos(pyaw), np.sin(pyaw)
+            corners = [
+                (px + half_l * cos_yaw - half_w * sin_yaw, py + half_l * sin_yaw + half_w * cos_yaw),
+                (px + half_l * cos_yaw + half_w * sin_yaw, py + half_l * sin_yaw - half_w * cos_yaw),
+                (px - half_l * cos_yaw - half_w * sin_yaw, py - half_l * sin_yaw + half_w * cos_yaw),
+                (px - half_l * cos_yaw + half_w * sin_yaw, py - half_l * sin_yaw - half_w * cos_yaw),
+            ]
+            for cx, cy in corners:
+                # 车身角点必须仍离障碍至少 margin（4m 通道内即 |y| <= 1 - 0.2）。
+                self.assertLessEqual(abs(cy), 2.0 - margin)
+
 
 if __name__ == "__main__":
     unittest.main()
