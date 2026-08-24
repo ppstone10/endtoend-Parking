@@ -20,13 +20,21 @@ from interfaces import BEVTensor, GoalPose, Trajectory, VehicleState
 from sim.noise import get_noise_profile
 from sim.tasks import Task, TaskGoal
 
+from .maneuver import (
+    DEFAULT_MIN_REQUESTED_DISTANCE_RATIO,
+    ManeuverAudit,
+    audit_maneuver_consistency,
+    validate_minimum_requested_distance_ratio,
+)
+
 
 class TaskGenerationError(RuntimeError):
     """某个 Task 无法生成专家样本，并保留稳定任务标识。"""
 
-    def __init__(self, task_id: str, reason: str) -> None:
+    def __init__(self, task_id: str, reason: str, *, code: str | None = None) -> None:
         self.task_id = task_id
         self.reason = reason
+        self.code = reason if code is None else code
         super().__init__(f"任务 {task_id} 生成失败：{reason}")
 
 
@@ -58,6 +66,10 @@ class DatasetGenerator:
         *,
         component_factory: Callable[[Task], tuple[Any, Any]] | None = None,
         goal_selector: Callable[[Task, Any], TaskGoal] | None = None,
+        enforce_maneuver_consistency: bool = True,
+        minimum_requested_distance_ratio: float = (
+            DEFAULT_MIN_REQUESTED_DISTANCE_RATIO
+        ),
     ) -> None:
         self.env = env
         self.planner = planner
@@ -69,6 +81,12 @@ class DatasetGenerator:
         self.max_distance = max_distance
         self.component_factory = component_factory
         self.goal_selector = goal_selector
+        self.enforce_maneuver_consistency = bool(enforce_maneuver_consistency)
+        self.minimum_requested_distance_ratio = (
+            validate_minimum_requested_distance_ratio(
+                minimum_requested_distance_ratio
+            )
+        )
 
     def generate(self, count: int | Iterable[Task]) -> list[TrainingSample]:
         """生成随机样本，或按输入顺序把 Task 转为专家样本。"""
@@ -109,7 +127,7 @@ class DatasetGenerator:
         if getattr(pipeline, "bev_config", None) != task.scene.bev_config:
             raise TaskGenerationError(task.task_id, "传感器管道 BEV 配置与场景不一致")
 
-        goal, trajectory, goal_policy = self._resolve_goal(task, planner)
+        goal, trajectory, goal_policy, maneuver_audit = self._resolve_goal(task, planner)
         if hasattr(pipeline, "set_target_goals"):
             pipeline.set_target_goals([goal.as_goal_pose()])
         try:
@@ -124,6 +142,7 @@ class DatasetGenerator:
         task_meta["dataset"] = {
             "goal_policy": goal_policy,
             "selected_goal": goal.to_metadata(),
+            "maneuver_audit": maneuver_audit.to_metadata(),
         }
         return TrainingSample(
             bev=bev,
@@ -142,7 +161,7 @@ class DatasetGenerator:
 
     def _resolve_goal(
         self, task: Task, planner: Any
-    ) -> tuple[TaskGoal, Trajectory, str]:
+    ) -> tuple[TaskGoal, Trajectory, str, ManeuverAudit]:
         if task.goal is not None:
             goals = (task.goal,)
             policy = "task_goal"
@@ -154,18 +173,50 @@ class DatasetGenerator:
             policy = "goal_selector"
         else:
             goals = task.candidate_goals
-            policy = "first_plannable_candidate"
+            policy = (
+                "first_consistent_plannable_candidate"
+                if self.enforce_maneuver_consistency
+                else "first_plannable_candidate"
+            )
 
         failures: list[str] = []
+        inconsistent_count = 0
+        invalid_audit_count = 0
         for goal in goals:
             try:
                 trajectory = planner.plan(task.start, goal.as_goal_pose())
             except (RuntimeError, ValueError) as exc:
                 failures.append(f"{goal.spot_id}: {exc}")
                 continue
-            return goal, trajectory, policy
+            try:
+                audit = audit_maneuver_consistency(
+                    trajectory.points,
+                    task.difficulty.maneuver,
+                    minimum_requested_distance_ratio=(
+                        self.minimum_requested_distance_ratio
+                    ),
+                )
+            except ValueError as exc:
+                invalid_audit_count += 1
+                failures.append(f"{goal.spot_id}: 机动审计失败（{exc}）")
+                continue
+            if self.enforce_maneuver_consistency and not audit.consistent:
+                inconsistent_count += 1
+                failures.append(f"{goal.spot_id}: {_maneuver_failure_detail(audit)}")
+                continue
+            return goal, trajectory, policy, audit
         detail = "; ".join(failures) or "没有可用目标"
-        raise TaskGenerationError(task.task_id, f"所有目标均不可规划（{detail}）")
+        if inconsistent_count:
+            code = "maneuver_inconsistent"
+        elif invalid_audit_count:
+            code = "maneuver_audit_invalid"
+        else:
+            code = None
+        raise TaskGenerationError(
+            task.task_id,
+            f"所有目标均不可用于专家监督（{detail}）",
+            code=code,
+        )
 
     def save(self, samples: list[TrainingSample], path: str | Path) -> None:
         """按 schema v2 写入 npz（轨迹补零，元数据使用 Unicode JSON）。"""
@@ -289,3 +340,13 @@ class DatasetGenerator:
             (x - half_l * cos_yaw + half_w * sin_yaw, y - half_l * sin_yaw - half_w * cos_yaw),
         ]
         return all(self.env.is_free(cx, cy) for cx, cy in corners)
+
+
+def _maneuver_failure_detail(audit: ManeuverAudit) -> str:
+    return (
+        f"机动不一致：请求 {audit.requested_maneuver.value}，"
+        f"实际前进 {audit.forward_distance_ratio:.1%}、"
+        f"倒车 {audit.reverse_distance_ratio:.1%}，"
+        f"请求方向占比 {audit.requested_distance_ratio:.1%} < "
+        f"{audit.minimum_requested_distance_ratio:.1%}"
+    )

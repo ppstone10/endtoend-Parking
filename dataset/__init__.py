@@ -7,6 +7,11 @@ from .inspection import (
     select_representative_indices,
     summarize_dataset,
 )
+from .maneuver import (
+    ManeuverAudit,
+    audit_maneuver_consistency,
+    require_maneuver_consistency,
+)
 from .pipeline import SensorBEVPipeline
 from .splits import DatasetSplits, split_tasks
 
@@ -22,6 +27,9 @@ __all__ = [
     "DatasetSplits",
     "split_tasks",
     "render_sample_overlay",
+    "require_maneuver_consistency",
     "select_representative_indices",
     "summarize_dataset",
+    "ManeuverAudit",
+    "audit_maneuver_consistency",
 ]

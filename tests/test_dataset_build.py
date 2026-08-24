@@ -90,6 +90,19 @@ class _FailOnceGenerator:
         return [task.task_id]
 
 
+class _FailConsistencyOnceGenerator(_FailOnceGenerator):
+    def generate(self, tasks):
+        task = list(tasks)[0]
+        if not self.failed:
+            self.failed = True
+            raise TaskGenerationError(
+                task.task_id,
+                "请求 forward，实际前进 20.0%、倒车 80.0%",
+                code="maneuver_inconsistent",
+            )
+        return [task.task_id]
+
+
 class TestBuildRetries(unittest.TestCase):
     def test_failure_is_resampled_in_same_cell(self):
         plan = build_task_plan(total_count=20, seed=7)
@@ -126,6 +139,20 @@ class TestBuildRetries(unittest.TestCase):
             reserved_task_ids={blocked.task_id},
         )
         self.assertNotEqual(report.replacements[0].task_id, blocked.task_id)
+
+    def test_maneuver_failures_use_stable_reason_and_preserve_difficulty(self):
+        original = build_task_plan(total_count=20, seed=7).train[0]
+        report = generate_with_retries(
+            [original],
+            generator=_FailConsistencyOnceGenerator(),
+            seed=7,
+            max_retries=2,
+        )
+        self.assertEqual(report.failure_reasons, {"maneuver_inconsistent": 1})
+        self.assertEqual(
+            report.replacements[0].difficulty.maneuver,
+            original.difficulty.maneuver,
+        )
 
 
 if __name__ == "__main__":

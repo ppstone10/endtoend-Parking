@@ -123,7 +123,7 @@ def generate_with_retries(
                 break
             except TaskGenerationError as exc:
                 failure_count += 1
-                reasons[exc.reason] += 1
+                reasons[exc.code] += 1
                 if retry == max_retries:
                     raise RuntimeError(
                         f"{original.scene_name}/{original.task_type.value} 超过 "

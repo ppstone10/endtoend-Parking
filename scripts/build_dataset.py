@@ -23,6 +23,8 @@ from dataset import (
     SensorBEVPipeline,
     build_task_plan,
     generate_with_retries,
+    require_maneuver_consistency,
+    summarize_dataset,
 )
 from interfaces import CameraIntrinsics
 from planner import HybridAStarPlanner
@@ -134,6 +136,8 @@ def main() -> None:
         reserved_task_ids.update(task.task_id for task in report.replacements)
         partial = args.output / f"{split_name}.partial.npz"
         generator.save(list(report.samples), partial)
+        inspection_summary = summarize_dataset(DatasetGenerator.load(partial))
+        require_maneuver_consistency(inspection_summary)
         partial_paths[split_name] = partial
         reports[split_name] = {
             "count": len(report.samples),
@@ -141,6 +145,7 @@ def main() -> None:
             "failure_reasons": report.failure_reasons,
             "max_retries_per_task": args.max_retries,
             "replacement_count": len(report.replacements),
+            "maneuver_consistency": inspection_summary["maneuver_consistency"],
         }
         print(
             f"{split_name}: {len(report.samples)} 条，"

@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataset import (
     DatasetGenerator,
     render_sample_overlay,
+    require_maneuver_consistency,
     select_representative_indices,
     summarize_dataset,
 )
@@ -28,6 +29,11 @@ def main() -> None:
         default=5,
         help="保存的代表样本数；优先覆盖不同任务类型（默认：5）",
     )
+    parser.add_argument(
+        "--require-maneuver-consistency",
+        action="store_true",
+        help="存在机动不一致、无效轨迹或缺失机动声明时返回失败",
+    )
     args = parser.parse_args()
     if args.samples < 0:
         parser.error("--samples 不能为负")
@@ -36,6 +42,11 @@ def main() -> None:
     summary = summarize_dataset(data)
     encoded = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
     print(encoded)
+    if args.require_maneuver_consistency:
+        try:
+            require_maneuver_consistency(summary)
+        except ValueError as exc:
+            parser.error(str(exc))
     if args.output is None:
         return
 

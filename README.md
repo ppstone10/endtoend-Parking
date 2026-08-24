@@ -38,11 +38,14 @@ python scripts/generate_dataset.py 5
 # 预览 3000 条任务分层计划（不生成 BEV/轨迹）
 python scripts/build_dataset.py --count 3000 --dry-run
 
-# 按 8:1:1 构建 train/val/test，默认将 S9 整场景保留为泛化测试集
+# 按 8:1:1 构建 train/val/test；默认保留 S9，并在发布前执行机动一致性门禁
 python scripts/build_dataset.py --count 3000 --output data/task_dataset
 
-# 输出统计，并保存 BEV+专家轨迹叠加抽检图
+# 输出统计/机动一致性审计，并保存可解释的专家轨迹验收图
 python scripts/inspect_dataset.py data/task_dataset/train.npz --output data/task_dataset/inspection
+
+# 严格门禁：不一致、无效轨迹或缺少 maneuver 声明时返回失败
+python scripts/inspect_dataset.py data/task_dataset/train.npz --samples 0 --require-maneuver-consistency
 ```
 
 ```bash
@@ -67,7 +70,7 @@ sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟�
 model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
 controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       Hybrid A* 专家轨迹生成（差分驱动）
-dataset/       Task 分层/划分/重采、专家轨迹与融合 BEV、schema v2 数据集统计
+dataset/       Task 分层/划分/重采、机动一致性门禁、专家轨迹与融合 BEV、schema v2 数据集统计
 runtime/       滚动闭环引擎（轨迹源→MPC→车辆，终止判定与失败分类）
 metrics/       回合指标定义与聚合（成功率/碰撞率/误差等）
 scripts/       运行脚本

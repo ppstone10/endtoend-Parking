@@ -10,7 +10,7 @@
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成差分驱动可行轨迹（离散运动基元 + 48 词族 Reeds–Shepp 解析扩展 + C-space 膨胀与加密碰撞校验）；`smoothing.py` 提供保留换向点的三次捷径，`profile.py` 提供换向停车与倒车降速的梯形速度剖面 |
-| 数据管线 | `dataset/` | 兼容旧式随机采样，并以 Task 驱动专家轨迹与传感器→BEV 生成；在纯几何矩阵上叠加专家可生成能力，按可用单元分配难度配额、同单元重采并以 S9 整场景留出，NPZ schema v2 自描述保存并提供统计/叠加抽检 |
+| 数据管线 | `dataset/` | 兼容旧式随机采样，并以 Task 驱动专家轨迹与传感器→BEV 生成；在纯几何矩阵上叠加专家可生成能力，以统一方向审计执行生成/发布双门禁，按可用单元分配难度配额、同单元重采并以 S9 整场景留出，NPZ schema v2 自描述保存并提供统计/验收图抽检 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
 | 可视化 | `viz/` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图（动画与实验图后续里程碑） |
@@ -33,9 +33,11 @@ VehicleState + GoalPose → HybridAStarPlanner（运动基元 + Reeds–Shepp）
   Trajectory → 梯形速度剖面（可选）→ VelocityProfile
 Task[] → DatasetSplits（S9→test；其余按场景×类型分层 train/val）
 Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → TrainingSample
-  T4 按稳定候选顺序解析首个可规划目标；失败在原场景×类型×难度单元重采
-  TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本 task_meta）；无版本 NPZ 按 v1 读取
-  NPZ → 长度/倒车/分层统计 + occupancy/target/专家轨迹叠加抽检
+  轨迹方向距离审计：请求方向占比默认 ≥50%；不一致候选拒绝，失败在原场景×类型×难度单元重采
+  T4 按稳定候选顺序解析首个可规划且机动一致目标；显式关闭门禁时保留旧策略
+  TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本 task_meta.maneuver_audit）；无版本 NPZ 按 v1 读取
+  partial NPZ → 独立严格机动审计 → 正式 NPZ/manifest；失败保留 partial 且不晋升
+  NPZ → 长度/方向一致性/分层统计 + occupancy/target/专家轨迹验收图
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
@@ -77,6 +79,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - BEV 以车辆为中心生成；默认 40×40m@0.25m，场景可覆盖范围/分辨率但同一融合管道两路必须共用配置；S9 用 80×80m@0.5m，并与默认配置保持 160×160 栅格。
 - 数据集 schema v2 将 `BEVTensor.to_metadata()` 与逐样本任务元数据编码为 Unicode JSON 数组，加载始终禁用 pickle；同一归档不允许混合 BEV 元数据或轨迹 `dt`，无版本旧归档识别为 v1。
 - 默认数据构建按 8:1:1 输出 train/val/test，S9 全部且仅进入 test；构建失败只在同一场景×任务类型×难度重采，替代任务避开全计划与已用 task ID；未完成 split 保持 `.partial.npz`，三个 split 完成后才写 manifest。
+- `dataset/maneuver.py` 是轨迹实际方向距离的唯一判定所有者；Task 请求方向默认必须占总行驶距离至少 50%，允许短距离反向调整。Task 生成先门禁候选，构建脚本再独立审计 partial；任一不一致、无效或缺失声明样本都不得晋升为正式数据集。
 
 ## 阶段迁移边界
 

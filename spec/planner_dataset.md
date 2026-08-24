@@ -72,10 +72,10 @@
 ### `EXPTRAJ-DATA-004`：Task 驱动专家样本生成
 
 - 前置：Task 合法；组件工厂返回与 Task 场景和 BEV 配置一致的规划器/传感器管道。
-- 行为：单目标任务直接规划；T4 按稳定候选顺序选择首个可规划目标。采集 Task 起点 BEV，并把 `Task.to_metadata()`、实际噪声 profile、选中目标及解析策略写入样本元数据。
+- 行为：单目标任务直接规划；未启用机动门禁时 T4 按稳定候选顺序选择首个可规划目标，默认启用门禁时选择首个可规划且机动一致的目标。采集 Task 起点 BEV，并把 `Task.to_metadata()`、实际噪声 profile、选中目标及解析策略写入样本元数据。
 - 结果：每个成功 Task 恰生成一条 `TrainingSample`，状态等于 Task 起点、目标等于已解析目标、轨迹通过专家规划器；输入顺序与输出顺序一致。
 - 异常与恢复：所有目标不可规划或组件配置不匹配时抛出携带 task ID 的 `TaskGenerationError`；构建层可据此在同一场景×任务类型单元重采。旧 `generate(int)` 行为保持兼容。
-- T4 边界：`first_plannable_candidate` 不是“最优车位”标签；P4.1 可通过 goal selector 注入五项代价 oracle。
+- T4 边界：`first_plannable_candidate` / `first_consistent_plannable_candidate` 都不是“最优车位”标签；P4.1 可通过 goal selector 注入五项代价 oracle。
 
 ### `EXPTRAJ-DATA-005`：稳定分层与整场景泛化集
 
@@ -104,6 +104,20 @@
 - 行为：在起点局部坐标系中以统一矿卡配置绘制 6×3m 起点/目标车身和朝向；专家轨迹按实际位移相对车头投影区分前进与倒车，显示行驶方向和换向点；信息区展示任务类型、场景、难度、路径长度、倒车占比以及轨迹终点相对目标的位置/航向误差。
 - 结果：单图可直接辨认“从何种位姿出发、如何行驶、以何种位姿到达以及到位误差”；CLI 默认按任务类型优先选择代表样本，在样本数允许时覆盖全部现有任务类型。
 - 异常与恢复：索引越界、目标字段缺失、空轨迹或元数据与样本数量不一致时给出明确错误；旧 v1 数据仍可执行基础统计，但不伪造验收图所需语义。
+
+### `EXPTRAJ-DATA-009`：任务机动与专家轨迹一致性审计
+
+- 数据定义：沿每段起点航向投影实际位移，投影为负的段计入倒车距离，其余非零段计入前进距离；任务声明方向的距离占总路径距离比例称为“请求方向占比”。默认最低请求方向占比为 0.5，即请求方向必须至少承担一半实际行驶距离，允许短距离反向调整与换向。
+- 行为：对具有 `difficulty.maneuver` 的样本逐项计算前进/倒车距离、请求方向占比、换向次数与一致性；数据集统计汇总已审计、一致、不一致和缺失声明数量，并按请求方向及场景×任务类型汇总不一致项。
+- 结果：审计输出不依赖已有 `task_meta.dataset` 中的派生值，可从轨迹和任务声明独立复算；新生成样本把相同审计结果写入 `task_meta.dataset.maneuver_audit`，便于追溯判定阈值与实际比例。
+- 异常与恢复：轨迹形状非法、少于两个点、含非有限值或总行驶距离为零时拒绝判定；v1 或缺少 `maneuver` 的样本计为未审计，不猜测标签。
+
+### `EXPTRAJ-DATA-010`：机动一致性数据门禁
+
+- 前置：Task 驱动生成已得到候选目标的专家轨迹；生成器默认启用门禁，最低请求方向占比默认 0.5。
+- 行为：候选轨迹未达到请求方向占比时不得生成 `TrainingSample`；T4 继续尝试下一候选目标，其他任务或所有 T4 候选均不一致时抛出携带 task ID、请求方向、实际前进/倒车占比的 `TaskGenerationError`，并以稳定原因码进入同场景×任务类型×难度重采。inspection CLI 的严格审计开关在归档存在任一不一致、无效轨迹或缺失机动声明样本时返回失败。
+- 结果：默认新构建归档的已声明样本一致率为 100%；门禁可由生成器显式关闭以审计/兼容旧流程，但仍写入 `maneuver_audit.consistent=false`，不得伪装为通过。
+- 兼容、迁移与回退：NPZ 仍为 schema v2，原数组键不变，任务元数据只增加派生审计字段；既有 NPZ 不自动改写，先以 inspection 审计，需满足新门禁时由原 seed/计划重建。显式 `enforce_maneuver_consistency=False` 是回退路径。
 
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
@@ -150,6 +164,8 @@
 | `EXPTRAJ-DATA-006` | 配额、dry-run、同单元重采与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/build.py::build_task_plan/generate_with_retries/expert_maneuvers`; `sim/tasks.py::TaskSampler.adjacent_occupancy_levels` | 3000 条正式生产完成；train/val/test 重采 296/150/66 次；manifest 与全局 ID 保留验证通过 | ✅ |
 | `EXPTRAJ-DATA-007` | 长度/倒车/分布统计与 BEV 叠加图 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py` | `dataset/inspection.py::summarize_dataset/render_sample_overlay` | 三份统计 JSON 与 12 张 PNG 写出；全仓 169 项通过 | ✅ |
 | `EXPTRAJ-DATA-008` | 起终矿卡位姿、行驶方向、换向与到位误差可视；代表样本优先覆盖任务类型 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::render_sample_overlay/select_representative_indices` | 5 项定向测试与全仓 172 项通过；三 split 共 15 张增强图写出，S9/T1–T5 人工图审通过 | ✅ |
+| `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |
+| `EXPTRAJ-DATA-010` | 生成前拒绝不一致轨迹、T4 候选继续、稳定重采原因与严格 CLI | `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/inspect_dataset.py`; `scripts/build_dataset.py` | `dataset/generator.py::DatasetGenerator._resolve_goal`; `dataset/build.py::generate_with_retries`; `dataset/maneuver.py::require_maneuver_consistency` | 10 条真实构建烟测经生成/partial 双门禁后全 split 100%；旧 test 严格检查按预期失败；Spec 检查 PASS | ✅ |
 | `EXPTRAJ-MARGIN-001` | 膨胀裕度语义与净空保持 | `tests/test_planner.py`（margin 两项测试） | `HybridAStarPlanner._pose_free`/`_splice_valid` | unittest 通过；200 回合地基基线碰撞率 11%→1.5% | ✅ |
 | `EXPTRAJ-RS-001` | 48 词族、精确到达、S3/S5 紧凑场景可规划 | `tests/test_reeds_shepp.py`; `tests/test_planner.py` | `planner/reeds_shepp.py::reeds_shepp_paths`; `HybridAStarPlanner._analytic_connection` | 3 项几何 + 3 项解析接入回归通过；1000 组随机 SE(2) 失败 0；200 回合 99.0% 成功/1.0% 碰撞 | ✅ |
 | `EXPTRAJ-SMOOTH-001` | 轨迹不变长、不跨换向、所有捷径全位姿无碰撞 | `tests/test_smoothing.py` | `planner/smoothing.py::smooth_trajectory` | 3 项定向回归通过 | ✅ |

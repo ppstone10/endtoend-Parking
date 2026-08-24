@@ -11,6 +11,12 @@ import numpy as np
 
 from sim.vehicle_config import MINING_TRUCK
 
+from .maneuver import (
+    audit_maneuver_consistency,
+    summarize_maneuver_consistency,
+    trajectory_segment_directions,
+)
+
 
 def summarize_dataset(data: dict[str, Any]) -> dict[str, Any]:
     """统计样本数、轨迹长度、倒车距离比例与任务分层数量。"""
@@ -37,16 +43,24 @@ def summarize_dataset(data: dict[str, Any]) -> dict[str, Any]:
         total_distance += length
         reverse_distance += float(segment_length[signed_progress < 0.0].sum())
 
-    metadata = data.get("task_meta") or []
+    metadata = data.get("task_meta")
+    if metadata is not None and (
+        not isinstance(metadata, list) or len(metadata) != len(trajs)
+    ):
+        raise ValueError("task_meta 数量必须与样本数量一致")
+    countable_metadata = metadata or []
     return {
         "sample_count": int(trajs.shape[0]),
         "trajectory_length_m": _distribution(lengths),
         "reverse_distance_ratio": (
             reverse_distance / total_distance if total_distance > 0.0 else 0.0
         ),
-        "scene_counts": _metadata_counts(metadata, "scene_name"),
-        "task_type_counts": _metadata_counts(metadata, "task_type"),
-        "noise_level_counts": _noise_counts(metadata),
+        "scene_counts": _metadata_counts(countable_metadata, "scene_name"),
+        "task_type_counts": _metadata_counts(countable_metadata, "task_type"),
+        "noise_level_counts": _noise_counts(countable_metadata),
+        "maneuver_consistency": summarize_maneuver_consistency(
+            trajs, masks, metadata
+        ),
     }
 
 
@@ -123,13 +137,19 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
     goal_local = _to_local(
         goal[np.newaxis, :], float(state[0]), float(state[1]), float(state[2])
     )[0]
-    directions, segment_lengths = _segment_directions(trajectory)
+    directions, segment_lengths = trajectory_segment_directions(trajectory)
     path_length = float(segment_lengths.sum())
     reverse_distance = float(segment_lengths[directions < 0].sum())
     reverse_ratio = reverse_distance / path_length if path_length > 0.0 else 0.0
     final_position_error = float(np.linalg.norm(trajectory[-1, :2] - goal[:2]))
     final_yaw_error = abs(_wrap_angle(float(trajectory[-1, 2] - goal[2])))
     item_meta = metadata[index] if metadata is not None else {}
+    requested_maneuver = item_meta.get("difficulty", {}).get("maneuver")
+    maneuver_audit = None
+    if requested_maneuver is not None:
+        maneuver_audit = audit_maneuver_consistency(
+            trajectory, requested_maneuver
+        )
 
     figure, (axis, info_axis) = plt.subplots(
         1,
@@ -264,6 +284,14 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         path_length=path_length,
         reverse_ratio=reverse_ratio,
         switch_count=len(switch_indices),
+        requested_distance_ratio=(
+            None
+            if maneuver_audit is None
+            else maneuver_audit.requested_distance_ratio
+        ),
+        maneuver_consistent=(
+            None if maneuver_audit is None else maneuver_audit.consistent
+        ),
         final_position_error=final_position_error,
         final_yaw_error=final_yaw_error,
     )
@@ -286,17 +314,6 @@ def _evenly_spaced_indices(total: int, count: int) -> list[int]:
         return []
     indices = np.linspace(0, total - 1, min(count, total), dtype=int).tolist()
     return list(dict.fromkeys(indices))
-
-
-def _segment_directions(trajectory: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    if len(trajectory) < 2:
-        return np.empty(0, dtype=np.int8), np.empty(0, dtype=np.float64)
-    delta = np.diff(trajectory[:, :2], axis=0)
-    lengths = np.linalg.norm(delta, axis=1)
-    heading = trajectory[:-1, 2]
-    signed_progress = delta[:, 0] * np.cos(heading) + delta[:, 1] * np.sin(heading)
-    directions = np.where(signed_progress < -1e-9, -1, 1).astype(np.int8)
-    return directions, lengths
 
 
 def _vehicle_polygon(pose: np.ndarray) -> np.ndarray:
@@ -409,6 +426,8 @@ def _render_info_panel(
     path_length: float,
     reverse_ratio: float,
     switch_count: int,
+    requested_distance_ratio: float | None,
+    maneuver_consistent: bool | None,
     final_position_error: float,
     final_yaw_error: float,
 ) -> None:
@@ -431,8 +450,17 @@ def _render_info_panel(
         and final_position_error <= float(tolerance_position)
         and final_yaw_error <= float(tolerance_yaw)
     )
-    status_text = "GOAL CHECK: PASS" if goal_pass else "GOAL CHECK: REVIEW"
-    status_color = "#148F77" if goal_pass else "#C0392B"
+    maneuver_status = (
+        "N/A"
+        if maneuver_consistent is None
+        else ("PASS" if maneuver_consistent else "FAIL")
+    )
+    all_pass = goal_pass and maneuver_consistent is True
+    status_text = (
+        f"GOAL: {'PASS' if goal_pass else 'REVIEW'} | "
+        f"MANEUVER: {maneuver_status}"
+    )
+    status_color = "#148F77" if all_pass else "#C0392B"
 
     task_id = textwrap.fill(str(metadata.get("task_id", "unknown")), width=27)
     details = [
@@ -452,6 +480,13 @@ def _render_info_panel(
         f"Points            {point_count}",
         f"Path length       {path_length:.2f} m",
         f"Reverse distance  {reverse_ratio:.1%}",
+        "Requested share  "
+        + (
+            "unknown"
+            if requested_distance_ratio is None
+            else f"{requested_distance_ratio:.1%}"
+        ),
+        f"Maneuver check    {maneuver_status}",
         f"Direction changes {switch_count}",
         "",
         "FINAL ERROR",

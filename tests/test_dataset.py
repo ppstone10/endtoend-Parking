@@ -11,7 +11,7 @@ from interfaces import BEVConfig, BEVTensor, CameraIntrinsics, GoalPose, Traject
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
-from sim.tasks import NoiseLevel, TaskSampler, TaskType
+from sim.tasks import Maneuver, NoiseLevel, TaskSampler, TaskType
 
 
 def _build_generator(seed: int = 0) -> DatasetGenerator:
@@ -189,6 +189,51 @@ class _TaskPlanner:
         )
 
 
+class _OppositeManeuverPlanner:
+    def plan(self, start: VehicleState, goal: GoalPose) -> Trajectory:
+        heading = np.array([np.cos(start.yaw), np.sin(start.yaw)])
+        reverse_point = np.array([start.x, start.y]) - heading
+        to_goal = np.array([goal.x, goal.y]) - reverse_point
+        reverse_yaw = np.arctan2(to_goal[1], to_goal[0]) + np.pi
+        return Trajectory(
+            points=np.array(
+                [
+                    [start.x, start.y, start.yaw],
+                    [reverse_point[0], reverse_point[1], reverse_yaw],
+                    [goal.x, goal.y, goal.yaw],
+                ],
+                dtype=np.float32,
+            ),
+            dt=0.1,
+        )
+
+
+class _FirstCandidateInconsistentPlanner:
+    def __init__(self):
+        self.calls = 0
+
+    def plan(self, start: VehicleState, goal: GoalPose) -> Trajectory:
+        self.calls += 1
+        if self.calls == 1:
+            return _OppositeManeuverPlanner().plan(start, goal)
+
+        heading = np.array([np.cos(start.yaw), np.sin(start.yaw)])
+        forward_point = np.array([start.x, start.y]) + heading
+        to_goal = np.array([goal.x, goal.y]) - forward_point
+        forward_yaw = np.arctan2(to_goal[1], to_goal[0])
+        return Trajectory(
+            points=np.array(
+                [
+                    [start.x, start.y, start.yaw],
+                    [forward_point[0], forward_point[1], forward_yaw],
+                    [goal.x, goal.y, goal.yaw],
+                ],
+                dtype=np.float32,
+            ),
+            dt=0.1,
+        )
+
+
 class TestTaskDrivenDataset(unittest.TestCase):
     def test_single_goal_task_becomes_self_describing_sample(self):
         task = TaskSampler(seed=20260824).sample(
@@ -204,6 +249,7 @@ class TestTaskDrivenDataset(unittest.TestCase):
         self.assertEqual(sample.task_meta["task_id"], task.task_id)
         self.assertEqual(sample.task_meta["dataset"]["goal_policy"], "task_goal")
         self.assertEqual(sample.task_meta["noise_profile"]["level"], "low")
+        self.assertTrue(sample.task_meta["dataset"]["maneuver_audit"]["consistent"])
 
     def test_t4_uses_first_plannable_candidate_and_records_policy(self):
         task = TaskSampler(seed=77).sample("S1_parking_lot", TaskType.T4_MULTI_SPOT)
@@ -219,7 +265,7 @@ class TestTaskDrivenDataset(unittest.TestCase):
         self.assertNotEqual(sample.goal.x, rejected_x)
         self.assertEqual(
             sample.task_meta["dataset"]["goal_policy"],
-            "first_plannable_candidate",
+            "first_consistent_plannable_candidate",
         )
         self.assertEqual(
             sample.task_meta["dataset"]["selected_goal"]["x"], sample.goal.x
@@ -235,6 +281,61 @@ class TestTaskDrivenDataset(unittest.TestCase):
         )
         with self.assertRaisesRegex(TaskGenerationError, task.task_id):
             generator.generate([task])
+
+    def test_t4_skips_plannable_but_maneuver_inconsistent_candidate(self):
+        task = TaskSampler(seed=77).sample(
+            "S1_parking_lot",
+            TaskType.T4_MULTI_SPOT,
+            maneuver=Maneuver.FORWARD,
+        )
+        planner = _FirstCandidateInconsistentPlanner()
+        generator = DatasetGenerator(
+            component_factory=lambda current: (planner, _TaskPipeline(current))
+        )
+        sample = generator.generate([task])[0]
+
+        first = task.candidate_goals[0]
+        self.assertNotEqual((sample.goal.x, sample.goal.y), (first.x, first.y))
+        self.assertEqual(
+            sample.task_meta["dataset"]["goal_policy"],
+            "first_consistent_plannable_candidate",
+        )
+        self.assertTrue(sample.task_meta["dataset"]["maneuver_audit"]["consistent"])
+
+    def test_maneuver_gate_rejects_opposite_dominant_expert_trajectory(self):
+        task = TaskSampler(seed=11).sample(
+            "S1_parking_lot",
+            TaskType.T1_NEAR,
+            maneuver=Maneuver.FORWARD,
+        )
+        generator = DatasetGenerator(
+            component_factory=lambda current: (
+                _OppositeManeuverPlanner(),
+                _TaskPipeline(current),
+            )
+        )
+        with self.assertRaises(TaskGenerationError) as raised:
+            generator.generate([task])
+
+        self.assertEqual(raised.exception.code, "maneuver_inconsistent")
+        self.assertIn("请求 forward", raised.exception.reason)
+        self.assertIn("倒车", raised.exception.reason)
+
+    def test_maneuver_gate_can_be_explicitly_disabled_for_legacy_audit(self):
+        task = TaskSampler(seed=11).sample(
+            "S1_parking_lot",
+            TaskType.T1_NEAR,
+            maneuver=Maneuver.FORWARD,
+        )
+        generator = DatasetGenerator(
+            component_factory=lambda current: (
+                _OppositeManeuverPlanner(),
+                _TaskPipeline(current),
+            ),
+            enforce_maneuver_consistency=False,
+        )
+        sample = generator.generate([task])[0]
+        self.assertFalse(sample.task_meta["dataset"]["maneuver_audit"]["consistent"])
 
 
 if __name__ == "__main__":
