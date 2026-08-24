@@ -9,7 +9,7 @@
 | Python 仿真 | `sim/` | 二维矿区泊车环境（`obstacles.py` 障碍体系：矩形/多边形/圆 + kind/emits_points/forbidden 语义，解析射线投射）、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应）、`vehicle_config.py` 车辆参数统一来源（矿卡 6×3m 预设，规划器/MPC/碰撞统一注入） |
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
-| 专家轨迹 | `planner/` | Hybrid A* 从起始状态到目标泊车位姿生成差分驱动可行轨迹（运动基元 + 栅格/yaw 离散 + C-space 膨胀裕度 + 拼接段加密校验） |
+| 专家轨迹 | `planner/` | Hybrid A* 生成差分驱动可行轨迹（离散运动基元 + 48 词族 Reeds–Shepp 解析扩展 + C-space 膨胀与加密碰撞校验）；`smoothing.py` 提供保留换向点的三次捷径，`profile.py` 提供换向停车与倒车降速的梯形速度剖面 |
 | 数据管线 | `dataset/` | 随机采样泊车位姿对，规划专家轨迹并复用传感器→BEV 链路生成训练样本（`SensorBEVPipeline`） |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
@@ -24,7 +24,9 @@ LiDARFrame/CameraFrame → sensor2bev → BEVTensor
   LiDARFrame → LiDAR2BEV → [occupancy, height, density]
   CameraFrame → Camera2BEV → [target]
   BEVFusion 拼接两路并追加 [vehicle] → 统一 BEVTensor
-VehicleState + GoalPose → HybridAStarPlanner → Trajectory（专家轨迹）
+VehicleState + GoalPose → HybridAStarPlanner（运动基元 + Reeds–Shepp）→ Trajectory（专家轨迹）
+  Trajectory → 碰撞安全三次捷径（可选）→ Trajectory
+  Trajectory → 梯形速度剖面（可选）→ VelocityProfile
 DatasetGenerator：采样位姿对 + SensorBEVPipeline(融合BEV) + 专家轨迹 → TrainingSample
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）
@@ -57,6 +59,8 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - 车辆尺寸与控制上限统一来自 `sim/vehicle_config.py::VehicleConfig`（预设矿卡 6×3m），规划器/MPC/车辆模型/碰撞检测由同一 config 构造注入。
 - 批量实验统一经 `experiments/run_experiment.py`（JSON 配置驱动，结果落盘 `experiments/results/`），可视化统一经 `viz/`（PNG+PDF 双格式输出）。
 - 低速泊车采用差分驱动运动模型，控制量为线速度 v 与角速度 omega。
+- Reeds–Shepp 最小转弯半径默认由 `|plan_v / max_omega|` 统一推导；解析路径和平滑捷径必须复用 Hybrid A* 的车身矩形与 `collision_margin` 安全边界。
+- 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - BEV 以车辆为中心生成，语义通道由 `BEVTensor` 的 `channels` 说明。
 
 ## 阶段迁移边界

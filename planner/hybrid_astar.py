@@ -17,6 +17,8 @@ import numpy as np
 from interfaces import GoalPose, Trajectory, VehicleState
 from sim import ParkingEnvironment
 
+from .reeds_shepp import reeds_shepp_paths
+
 
 class _Node:
     """搜索节点：记录连续位姿、累计成本、父节点与插值路径。"""
@@ -63,6 +65,9 @@ class HybridAStarPlanner:
         search_margin: float = 4.0,
         max_expansions: int = 20000,
         collision_margin: float = 0.0,
+        analytic_expansion_distance: float | None = None,
+        analytic_expansion_interval: int = 5,
+        min_turning_radius: float | None = None,
     ) -> None:
         self.env = env
         self.vehicle_length = vehicle_length
@@ -73,6 +78,27 @@ class HybridAStarPlanner:
         self.motion_resolution = motion_resolution
         self.plan_v = plan_v
         self.max_omega = max_omega
+        if plan_v == 0.0 or max_omega == 0.0:
+            raise ValueError("plan_v 与 max_omega 不能为 0")
+        if analytic_expansion_distance is not None and analytic_expansion_distance < 0.0:
+            raise ValueError("analytic_expansion_distance 不能为负数")
+        if analytic_expansion_interval < 1:
+            raise ValueError("analytic_expansion_interval 至少为 1")
+        if min_turning_radius is not None and min_turning_radius <= 0.0:
+            raise ValueError("min_turning_radius 必须为正数")
+        # 矿卡紧凑入位需在约两个车长的范围内尝试解析机动；
+        # 固定 6m 门限会使 6m 车身在 S3/S5 先陷入离散搜索。
+        self.analytic_expansion_distance = (
+            max(6.0, 2.0 * vehicle_length)
+            if analytic_expansion_distance is None
+            else float(analytic_expansion_distance)
+        )
+        self.analytic_expansion_interval = analytic_expansion_interval
+        self.min_turning_radius = (
+            float(min_turning_radius)
+            if min_turning_radius is not None
+            else abs(plan_v) / abs(max_omega)
+        )
         self.num_yaw = int(round(2.0 * np.pi / yaw_resolution))
         self.omega_values = np.linspace(-max_omega, max_omega, omega_steps)
         # 搜索范围限制在起点-目标包围盒外加 search_margin，避免远距离发散。
@@ -118,7 +144,20 @@ class HybridAStarPlanner:
                 continue
             closed[cur_idx] = current.g
 
-            if cur_idx == goal_idx:
+            analytic_due = (
+                expansions == 1
+                or expansions % self.analytic_expansion_interval == 0
+                or cur_idx == goal_idx
+            )
+            if (
+                analytic_due
+                and self._heuristic_distance(current, goal) <= self.analytic_expansion_distance
+            ):
+                analytic_node = self._analytic_connection(current, goal)
+                if analytic_node is not None:
+                    return self._extract_trajectory(analytic_node, goal)
+
+            if self.analytic_expansion_distance == 0.0 and cur_idx == goal_idx:
                 return self._extract_trajectory(current, goal)
 
             for node in self._expand(current):
@@ -184,8 +223,34 @@ class HybridAStarPlanner:
 
     def _heuristic(self, node: _Node, goal: GoalPose) -> float:
         """欧氏距离下界，除以参考速度换算为成本。"""
-        dist = float(np.hypot(goal.x - node.x, goal.y - node.y))
+        dist = self._heuristic_distance(node, goal)
         return dist / abs(self.plan_v)
+
+    @staticmethod
+    def _heuristic_distance(node: _Node, goal: GoalPose) -> float:
+        return float(np.hypot(goal.x - node.x, goal.y - node.y))
+
+    def _analytic_connection(self, node: _Node, goal: GoalPose) -> _Node | None:
+        """按长度尝试 48 词族候选，返回首条全位姿无碰撞的精确连接。"""
+        start_pose = (node.x, node.y, node.yaw)
+        goal_pose = (goal.x, goal.y, goal.yaw)
+        for candidate in reeds_shepp_paths(start_pose, goal_pose, self.min_turning_radius):
+            points, _directions = candidate.sample(start_pose, self.motion_resolution)
+            # 公式误差已在 reeds_shepp_paths 中限定；此处压到调用方的精确目标值，
+            # 避免 _extract_trajectory 为 1e-15 量级残差再添加一个伪短段。
+            points[-1] = goal_pose
+            if not all(
+                self._within_search_bounds(float(x), float(y))
+                and self._pose_free(float(x), float(y), float(yaw))
+                for x, y, yaw in points[1:]
+            ):
+                continue
+            terminal = _Node(goal.x, goal.y, goal.yaw, node.g + candidate.total_length, parent=node)
+            terminal.xs = points[1:, 0].astype(float).tolist()
+            terminal.ys = points[1:, 1].astype(float).tolist()
+            terminal.yaws = points[1:, 2].astype(float).tolist()
+            return terminal
+        return None
 
     def _splice_valid(self, x: float, y: float, yaw: float, goal: GoalPose) -> bool:
         """校验位姿到目标的直线拼接段（按 motion_resolution 加密）。"""

@@ -42,7 +42,7 @@
 - [ ] P2.4 噪声模型（FR-SIM-03）：sim/noise.py 三档。
 - [ ] P2.5 BEV 参数化（FR-SIM-06）：extent 随场景配置；npz schema v2（bev_meta + task_meta）。
 - [ ] P2.6 任务层（FR-TASK-01）：Task + TaskSampler 矩阵采样。
-- [ ] P2.7 专家系统增强（FR-PLAN-01/02）：reeds_shepp.py（48 词曲表）；smoothing.py；profile.py 梯形速度剖面。
+- [x] P2.7 专家系统增强（FR-PLAN-01/02）：reeds_shepp.py（48 词曲表）；smoothing.py；profile.py 梯形速度剖面。（2026-08-24 完成：12 基本公式×4 对称的 48 词族、米制弧长采样与全候选排序；Hybrid A* 车身尺度解析邻域+每 5 节点门控+逐位姿碰撞安全接入，自动回归覆盖 S3/S5 直线及转向入位；三次 Hermite 捷径保留换向点并校验碰撞/曲率；梯形剖面约束加减速、换向停车和倒车降速。111 项全仓测试通过；1000 组随机 SE(2) 候选失败 0；200 回合闭环成功率 99.0%、碰撞率 1.0%、规划失败重采 26 次、耗时 139s，较 M1 基线 98.5%/1.5%/43 次/183s 改善）
 - [ ] P2.8 数据管线重构（FR-DATA-01/02/03）：generate() 接收 Task 列表；splits.py；build_dataset/inspect_dataset 脚本。出口：3000+ 条分层集 + 统计图。
 
 ## M3 网络与训练（约 1.5 周）

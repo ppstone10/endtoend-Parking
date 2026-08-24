@@ -7,6 +7,7 @@ import numpy as np
 from interfaces import GoalPose, VehicleState
 from planner import HybridAStarPlanner
 from sim import ParkingEnvironment, RectangleObstacle
+from sim.scenes import build_scene
 
 
 def _open_env():
@@ -108,6 +109,60 @@ class TestHybridAStarPlanner(unittest.TestCase):
             for cx, cy in corners:
                 # 车身角点必须仍离障碍至少 margin（4m 通道内即 |y| <= 1 - 0.2）。
                 self.assertLessEqual(abs(cy), 2.0 - margin)
+
+    def test_analytic_expansion_plans_tight_s3_and_s5_scenes(self):
+        """S3/S5 从入口倒车入位，仅展开起点即由 RS 曲线精确接管。"""
+        cases = [
+            ("S3_maintenance", -3.5),
+            ("S5_crusher", -3.5),
+        ]
+        for scene_name, start_y in cases:
+            with self.subTest(scene=scene_name):
+                bundle = build_scene(scene_name)
+                goal = bundle.free_spots()[0].pose
+                start = VehicleState(goal.x, start_y, goal.yaw)
+                planner = HybridAStarPlanner(
+                    env=bundle.env,
+                    vehicle_length=6.0,
+                    vehicle_width=3.0,
+                    collision_margin=0.1,
+                    analytic_expansion_distance=20.0,
+                    max_expansions=1,
+                )
+                traj = planner.plan(start, goal)
+                np.testing.assert_allclose(traj.points[-1], [goal.x, goal.y, goal.yaw], atol=1e-6)
+                for px, py, pyaw in traj.points:
+                    self.assertTrue(planner._pose_free(float(px), float(py), float(pyaw)))
+
+    def test_vehicle_scaled_analytic_neighborhood_handles_turning_approaches(self):
+        """默认两车长解析邻域覆盖 S3/S5 非直线入位，不依赖调用方调参。"""
+        cases = [
+            ("S3_maintenance", VehicleState(0.0, -8.0, np.pi / 2.0)),
+            ("S5_crusher", VehicleState(-1.0, -5.0, 0.0)),
+        ]
+        for scene_name, start in cases:
+            with self.subTest(scene=scene_name):
+                bundle = build_scene(scene_name)
+                goal = bundle.free_spots()[0].pose
+                planner = HybridAStarPlanner(
+                    env=bundle.env,
+                    vehicle_length=6.0,
+                    vehicle_width=3.0,
+                    collision_margin=0.1,
+                    max_expansions=5000,
+                )
+                self.assertEqual(planner.analytic_expansion_distance, 12.0)
+                traj = planner.plan(start, goal)
+                np.testing.assert_allclose(traj.points[-1], [goal.x, goal.y, goal.yaw], atol=1e-6)
+
+    def test_invalid_analytic_interval_raises(self):
+        with self.assertRaises(ValueError):
+            HybridAStarPlanner(env=_open_env(), analytic_expansion_interval=0)
+
+    def test_analytic_expansion_can_be_disabled_for_rollback(self):
+        planner = HybridAStarPlanner(env=_open_env(), analytic_expansion_distance=0.0)
+        trajectory = planner.plan(VehicleState(0.0, 0.0, 0.0), GoalPose(4.0, 0.0, 0.0))
+        self.assertGreater(trajectory.horizon, 2)
 
 
 if __name__ == "__main__":
