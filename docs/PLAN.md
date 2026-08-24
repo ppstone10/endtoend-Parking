@@ -36,7 +36,7 @@
 
 ## M2 平台与数据（约 1.5~2 周）
 
-- [ ] P2.1 障碍体系重构（FR-SIM-01）：Obstacle ABC + Polygon/Circle/Rectangle；kind 语义（wall/berm/cliff/rock/vehicle/equipment）；解析线段求交 raycast；悬崖"碰撞但不挡射线"。出口：新旧 raycast 一致性回归。
+- [x] P2.1 障碍体系重构（FR-SIM-01）：Obstacle ABC + Polygon/Circle/Rectangle；kind 语义（wall/berm/cliff/rock/vehicle/equipment）；解析线段求交 raycast；悬崖"碰撞但不挡射线"。出口：新旧 raycast 一致性回归。（2026-08-24 完成：`sim/obstacles.py` 三形状 + 三语义属性；`environment.py` 解析 raycast 与旧步进一致性 ≤0.05m；LiDAR 一帧 56→1.2ms、NetworkSource 推理 158→5.4ms 达 NFR-05；新增 SIM Spec 3 规范 ID，86 项测试全过）
 - [ ] P2.2 场景库（FR-SIM-04/05）：spots.py、scenes.py 注册表 S1–S9、scenes_validate.py、experiments/scenes/*.yaml。出口：V1 九场景图。
 - [ ] P2.3 车辆参数化（FR-SIM-02）：已在 M1 提前。
 - [ ] P2.4 噪声模型（FR-SIM-03）：sim/noise.py 三档。

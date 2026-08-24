@@ -6,7 +6,7 @@
 |---|---|---|
 | 统一接口 | `interfaces/` | 定义三阶段共用的数据契约：传感器帧、BEV、车辆状态、目标位姿、轨迹、控制指令；坐标统一为车辆中心局部坐标系 |
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
-| Python 仿真 | `sim/` | 二维矿区泊车环境、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应）、`vehicle_config.py` 车辆参数统一来源（矿卡 6×3m 预设，规划器/MPC/碰撞统一注入） |
+| Python 仿真 | `sim/` | 二维矿区泊车环境（`obstacles.py` 障碍体系：矩形/多边形/圆 + kind/emits_points/forbidden 语义，解析射线投射）、差分驱动车辆模型、模拟 LiDAR 与相机（`camera_model.py` 提供地面↔像素单应）、`vehicle_config.py` 车辆参数统一来源（矿卡 6×3m 预设，规划器/MPC/碰撞统一注入） |
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 从起始状态到目标泊车位姿生成差分驱动可行轨迹（运动基元 + 栅格/yaw 离散 + C-space 膨胀裕度 + 拼接段加密校验） |
@@ -33,6 +33,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
   → 终止（到达双阈值/碰撞/超时/振荡）→ EpisodeResult（metrics/ 聚合）
 ```
 
+- 障碍物碰撞与点云语义分离：`is_free`/`has_collision` 只检查 forbidden 障碍与地图边界；`raycast` 只与 emits_points 障碍求交（悬崖禁止进入但不挡射线，地面标线可通行）。
 - Camera→BEV 与模拟相机共用同一套单应几何（`sim/camera_model.py` 与 `sensor2bev/camera_bev.py` 推导一致），保证渲染与反投影互逆。
 - MPC 进度锚定轨迹时间轴（单调推进），参考轨迹 dt 与控制周期不一致时按时间插值对齐；求解器为 CEM（纯 numpy）。
 

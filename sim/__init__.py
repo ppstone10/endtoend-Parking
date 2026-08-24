@@ -1,7 +1,20 @@
 """Python 仿真环境包。"""
 
 from .camera_model import CameraModel
-from .environment import ParkingEnvironment, RectangleObstacle
+from .environment import ParkingEnvironment
+from .obstacles import (
+    KIND_BERM,
+    KIND_CLIFF,
+    KIND_EQUIPMENT,
+    KIND_LINE,
+    KIND_ROCK,
+    KIND_VEHICLE,
+    KIND_WALL,
+    CircleObstacle,
+    Obstacle,
+    PolygonObstacle,
+    RectangleObstacle,
+)
 from .sensor_camera import SimulatedCamera
 from .sensor_sim import SimulatedLiDAR
 from .vehicle_config import (
@@ -15,7 +28,17 @@ from .vehicle_model import DifferentialDriveModel
 
 __all__ = [
     "ParkingEnvironment",
+    "Obstacle",
     "RectangleObstacle",
+    "PolygonObstacle",
+    "CircleObstacle",
+    "KIND_WALL",
+    "KIND_BERM",
+    "KIND_CLIFF",
+    "KIND_ROCK",
+    "KIND_VEHICLE",
+    "KIND_EQUIPMENT",
+    "KIND_LINE",
     "CameraModel",
     "SimulatedCamera",
     "SimulatedLiDAR",
