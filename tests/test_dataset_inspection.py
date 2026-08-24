@@ -6,7 +6,13 @@ from pathlib import Path
 
 import numpy as np
 
-from dataset.inspection import render_sample_overlay, summarize_dataset
+from dataset.inspection import (
+    _to_local,
+    _vehicle_polygon,
+    render_sample_overlay,
+    select_representative_indices,
+    summarize_dataset,
+)
 
 
 def _data():
@@ -16,6 +22,7 @@ def _data():
     return {
         "bevs": np.zeros((2, 5, 4, 4), dtype=np.float32),
         "states": np.zeros((2, 5), dtype=np.float32),
+        "goals": np.array([[2, 0, 0], [-1, 0, 0]], dtype=np.float32),
         "trajs": trajs,
         "masks": np.array([[1, 1, 1], [1, 1, 0]], dtype=np.float32),
         "bev_meta": {
@@ -46,6 +53,43 @@ class TestDatasetInspection(unittest.TestCase):
             render_sample_overlay(_data(), 0, path)
             self.assertTrue(path.exists())
             self.assertGreater(path.stat().st_size, 0)
+
+    def test_representative_selection_prioritizes_task_type_coverage(self):
+        data = {
+            "trajs": np.zeros((6, 1, 3), dtype=np.float32),
+            "task_meta": [
+                {"task_type": "T1"},
+                {"task_type": "T1"},
+                {"task_type": "T2"},
+                {"task_type": "T3"},
+                {"task_type": "T4"},
+                {"task_type": "T5"},
+            ],
+        }
+        indices = select_representative_indices(data, 5)
+        selected_types = {data["task_meta"][index]["task_type"] for index in indices}
+        self.assertEqual(selected_types, {"T1", "T2", "T3", "T4", "T5"})
+
+    def test_representative_selection_rejects_misaligned_metadata(self):
+        data = {
+            "trajs": np.zeros((2, 1, 3), dtype=np.float32),
+            "task_meta": [{"task_type": "T1"}],
+        }
+        with self.assertRaisesRegex(ValueError, "task_meta"):
+            select_representative_indices(data, 1)
+
+    def test_vehicle_footprint_and_goal_heading_use_local_coordinates(self):
+        footprint = _vehicle_polygon(np.array([0.0, 0.0, 0.0]))
+        self.assertAlmostEqual(float(np.ptp(footprint[:, 0])), 3.0)
+        self.assertAlmostEqual(float(np.ptp(footprint[:, 1])), 6.0)
+
+        goal_local = _to_local(
+            np.array([[10.0, 12.0, np.pi]]),
+            x=10.0,
+            y=10.0,
+            yaw=np.pi / 2.0,
+        )[0]
+        np.testing.assert_allclose(goal_local, [2.0, 0.0, np.pi / 2.0], atol=1e-7)
 
 
 if __name__ == "__main__":

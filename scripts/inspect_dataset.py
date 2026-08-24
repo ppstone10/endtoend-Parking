@@ -10,16 +10,24 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
-
-from dataset import DatasetGenerator, render_sample_overlay, summarize_dataset
+from dataset import (
+    DatasetGenerator,
+    render_sample_overlay,
+    select_representative_indices,
+    summarize_dataset,
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="检查 schema v1/v2 NPZ 数据集")
     parser.add_argument("path", type=Path)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--samples", type=int, default=4)
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=5,
+        help="保存的代表样本数；优先覆盖不同任务类型（默认：5）",
+    )
     args = parser.parse_args()
     if args.samples < 0:
         parser.error("--samples 不能为负")
@@ -35,10 +43,7 @@ def main() -> None:
     (args.output / "summary.json").write_text(encoded, encoding="utf-8")
     count = int(summary["sample_count"])
     if args.samples and count:
-        indices = np.linspace(
-            0, count - 1, min(args.samples, count), dtype=int
-        ).tolist()
-        for index in dict.fromkeys(indices):
+        for index in select_representative_indices(data, args.samples):
             render_sample_overlay(data, index, args.output / f"sample_{index:05d}.png")
 
 
