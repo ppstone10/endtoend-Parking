@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from dataset.inspection import (
+    _intermediate_pose_indices,
     _to_local,
     _vehicle_polygon,
     render_sample_overlay,
@@ -101,6 +102,23 @@ class TestDatasetInspection(unittest.TestCase):
             yaw=np.pi / 2.0,
         )[0]
         np.testing.assert_allclose(goal_local, [2.0, 0.0, np.pi / 2.0], atol=1e-7)
+
+    def test_intermediate_poses_include_fixed_center_pivot_evidence(self):
+        points = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.2],
+                [1.0, 0.0, 0.4],
+                [2.0, 0.0, 0.4],
+            ]
+        )
+        lengths = np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1)
+        pivot = (lengths <= 1e-6) & (np.abs(np.diff(points[:, 2])) > 1e-6)
+        selected = _intermediate_pose_indices(
+            points, lengths, np.array([], dtype=int), pivot
+        )
+        self.assertIn(2, selected)
 
     def test_strict_maneuver_gate_rejects_inconsistent_archive_summary(self):
         data = _data()

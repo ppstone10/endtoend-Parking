@@ -24,15 +24,23 @@ from dataset import (
     build_task_plan,
     generate_with_retries,
     require_maneuver_consistency,
+    require_trajectory_feasibility,
     summarize_dataset,
 )
 from interfaces import CameraIntrinsics
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
-from sim import MINING_TRUCK, SimulatedCamera, SimulatedLiDAR, get_noise_profile
+from sim import (
+    MINING_DRILL_RIG,
+    SimulatedCamera,
+    SimulatedLiDAR,
+    VehicleConfig,
+    get_noise_profile,
+    load_vehicle_config,
+)
 
 
-def build_components(task):
+def build_components(task, vehicle_config: VehicleConfig = MINING_DRILL_RIG):
     """按 Task 场景、噪声和 BEV 配置构造专家规划/传感器组件。"""
     profile = get_noise_profile(task.difficulty.noise_level)
     seed_sequence = np.random.SeedSequence([task.seed, 2, 8])
@@ -63,18 +71,18 @@ def build_components(task):
         camera_sensor=SimulatedCamera(
             task.scene.env,
             intrinsics,
-            parking_area=(MINING_TRUCK.length, MINING_TRUCK.width),
+            parking_area=(vehicle_config.length, vehicle_config.width),
             noise=profile,
             seed=camera_seed,
         ),
         lidar2bev=LiDAR2BEV(config=task.scene.bev_config),
         camera2bev=Camera2BEV(config=task.scene.bev_config),
         bev_fusion=BEVFusion(
-            vehicle_length=MINING_TRUCK.length,
-            vehicle_width=MINING_TRUCK.width,
+            vehicle_length=vehicle_config.length,
+            vehicle_width=vehicle_config.width,
         ),
     )
-    planner = HybridAStarPlanner(task.scene.env, **MINING_TRUCK.planner_kwargs())
+    planner = HybridAStarPlanner(task.scene.env, **vehicle_config.planner_kwargs())
     return planner, pipeline
 
 
@@ -104,7 +112,18 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("data/task_dataset"))
     parser.add_argument("--max-retries", type=int, default=100)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--vehicle-config",
+        type=Path,
+        default=None,
+        help="履带钻机 JSON 配置；默认 configs/vehicles/tracked_drill_rig.json",
+    )
     args = parser.parse_args()
+    vehicle_config = (
+        MINING_DRILL_RIG
+        if args.vehicle_config is None
+        else load_vehicle_config(args.vehicle_config)
+    )
 
     plan = build_task_plan(
         total_count=args.count,
@@ -117,7 +136,9 @@ def main() -> None:
         return
 
     args.output.mkdir(parents=True, exist_ok=True)
-    generator = DatasetGenerator(component_factory=build_components)
+    generator = DatasetGenerator(
+        component_factory=lambda task: build_components(task, vehicle_config)
+    )
     reports = {}
     partial_paths: dict[str, Path] = {}
     reserved_task_ids = {
@@ -136,8 +157,11 @@ def main() -> None:
         reserved_task_ids.update(task.task_id for task in report.replacements)
         partial = args.output / f"{split_name}.partial.npz"
         generator.save(list(report.samples), partial)
-        inspection_summary = summarize_dataset(DatasetGenerator.load(partial))
+        inspection_summary = summarize_dataset(
+            DatasetGenerator.load(partial), vehicle_config=vehicle_config
+        )
         require_maneuver_consistency(inspection_summary)
+        require_trajectory_feasibility(inspection_summary)
         partial_paths[split_name] = partial
         reports[split_name] = {
             "count": len(report.samples),
@@ -146,6 +170,7 @@ def main() -> None:
             "max_retries_per_task": args.max_retries,
             "replacement_count": len(report.replacements),
             "maneuver_consistency": inspection_summary["maneuver_consistency"],
+            "trajectory_feasibility": inspection_summary["trajectory_feasibility"],
         }
         print(
             f"{split_name}: {len(report.samples)} 条，"
@@ -163,6 +188,7 @@ def main() -> None:
         "test_scene": args.test_scene,
         "requested_count": args.count,
         "max_retries": args.max_retries,
+        "vehicle_model": vehicle_config.to_metadata(),
         "ratios": {"train": 0.8, "val": 0.1, "test": 0.1},
         "files": files,
         "plan": planned,

@@ -26,6 +26,10 @@ from .maneuver import (
     audit_maneuver_consistency,
     validate_minimum_requested_distance_ratio,
 )
+from .feasibility import (
+    TrajectoryFeasibilityAudit,
+    audit_trajectory_feasibility,
+)
 
 
 class TaskGenerationError(RuntimeError):
@@ -67,6 +71,7 @@ class DatasetGenerator:
         component_factory: Callable[[Task], tuple[Any, Any]] | None = None,
         goal_selector: Callable[[Task, Any], TaskGoal] | None = None,
         enforce_maneuver_consistency: bool = True,
+        enforce_trajectory_feasibility: bool = True,
         minimum_requested_distance_ratio: float = (
             DEFAULT_MIN_REQUESTED_DISTANCE_RATIO
         ),
@@ -82,6 +87,7 @@ class DatasetGenerator:
         self.component_factory = component_factory
         self.goal_selector = goal_selector
         self.enforce_maneuver_consistency = bool(enforce_maneuver_consistency)
+        self.enforce_trajectory_feasibility = bool(enforce_trajectory_feasibility)
         self.minimum_requested_distance_ratio = (
             validate_minimum_requested_distance_ratio(
                 minimum_requested_distance_ratio
@@ -112,9 +118,40 @@ class DatasetGenerator:
                 trajectory = self.planner.plan(start, goal)
             except (RuntimeError, ValueError):
                 continue
+            feasibility_audit = None
+            vehicle_model: dict[str, Any] = {}
+            try:
+                feasibility_audit, vehicle_model = self._audit_feasibility(
+                    self.planner, trajectory, start, goal
+                )
+            except (AttributeError, TypeError, ValueError):
+                if self.enforce_trajectory_feasibility:
+                    continue
+            if (
+                self.enforce_trajectory_feasibility
+                and feasibility_audit is not None
+                and not feasibility_audit.feasible
+            ):
+                continue
             bev = self.sensor_pipeline.capture_bev(start.x, start.y, start.yaw)
             samples.append(
-                TrainingSample(bev=bev, goal=goal, state=start, expert_trajectory=trajectory)
+                TrainingSample(
+                    bev=bev,
+                    goal=goal,
+                    state=start,
+                    expert_trajectory=trajectory,
+                    task_meta={
+                        "dataset": {
+                            "source": "legacy_random",
+                            "vehicle_model": vehicle_model,
+                            "feasibility_audit": (
+                                None
+                                if feasibility_audit is None
+                                else feasibility_audit.to_metadata()
+                            ),
+                        }
+                    },
+                )
             )
         if len(samples) < count:
             raise RuntimeError(
@@ -127,7 +164,14 @@ class DatasetGenerator:
         if getattr(pipeline, "bev_config", None) != task.scene.bev_config:
             raise TaskGenerationError(task.task_id, "传感器管道 BEV 配置与场景不一致")
 
-        goal, trajectory, goal_policy, maneuver_audit = self._resolve_goal(task, planner)
+        (
+            goal,
+            trajectory,
+            goal_policy,
+            maneuver_audit,
+            feasibility_audit,
+            vehicle_model,
+        ) = self._resolve_goal(task, planner)
         if hasattr(pipeline, "set_target_goals"):
             pipeline.set_target_goals([goal.as_goal_pose()])
         try:
@@ -143,6 +187,10 @@ class DatasetGenerator:
             "goal_policy": goal_policy,
             "selected_goal": goal.to_metadata(),
             "maneuver_audit": maneuver_audit.to_metadata(),
+            "vehicle_model": vehicle_model,
+            "feasibility_audit": (
+                None if feasibility_audit is None else feasibility_audit.to_metadata()
+            ),
         }
         return TrainingSample(
             bev=bev,
@@ -161,7 +209,14 @@ class DatasetGenerator:
 
     def _resolve_goal(
         self, task: Task, planner: Any
-    ) -> tuple[TaskGoal, Trajectory, str, ManeuverAudit]:
+    ) -> tuple[
+        TaskGoal,
+        Trajectory,
+        str,
+        ManeuverAudit,
+        TrajectoryFeasibilityAudit | None,
+        dict[str, Any],
+    ]:
         if task.goal is not None:
             goals = (task.goal,)
             policy = "task_goal"
@@ -182,6 +237,8 @@ class DatasetGenerator:
         failures: list[str] = []
         inconsistent_count = 0
         invalid_audit_count = 0
+        infeasible_count = 0
+        unavailable_feasibility_count = 0
         for goal in goals:
             try:
                 trajectory = planner.plan(task.start, goal.as_goal_pose())
@@ -204,9 +261,40 @@ class DatasetGenerator:
                 inconsistent_count += 1
                 failures.append(f"{goal.spot_id}: {_maneuver_failure_detail(audit)}")
                 continue
-            return goal, trajectory, policy, audit
+            try:
+                feasibility_audit, vehicle_model = self._audit_feasibility(
+                    planner, trajectory, task.start, goal.as_goal_pose()
+                )
+            except (AttributeError, TypeError, ValueError) as exc:
+                unavailable_feasibility_count += 1
+                failures.append(f"{goal.spot_id}: 轨迹可行性审计失败（{exc}）")
+                if self.enforce_trajectory_feasibility:
+                    continue
+                feasibility_audit, vehicle_model = None, {}
+            if (
+                self.enforce_trajectory_feasibility
+                and feasibility_audit is not None
+                and not feasibility_audit.feasible
+            ):
+                infeasible_count += 1
+                failures.append(
+                    f"{goal.spot_id}: {_feasibility_failure_detail(feasibility_audit)}"
+                )
+                continue
+            return (
+                goal,
+                trajectory,
+                policy,
+                audit,
+                feasibility_audit,
+                vehicle_model,
+            )
         detail = "; ".join(failures) or "没有可用目标"
-        if inconsistent_count:
+        if infeasible_count:
+            code = "trajectory_infeasible"
+        elif unavailable_feasibility_count and self.enforce_trajectory_feasibility:
+            code = "trajectory_audit_unavailable"
+        elif inconsistent_count:
             code = "maneuver_inconsistent"
         elif invalid_audit_count:
             code = "maneuver_audit_invalid"
@@ -217,6 +305,27 @@ class DatasetGenerator:
             f"所有目标均不可用于专家监督（{detail}）",
             code=code,
         )
+
+    @staticmethod
+    def _audit_feasibility(
+        planner: Any,
+        trajectory: Trajectory,
+        start: VehicleState,
+        goal: GoalPose,
+    ) -> tuple[TrajectoryFeasibilityAudit, dict[str, Any]]:
+        vehicle_model = planner.model_metadata()
+        audit = audit_trajectory_feasibility(
+            trajectory.points,
+            dt=trajectory.dt,
+            max_v=abs(float(planner.plan_v)),
+            max_omega=abs(float(planner.max_omega)),
+            pose_free=planner._pose_free,
+            swept_segment_free=planner._swept_segment_free,
+            model_metadata=vehicle_model,
+            expected_start_pose=np.asarray([start.x, start.y, start.yaw]),
+            expected_goal_pose=np.asarray([goal.x, goal.y, goal.yaw]),
+        )
+        return audit, vehicle_model
 
     def save(self, samples: list[TrainingSample], path: str | Path) -> None:
         """按 schema v2 写入 npz（轨迹补零，元数据使用 Unicode JSON）。"""
@@ -349,4 +458,15 @@ def _maneuver_failure_detail(audit: ManeuverAudit) -> str:
         f"倒车 {audit.reverse_distance_ratio:.1%}，"
         f"请求方向占比 {audit.requested_distance_ratio:.1%} < "
         f"{audit.minimum_requested_distance_ratio:.1%}"
+    )
+
+
+def _feasibility_failure_detail(audit: TrajectoryFeasibilityAudit) -> str:
+    return (
+        "轨迹不可行："
+        f"碰撞检查 {'通过' if audit.collision_free else '失败'}、"
+        f"运动学检查 {'通过' if audit.kinematically_feasible else '失败'}，"
+        f"最大速度 {audit.max_linear_speed_mps:.3f}m/s、"
+        f"最大角速度 {audit.max_angular_speed_radps:.3f}rad/s、"
+        f"最大横向残差 {audit.max_lateral_residual_m:.4f}m"
     )

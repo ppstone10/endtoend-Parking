@@ -76,6 +76,11 @@ class TestTaskPlan(unittest.TestCase):
         target_index = sample.bev.channels.index("target")
         self.assertGreater(np.count_nonzero(sample.bev.data[target_index] > 0.5), 0)
         self.assertGreater(sample.expert_trajectory.horizon, 1)
+        self.assertTrue(sample.task_meta["dataset"]["feasibility_audit"]["feasible"])
+        self.assertEqual(
+            sample.task_meta["dataset"]["vehicle_model"]["model_version"],
+            "tracked_pivot_v1",
+        )
 
 
 class _FailOnceGenerator:

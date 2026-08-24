@@ -1,8 +1,8 @@
 """Hybrid A* 专家轨迹生成器。
 
-从起始状态到目标泊车位姿规划差分驱动可行的轨迹，作为训练数据标签。
-算法要点（参考 PythonRobotics 的成熟实现并适配差分驱动）：
-- 运动基元：离散 omega 与前后方向，沿弧长插值积分运动学；
+从起始状态到目标泊车位姿规划履带钻机低速运动学可行轨迹。
+算法要点（参考成熟 Hybrid A*/State Lattice 实现并适配履带底盘）：
+- 运动基元：离散 omega 前后行驶，并支持绕两履带几何中心原地旋转；
 - 状态离散：x/y 栅格 + yaw 扇区，用于 closed/open 集合判重；
 - 碰撞检测：沿路径采样车辆矩形四角，检查是否在自由空间；
 - 启发式：欧氏距离下界（admissible），保证搜索趋近目标。
@@ -17,6 +17,7 @@ import numpy as np
 from interfaces import GoalPose, Trajectory, VehicleState
 from sim import ParkingEnvironment
 
+from .collision import RectangleFootprintCollisionChecker
 from .reeds_shepp import reeds_shepp_paths
 
 
@@ -68,6 +69,13 @@ class HybridAStarPlanner:
         analytic_expansion_distance: float | None = None,
         analytic_expansion_interval: int = 5,
         min_turning_radius: float | None = None,
+        enable_pivot: bool = False,
+        pivot_omega: float | None = None,
+        rotation_penalty: float = 5.0,
+        collision_check_resolution: float = 0.1,
+        vehicle_model_name: str = "tracked_kinematic",
+        vehicle_model_version: str = "tracked_pivot_v1",
+        vehicle_model_metadata: dict | None = None,
     ) -> None:
         self.env = env
         self.vehicle_length = vehicle_length
@@ -86,6 +94,13 @@ class HybridAStarPlanner:
             raise ValueError("analytic_expansion_interval 至少为 1")
         if min_turning_radius is not None and min_turning_radius <= 0.0:
             raise ValueError("min_turning_radius 必须为正数")
+        if collision_check_resolution <= 0.0:
+            raise ValueError("collision_check_resolution 必须为正数")
+        if rotation_penalty <= 0.0:
+            raise ValueError("rotation_penalty 必须为正数")
+        resolved_pivot_omega = max_omega if pivot_omega is None else float(pivot_omega)
+        if resolved_pivot_omega <= 0.0 or resolved_pivot_omega > abs(max_omega):
+            raise ValueError("pivot_omega 必须为正且不超过 max_omega")
         # 矿卡紧凑入位需在约两个车长的范围内尝试解析机动；
         # 固定 6m 门限会使 6m 车身在 S3/S5 先陷入离散搜索。
         self.analytic_expansion_distance = (
@@ -98,6 +113,21 @@ class HybridAStarPlanner:
             float(min_turning_radius)
             if min_turning_radius is not None
             else abs(plan_v) / abs(max_omega)
+        )
+        self.enable_pivot = bool(enable_pivot)
+        self.pivot_omega = resolved_pivot_omega
+        self.rotation_penalty = float(rotation_penalty)
+        self.collision_check_resolution = float(collision_check_resolution)
+        self.trajectory_dt = self.motion_resolution / abs(self.plan_v)
+        self.vehicle_model_name = str(vehicle_model_name)
+        self.vehicle_model_version = str(vehicle_model_version)
+        self.vehicle_model_metadata = dict(vehicle_model_metadata or {})
+        self._collision_checker = RectangleFootprintCollisionChecker(
+            env,
+            vehicle_length=vehicle_length,
+            vehicle_width=vehicle_width,
+            collision_margin=collision_margin,
+            resolution=collision_check_resolution,
         )
         self.num_yaw = int(round(2.0 * np.pi / yaw_resolution))
         self.omega_values = np.linspace(-max_omega, max_omega, omega_steps)
@@ -195,7 +225,7 @@ class HybridAStarPlanner:
         children: list[_Node] = []
         arc_len = self.xy_resolution * 1.5
         n_steps = max(1, int(np.ceil(arc_len / self.motion_resolution)))
-        dt = self.motion_resolution / abs(self.plan_v)
+        dt = self.trajectory_dt
         for omega in self.omega_values:
             for direction in (1.0, -1.0):
                 v = direction * self.plan_v
@@ -205,10 +235,14 @@ class HybridAStarPlanner:
                 x, y, yaw = node.x, node.y, node.yaw
                 collision = False
                 for _ in range(n_steps):
+                    previous = (x, y, yaw)
                     x += v * np.cos(yaw) * dt
                     y += v * np.sin(yaw) * dt
                     yaw = self._norm_angle(yaw + omega * dt)
-                    if not self._pose_free(x, y, yaw) or not self._within_search_bounds(x, y):
+                    if (
+                        not self._within_search_bounds(x, y)
+                        or not self._swept_segment_free(previous, (x, y, yaw))
+                    ):
                         collision = True
                         break
                     xs.append(float(x))
@@ -216,8 +250,31 @@ class HybridAStarPlanner:
                     yaws.append(float(yaw))
                 if collision:
                     continue
-                child = _Node(x, y, yaw, node.g + arc_len, parent=node)
+                duration = n_steps * dt
+                child = _Node(x, y, yaw, node.g + duration, parent=node)
                 child.xs, child.ys, child.yaws = xs, ys, yaws
+                children.append(child)
+        if self.enable_pivot:
+            for direction in (-1.0, 1.0):
+                delta_yaw = direction * self.yaw_resolution
+                points = self._sample_pivot(
+                    (node.x, node.y, node.yaw), delta_yaw
+                )
+                if not self._path_free(points):
+                    continue
+                child = _Node(
+                    float(points[-1, 0]),
+                    float(points[-1, 1]),
+                    float(points[-1, 2]),
+                    node.g
+                    + self.rotation_penalty
+                    * abs(delta_yaw)
+                    / self.pivot_omega,
+                    parent=node,
+                )
+                child.xs = points[1:, 0].astype(float).tolist()
+                child.ys = points[1:, 1].astype(float).tolist()
+                child.yaws = points[1:, 2].astype(float).tolist()
                 children.append(child)
         return children
 
@@ -231,26 +288,108 @@ class HybridAStarPlanner:
         return float(np.hypot(goal.x - node.x, goal.y - node.y))
 
     def _analytic_connection(self, node: _Node, goal: GoalPose) -> _Node | None:
-        """按长度尝试 48 词族候选，返回首条全位姿无碰撞的精确连接。"""
+        """比较履带直接候选与 48 词族候选，返回最低成本可行连接。"""
         start_pose = (node.x, node.y, node.yaw)
         goal_pose = (goal.x, goal.y, goal.yaw)
+        feasible: list[tuple[float, np.ndarray]] = []
+        if self.enable_pivot:
+            for cost, points in self._tracked_direct_candidates(start_pose, goal_pose):
+                if self._path_free(points):
+                    feasible.append((cost, points))
+            if self._heuristic_distance(node, goal) <= 1e-9 and feasible:
+                feasible.sort(key=lambda item: item[0])
+                return self._terminal_node(node, goal, *feasible[0])
         for candidate in reeds_shepp_paths(start_pose, goal_pose, self.min_turning_radius):
             points, _directions = candidate.sample(start_pose, self.motion_resolution)
             # 公式误差已在 reeds_shepp_paths 中限定；此处压到调用方的精确目标值，
             # 避免 _extract_trajectory 为 1e-15 量级残差再添加一个伪短段。
             points[-1] = goal_pose
-            if not all(
-                self._within_search_bounds(float(x), float(y))
-                and self._pose_free(float(x), float(y), float(yaw))
-                for x, y, yaw in points[1:]
-            ):
+            if not self._path_free(points):
                 continue
-            terminal = _Node(goal.x, goal.y, goal.yaw, node.g + candidate.total_length, parent=node)
-            terminal.xs = points[1:, 0].astype(float).tolist()
-            terminal.ys = points[1:, 1].astype(float).tolist()
-            terminal.yaws = points[1:, 2].astype(float).tolist()
-            return terminal
-        return None
+            feasible.append((candidate.total_length / abs(self.plan_v), points))
+        if not feasible:
+            return None
+        feasible.sort(key=lambda item: item[0])
+        return self._terminal_node(node, goal, *feasible[0])
+
+    def _terminal_node(
+        self, node: _Node, goal: GoalPose, cost: float, points: np.ndarray
+    ) -> _Node:
+        terminal = _Node(goal.x, goal.y, goal.yaw, node.g + cost, parent=node)
+        terminal.xs = points[1:, 0].astype(float).tolist()
+        terminal.ys = points[1:, 1].astype(float).tolist()
+        terminal.yaws = points[1:, 2].astype(float).tolist()
+        return terminal
+
+    def _tracked_direct_candidates(
+        self,
+        start_pose: tuple[float, float, float],
+        goal_pose: tuple[float, float, float],
+    ) -> list[tuple[float, np.ndarray]]:
+        """生成前/倒车的“旋转—直行—旋转”履带解析候选。"""
+        sx, sy, syaw = start_pose
+        gx, gy, gyaw = goal_pose
+        dx, dy = gx - sx, gy - sy
+        distance = float(np.hypot(dx, dy))
+        headings = [syaw] if distance <= 1e-9 else [
+            float(np.arctan2(dy, dx)),
+            self._norm_angle(float(np.arctan2(dy, dx)) + np.pi),
+        ]
+        candidates: list[tuple[float, np.ndarray]] = []
+        for heading in headings:
+            first_delta = self._angle_delta(heading, syaw)
+            last_delta = self._angle_delta(gyaw, heading)
+            pieces = [self._sample_pivot(start_pose, first_delta)]
+            if distance > 1e-9:
+                pieces.append(
+                    self._sample_straight(
+                        tuple(pieces[-1][-1]), (gx, gy, heading)
+                    )
+                )
+            pieces.append(
+                self._sample_pivot(tuple(pieces[-1][-1]), last_delta)
+            )
+            points = pieces[0]
+            for piece in pieces[1:]:
+                points = np.vstack((points, piece[1:]))
+            points[-1] = goal_pose
+            cost = distance / abs(self.plan_v) + self.rotation_penalty * (
+                abs(first_delta) + abs(last_delta)
+            ) / self.pivot_omega
+            candidates.append((cost, points))
+        return candidates
+
+    def _sample_pivot(
+        self, start_pose: tuple[float, float, float], delta_yaw: float
+    ) -> np.ndarray:
+        """以固定几何中心采样原地旋转，限制角速度与最远角点扫掠步长。"""
+        x, y, yaw = (float(value) for value in start_pose)
+        corner_radius = self._collision_checker.corner_radius
+        time_steps = abs(delta_yaw) / (self.pivot_omega * self.trajectory_dt)
+        sweep_steps = corner_radius * abs(delta_yaw) / self.collision_check_resolution
+        steps = max(1, int(np.ceil(max(time_steps, sweep_steps))))
+        fractions = np.linspace(0.0, 1.0, steps + 1)
+        points = np.empty((steps + 1, 3), dtype=np.float64)
+        points[:, 0] = x
+        points[:, 1] = y
+        points[:, 2] = [self._norm_angle(yaw + fraction * delta_yaw) for fraction in fractions]
+        return points
+
+    def _sample_straight(
+        self,
+        start_pose: tuple[float, float, float],
+        goal_pose: tuple[float, float, float],
+    ) -> np.ndarray:
+        sx, sy, syaw = (float(value) for value in start_pose)
+        gx, gy, _ = (float(value) for value in goal_pose)
+        distance = float(np.hypot(gx - sx, gy - sy))
+        steps = max(1, int(np.ceil(distance / self.motion_resolution)))
+        fractions = np.linspace(0.0, 1.0, steps + 1)
+        points = np.empty((steps + 1, 3), dtype=np.float64)
+        points[:, 0] = sx + fractions * (gx - sx)
+        points[:, 1] = sy + fractions * (gy - sy)
+        points[:, 2] = syaw
+        return points
 
     def _splice_valid(self, x: float, y: float, yaw: float, goal: GoalPose) -> bool:
         """校验位姿到目标的直线拼接段（按 motion_resolution 加密）。"""
@@ -276,16 +415,21 @@ class HybridAStarPlanner:
         while node is not None:
             chain.append(node)
             node = node.parent
-        for n in reversed(chain):
+        ordered = list(reversed(chain))
+        root = ordered[0]
+        xs.append(root.x)
+        ys.append(root.y)
+        yaws.append(root.yaw)
+        for n in ordered:
             xs.extend(n.xs)
             ys.extend(n.ys)
             yaws.extend(n.yaws)
         # 终点对齐到精确目标位姿。
-        if not xs:
-            xs = [n.x for n in chain]
-            ys = [n.y for n in chain]
-            yaws = [n.yaw for n in chain]
-        else:
+        if not np.allclose(
+            [xs[-1], ys[-1], yaws[-1]],
+            [goal.x, goal.y, goal.yaw],
+            atol=1e-9,
+        ):
             # 拼接段（节点末位姿 → 精确目标）不经过运动基元的碰撞检查，
             # 须逐点校验，防止贴墙目标产出带碰撞的拼接线。
             if not self._splice_valid(xs[-1], ys[-1], yaws[-1], goal):
@@ -298,8 +442,7 @@ class HybridAStarPlanner:
         keep = np.ones(pts.shape[0], dtype=bool)
         keep[1:] = np.any(pts[1:] != pts[:-1], axis=1)
         pts = pts[keep]
-        dt = self.motion_resolution / abs(self.plan_v)
-        return Trajectory(points=pts, dt=dt)
+        return Trajectory(points=pts, dt=self.trajectory_dt)
 
     # ------------------------------------------------------------------
     # 离散化与碰撞
@@ -313,23 +456,58 @@ class HybridAStarPlanner:
         return x_idx, y_idx, yaw_idx
 
     def _pose_free(self, x: float, y: float, yaw: float) -> bool:
-        """判断车辆矩形四角（及中心）是否全部位于自由空间。
+        """兼容既有调用，完整外廓判定由独立碰撞检查器拥有。"""
+        return self._collision_checker.pose_free(x, y, yaw)
 
-        collision_margin > 0 时将矩形各向外膨胀该裕度（C-space 膨胀），
-        使规划出的轨迹与障碍保持至少 margin 的净空，吸收跟踪误差。
-        """
-        half_l = self.vehicle_length / 2.0 + self.collision_margin
-        half_w = self.vehicle_width / 2.0 + self.collision_margin
-        cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
-        corners = [
-            (x + half_l * cos_yaw - half_w * sin_yaw, y + half_l * sin_yaw + half_w * cos_yaw),
-            (x + half_l * cos_yaw + half_w * sin_yaw, y + half_l * sin_yaw - half_w * cos_yaw),
-            (x - half_l * cos_yaw - half_w * sin_yaw, y - half_l * sin_yaw + half_w * cos_yaw),
-            (x - half_l * cos_yaw + half_w * sin_yaw, y - half_l * sin_yaw - half_w * cos_yaw),
-        ]
-        return all(self.env.is_free(cx, cy) for cx, cy in corners)
+    def _path_free(self, points: np.ndarray) -> bool:
+        """检查路径采样点、搜索边界及相邻位姿连续扫掠。"""
+        for x, y, _yaw in points:
+            if not self._within_search_bounds(float(x), float(y)):
+                return False
+        if not self._pose_free(*map(float, points[0])):
+            return False
+        for index in range(len(points) - 1):
+            if not self._swept_segment_free(points[index], points[index + 1]):
+                return False
+        return True
+
+    def _swept_segment_free(
+        self,
+        start_pose: tuple[float, float, float] | np.ndarray,
+        end_pose: tuple[float, float, float] | np.ndarray,
+    ) -> bool:
+        """兼容既有调用，连续扫掠由独立碰撞检查器拥有。"""
+        return self._collision_checker.swept_segment_free(
+            np.asarray(start_pose, dtype=np.float64),
+            np.asarray(end_pose, dtype=np.float64),
+        )
+
+    def model_metadata(self) -> dict:
+        """返回生成数据用于版本门禁的车辆/规划模型元数据。"""
+        if self.vehicle_model_metadata:
+            return dict(self.vehicle_model_metadata)
+        return {
+            "name": self.vehicle_model_name,
+            "model_version": self.vehicle_model_version,
+            "length": self.vehicle_length,
+            "width": self.vehicle_width,
+            "plan_v": self.plan_v,
+            "plan_max_omega": self.max_omega,
+            "collision_margin": self.collision_margin,
+            "xy_resolution": self.xy_resolution,
+            "yaw_resolution_deg": float(np.degrees(self.yaw_resolution)),
+            "motion_resolution": self.motion_resolution,
+            "collision_check_resolution": self.collision_check_resolution,
+            "enable_pivot": self.enable_pivot,
+            "pivot_omega": self.pivot_omega,
+            "rotation_penalty": self.rotation_penalty,
+        }
 
     @staticmethod
     def _norm_angle(angle: float) -> float:
         """将角度归一化到 [-pi, pi)。"""
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+    @classmethod
+    def _angle_delta(cls, target: float, source: float) -> float:
+        return cls._norm_angle(target - source)

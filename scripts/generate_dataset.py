@@ -17,7 +17,13 @@ from dataset import DatasetGenerator, SensorBEVPipeline
 from interfaces import BEVConfig, CameraIntrinsics
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
-from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
+from sim import (
+    MINING_DRILL_RIG,
+    ParkingEnvironment,
+    RectangleObstacle,
+    SimulatedCamera,
+    SimulatedLiDAR,
+)
 
 
 def build_pipeline(env, bev_config: BEVConfig | None = None) -> SensorBEVPipeline:
@@ -27,10 +33,17 @@ def build_pipeline(env, bev_config: BEVConfig | None = None) -> SensorBEVPipelin
     )
     return SensorBEVPipeline(
         lidar_sensor=SimulatedLiDAR(env, beams=360, max_range=20.0),
-        camera_sensor=SimulatedCamera(env, intrinsics),
+        camera_sensor=SimulatedCamera(
+            env,
+            intrinsics,
+            parking_area=(MINING_DRILL_RIG.length, MINING_DRILL_RIG.width),
+        ),
         lidar2bev=LiDAR2BEV(config=bev_config),
         camera2bev=Camera2BEV(config=bev_config),
-        bev_fusion=BEVFusion(),
+        bev_fusion=BEVFusion(
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+        ),
     )
 
 
@@ -43,7 +56,7 @@ def main() -> None:
             RectangleObstacle(x_min=-15.0, x_max=15.0, y_min=2.0, y_max=6.0),
         ],
     )
-    planner = HybridAStarPlanner(env=env)
+    planner = HybridAStarPlanner(env=env, **MINING_DRILL_RIG.planner_kwargs())
     generator = DatasetGenerator(env=env, planner=planner, sensor_pipeline=build_pipeline(env))
     samples = generator.generate(count=count)
 

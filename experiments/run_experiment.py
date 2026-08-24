@@ -64,11 +64,11 @@ def run_experiment(config: dict) -> dict:
     vehicle = get_vehicle(config.get("vehicle", "mining_truck"))
     env = build_env(config.get("env", {"kind": "corridor"}))
     planner_cfg = config.get("planner", {})
-    planner = HybridAStarPlanner(
-        env=env,
-        collision_margin=planner_cfg.get("collision_margin", 0.0),
-        **vehicle.planner_kwargs(),
+    planner_kwargs = vehicle.planner_kwargs()
+    planner_kwargs["collision_margin"] = planner_cfg.get(
+        "collision_margin", planner_kwargs["collision_margin"]
     )
+    planner = HybridAStarPlanner(env=env, **planner_kwargs)
     source = ExpertSource(planner)
 
     term_cfg = config.get("terminal", {})

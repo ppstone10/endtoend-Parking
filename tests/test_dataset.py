@@ -240,7 +240,8 @@ class TestTaskDrivenDataset(unittest.TestCase):
             "S1_parking_lot", TaskType.T1_NEAR, noise_level=NoiseLevel.LOW
         )
         generator = DatasetGenerator(
-            component_factory=lambda current: (_TaskPlanner(), _TaskPipeline(current))
+            component_factory=lambda current: (_TaskPlanner(), _TaskPipeline(current)),
+            enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
 
@@ -258,7 +259,8 @@ class TestTaskDrivenDataset(unittest.TestCase):
             component_factory=lambda current: (
                 _TaskPlanner(rejected_x=rejected_x),
                 _TaskPipeline(current),
-            )
+            ),
+            enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
 
@@ -290,7 +292,8 @@ class TestTaskDrivenDataset(unittest.TestCase):
         )
         planner = _FirstCandidateInconsistentPlanner()
         generator = DatasetGenerator(
-            component_factory=lambda current: (planner, _TaskPipeline(current))
+            component_factory=lambda current: (planner, _TaskPipeline(current)),
+            enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
 
@@ -333,6 +336,7 @@ class TestTaskDrivenDataset(unittest.TestCase):
                 _TaskPipeline(current),
             ),
             enforce_maneuver_consistency=False,
+            enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
         self.assertFalse(sample.task_meta["dataset"]["maneuver_audit"]["consistent"])

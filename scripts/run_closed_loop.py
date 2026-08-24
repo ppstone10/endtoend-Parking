@@ -22,7 +22,7 @@ from controller import MPCController
 from interfaces import GoalPose, VehicleState
 from metrics import summarize
 from runtime import ClosedLoopEngine, ExpertSource, NetworkSource, TerminalChecker
-from sim import DifferentialDriveModel
+from sim import DifferentialDriveModel, MINING_DRILL_RIG
 from scripts.train import build_env, build_pipeline
 
 
@@ -41,8 +41,9 @@ def make_source(kind: str, args, data: dict | None):
     env = build_env()
     if kind == "expert":
         from planner import HybridAStarPlanner
-
-        return ExpertSource(HybridAStarPlanner(env=env)), env
+        return ExpertSource(
+            HybridAStarPlanner(env=env, **MINING_DRILL_RIG.planner_kwargs())
+        ), env
     model = load_model(
         args.model,
         bev_channels=data["bevs"].shape[1],
@@ -97,8 +98,7 @@ def main() -> None:
             tasks.append((start, goal))
     else:
         from planner import HybridAStarPlanner
-
-        planner = HybridAStarPlanner(env=env)
+        planner = HybridAStarPlanner(env=env, **MINING_DRILL_RIG.planner_kwargs())
         rng = np.random.default_rng(0)
         half = env.world_size / 2.0 - 1.0
         while len(tasks) < args.samples:
@@ -113,13 +113,21 @@ def main() -> None:
             )
 
     engine = ClosedLoopEngine(
-        vehicle_model=DifferentialDriveModel(max_v=2.0, max_omega=1.0),
-        mpc=MPCController(dt=0.1, horizon=10, seed=0),
+        vehicle_model=DifferentialDriveModel(
+            **MINING_DRILL_RIG.vehicle_model_kwargs()
+        ),
+        mpc=MPCController(
+            dt=0.1,
+            horizon=10,
+            seed=0,
+            **MINING_DRILL_RIG.mpc_kwargs(),
+        ),
         source=source,
         terminal=TerminalChecker(tol_pos=0.3, tol_yaw=np.deg2rad(10.0)),
         env=env,
         replan_every=args.replan_every,
         max_steps=args.steps,
+        **MINING_DRILL_RIG.collision_kwargs(),
     )
 
     print(f"轨迹源={args.source}，共 {len(tasks)} 个回合（到达阈值 0.3m / 10°）")

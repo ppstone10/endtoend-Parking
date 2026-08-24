@@ -9,7 +9,9 @@ from typing import Any
 
 import numpy as np
 
-from sim.vehicle_config import MINING_TRUCK
+from sim.vehicle_config import MINING_DRILL_RIG, VehicleConfig
+
+from .feasibility import summarize_trajectory_feasibility
 
 from .maneuver import (
     audit_maneuver_consistency,
@@ -18,7 +20,9 @@ from .maneuver import (
 )
 
 
-def summarize_dataset(data: dict[str, Any]) -> dict[str, Any]:
+def summarize_dataset(
+    data: dict[str, Any], *, vehicle_config: VehicleConfig = MINING_DRILL_RIG
+) -> dict[str, Any]:
     """统计样本数、轨迹长度、倒车距离比例与任务分层数量。"""
     trajs = np.asarray(data["trajs"])
     masks = np.asarray(data["masks"])
@@ -61,6 +65,15 @@ def summarize_dataset(data: dict[str, Any]) -> dict[str, Any]:
         "maneuver_consistency": summarize_maneuver_consistency(
             trajs, masks, metadata
         ),
+        "trajectory_feasibility": summarize_trajectory_feasibility(
+            trajs,
+            masks,
+            dt=data.get("dt", np.asarray([1.0], dtype=np.float64)),
+            metadata=metadata,
+            vehicle_config=vehicle_config,
+            states=data.get("states"),
+            goals=data.get("goals"),
+        ),
     }
 
 
@@ -102,7 +115,7 @@ def select_representative_indices(data: dict[str, Any], count: int) -> list[int]
 
 
 def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) -> None:
-    """保存包含矿卡起终位姿、行驶方向和到位误差的专家轨迹验收图。"""
+    """保存包含钻机中心轨迹、中间外廓与三类门禁的专家验收图。"""
     import matplotlib.pyplot as plt
     from matplotlib.collections import LineCollection
     from matplotlib.lines import Line2D
@@ -144,6 +157,10 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
     final_position_error = float(np.linalg.norm(trajectory[-1, :2] - goal[:2]))
     final_yaw_error = abs(_wrap_angle(float(trajectory[-1, 2] - goal[2])))
     item_meta = metadata[index] if metadata is not None else {}
+    vehicle_config, model_confirmed = _vehicle_config_from_metadata(item_meta)
+    feasibility_meta = item_meta.get("dataset", {}).get("feasibility_audit")
+    if not isinstance(feasibility_meta, dict):
+        feasibility_meta = None
     requested_maneuver = item_meta.get("difficulty", {}).get("maneuver")
     maneuver_audit = None
     if requested_maneuver is not None:
@@ -154,7 +171,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
     figure, (axis, info_axis) = plt.subplots(
         1,
         2,
-        figsize=(11.5, 7.0),
+        figsize=(12.6, 8.2),
         gridspec_kw={"width_ratios": [3.3, 1.45]},
         constrained_layout=True,
     )
@@ -200,8 +217,48 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
                     )
                 )
         _draw_direction_arrows(axis, plot_points, segment_lengths, directions)
+    axis.scatter(
+        plot_points[:, 0],
+        plot_points[:, 1],
+        s=12,
+        facecolor="#FFFFFF",
+        edgecolor="#34495E",
+        linewidth=0.55,
+        alpha=0.82,
+        zorder=5,
+    )
 
-    switch_indices = np.flatnonzero(directions[1:] != directions[:-1]) + 1
+    yaw_delta = np.abs(_wrap_angles(np.diff(trajectory[:, 2])))
+    pivot_segments = (segment_lengths <= 1e-6) & (yaw_delta > 1e-6)
+    pivot_point_indices = np.unique(
+        np.concatenate(
+            (
+                np.flatnonzero(pivot_segments),
+                np.flatnonzero(pivot_segments) + 1,
+            )
+        )
+    )
+    if len(pivot_point_indices):
+        axis.scatter(
+            plot_points[pivot_point_indices, 0],
+            plot_points[pivot_point_indices, 1],
+            s=34,
+            facecolor="#F39C12",
+            edgecolor="#7D3C98",
+            linewidth=1.0,
+            marker="o",
+            zorder=7,
+        )
+
+    moving_segment_indices = np.flatnonzero(segment_lengths > 1e-6)
+    switch_indices = (
+        moving_segment_indices[1:][
+            directions[moving_segment_indices[1:]]
+            != directions[moving_segment_indices[:-1]]
+        ]
+        if len(moving_segment_indices) > 1
+        else np.array([], dtype=int)
+    )
     if len(switch_indices):
         axis.scatter(
             plot_points[switch_indices, 0],
@@ -214,9 +271,25 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
             zorder=7,
         )
 
+    for pose_index in _intermediate_pose_indices(
+        trajectory, segment_lengths, switch_indices, pivot_segments
+    ):
+        _draw_vehicle_pose(
+            axis,
+            local[pose_index],
+            vehicle_config=vehicle_config,
+            facecolor="#5DADE2",
+            edgecolor="#2471A3",
+            label=None,
+            alpha=0.12,
+            linewidth=0.9,
+            draw_heading=True,
+        )
+
     _draw_vehicle_pose(
         axis,
         np.array([0.0, 0.0, 0.0]),
+        vehicle_config=vehicle_config,
         facecolor="#2ECC71",
         edgecolor="#087F23",
         label="START",
@@ -224,6 +297,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
     _draw_vehicle_pose(
         axis,
         goal_local,
+        vehicle_config=vehicle_config,
         facecolor="#FFB347",
         edgecolor="#D35400",
         label="GOAL",
@@ -249,16 +323,41 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         axis,
         plot_points,
         goal_local,
+        vehicle_config=vehicle_config,
         x_bounds=(-right, left),
         y_bounds=(-back, front),
     )
     axis.set_aspect("equal")
     axis.grid(color="#7F8C8D", alpha=0.25, linewidth=0.7)
     legend_handles = [
-        Patch(facecolor="#2ECC71", edgecolor="#087F23", label="Start truck pose"),
-        Patch(facecolor="#FFB347", edgecolor="#D35400", label="Goal truck pose"),
+        Patch(facecolor="#2ECC71", edgecolor="#087F23", label="Start drill-rig pose"),
+        Patch(facecolor="#FFB347", edgecolor="#D35400", label="Goal drill-rig pose"),
         Line2D([0], [0], color="#1976D2", linewidth=2.6, label="Forward path"),
         Line2D([0], [0], color="#8E44AD", linewidth=2.6, label="Reverse path"),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor="#FFFFFF",
+            markeredgecolor="#34495E",
+            label="Center trajectory point",
+        ),
+        Patch(
+            facecolor="#5DADE2",
+            edgecolor="#2471A3",
+            alpha=0.18,
+            label="Intermediate drill-rig pose",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor="#F39C12",
+            markeredgecolor="#7D3C98",
+            label="In-place rotation",
+        ),
         Line2D(
             [0],
             [0],
@@ -292,6 +391,9 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         maneuver_consistent=(
             None if maneuver_audit is None else maneuver_audit.consistent
         ),
+        feasibility_audit=feasibility_meta,
+        vehicle_config=vehicle_config,
+        model_confirmed=model_confirmed,
         final_position_error=final_position_error,
         final_yaw_error=final_yaw_error,
     )
@@ -316,10 +418,71 @@ def _evenly_spaced_indices(total: int, count: int) -> list[int]:
     return list(dict.fromkeys(indices))
 
 
-def _vehicle_polygon(pose: np.ndarray) -> np.ndarray:
-    """返回绘图坐标（left, forward）中的矿卡四角。"""
-    half_length = MINING_TRUCK.length / 2.0
-    half_width = MINING_TRUCK.width / 2.0
+def _vehicle_config_from_metadata(
+    metadata: dict[str, Any],
+) -> tuple[VehicleConfig, bool]:
+    payload = metadata.get("dataset", {}).get("vehicle_model")
+    if isinstance(payload, dict):
+        try:
+            return VehicleConfig(**payload), True
+        except (TypeError, ValueError):
+            pass
+    return MINING_DRILL_RIG, False
+
+
+def _intermediate_pose_indices(
+    points: np.ndarray,
+    segment_lengths: np.ndarray,
+    switch_indices: np.ndarray,
+    pivot_segments: np.ndarray,
+    *,
+    spacing_m: float = 3.0,
+    maximum: int = 14,
+) -> list[int]:
+    """选择等距、换向和原地旋转证据位姿，避免把整图涂满外廓。"""
+    if len(points) < 3:
+        return []
+    selected = {int(index) for index in np.asarray(switch_indices, dtype=int)}
+    cumulative = np.concatenate(([0.0], np.cumsum(segment_lengths)))
+    if cumulative[-1] > spacing_m:
+        for target in np.arange(spacing_m, cumulative[-1], spacing_m):
+            selected.add(int(np.searchsorted(cumulative, target, side="left")))
+
+    pivot_indices = np.flatnonzero(pivot_segments)
+    if len(pivot_indices):
+        run_start = 0
+        for position in range(1, len(pivot_indices) + 1):
+            run_ended = (
+                position == len(pivot_indices)
+                or pivot_indices[position] != pivot_indices[position - 1] + 1
+            )
+            if not run_ended:
+                continue
+            run = pivot_indices[run_start:position]
+            selected.update(
+                {
+                    int(run[0]),
+                    int((run[0] + run[-1] + 1) // 2),
+                    int(run[-1] + 1),
+                }
+            )
+            run_start = position
+
+    selected.discard(0)
+    selected.discard(len(points) - 1)
+    ordered = sorted(index for index in selected if 0 < index < len(points) - 1)
+    if len(ordered) <= maximum:
+        return ordered
+    positions = _evenly_spaced_indices(len(ordered), maximum)
+    return [ordered[position] for position in positions]
+
+
+def _vehicle_polygon(
+    pose: np.ndarray, vehicle_config: VehicleConfig = MINING_DRILL_RIG
+) -> np.ndarray:
+    """返回绘图坐标（left, forward）中的履带钻机四角。"""
+    half_length = vehicle_config.length / 2.0
+    half_width = vehicle_config.width / 2.0
     corners = np.array(
         [
             [half_length, half_width],
@@ -338,50 +501,71 @@ def _vehicle_polygon(pose: np.ndarray) -> np.ndarray:
     return forward_left[:, [1, 0]]
 
 
-def _draw_vehicle_pose(axis, pose, *, facecolor, edgecolor, label) -> None:
+def _draw_vehicle_pose(
+    axis,
+    pose,
+    *,
+    vehicle_config: VehicleConfig,
+    facecolor,
+    edgecolor,
+    label,
+    alpha: float = 0.68,
+    linewidth: float = 2.2,
+    draw_heading: bool = True,
+) -> None:
     from matplotlib.patches import Polygon
 
     center_left, center_forward = float(pose[1]), float(pose[0])
     axis.add_patch(
         Polygon(
-            _vehicle_polygon(np.asarray(pose)),
+            _vehicle_polygon(np.asarray(pose), vehicle_config),
             closed=True,
             facecolor=facecolor,
             edgecolor=edgecolor,
-            linewidth=2.2,
-            alpha=0.68,
+            linewidth=linewidth,
+            alpha=alpha,
             zorder=6,
         )
     )
-    arrow_length = MINING_TRUCK.length * 0.48
-    axis.annotate(
-        "",
-        xy=(
-            center_left + arrow_length * np.sin(float(pose[2])),
-            center_forward + arrow_length * np.cos(float(pose[2])),
-        ),
-        xytext=(center_left, center_forward),
-        arrowprops={"arrowstyle": "-|>", "color": edgecolor, "lw": 2.2},
-        zorder=8,
-    )
-    axis.text(
-        center_left,
-        center_forward,
-        label,
-        ha="center",
-        va="center",
-        fontsize=7.5,
-        fontweight="bold",
-        color="#FFFFFF",
-        zorder=9,
-    )
+    if draw_heading:
+        arrow_length = vehicle_config.length * 0.48
+        axis.annotate(
+            "",
+            xy=(
+                center_left + arrow_length * np.sin(float(pose[2])),
+                center_forward + arrow_length * np.cos(float(pose[2])),
+            ),
+            xytext=(center_left, center_forward),
+            arrowprops={"arrowstyle": "-|>", "color": edgecolor, "lw": linewidth},
+            zorder=8,
+        )
+    if label:
+        axis.text(
+            center_left,
+            center_forward,
+            label,
+            ha="center",
+            va="center",
+            fontsize=7.5,
+            fontweight="bold",
+            color="#FFFFFF",
+            zorder=9,
+        )
 
 
-def _set_evidence_limits(axis, plot_points, goal_pose, *, x_bounds, y_bounds) -> None:
+def _set_evidence_limits(
+    axis,
+    plot_points,
+    goal_pose,
+    *,
+    vehicle_config: VehicleConfig,
+    x_bounds,
+    y_bounds,
+) -> None:
     footprint_points = np.vstack(
         (
-            _vehicle_polygon(np.array([0.0, 0.0, 0.0])),
-            _vehicle_polygon(np.asarray(goal_pose)),
+            _vehicle_polygon(np.array([0.0, 0.0, 0.0]), vehicle_config),
+            _vehicle_polygon(np.asarray(goal_pose), vehicle_config),
         )
     )
     evidence = np.vstack((plot_points, footprint_points))
@@ -428,6 +612,9 @@ def _render_info_panel(
     switch_count: int,
     requested_distance_ratio: float | None,
     maneuver_consistent: bool | None,
+    feasibility_audit: dict[str, Any] | None,
+    vehicle_config: VehicleConfig,
+    model_confirmed: bool,
     final_position_error: float,
     final_yaw_error: float,
 ) -> None:
@@ -455,10 +642,20 @@ def _render_info_panel(
         if maneuver_consistent is None
         else ("PASS" if maneuver_consistent else "FAIL")
     )
-    all_pass = goal_pass and maneuver_consistent is True
+    feasibility_status = (
+        "N/A"
+        if feasibility_audit is None
+        else ("PASS" if feasibility_audit.get("feasible") is True else "FAIL")
+    )
+    all_pass = (
+        goal_pass
+        and maneuver_consistent is True
+        and feasibility_status == "PASS"
+        and model_confirmed
+    )
     status_text = (
         f"GOAL: {'PASS' if goal_pass else 'REVIEW'} | "
-        f"MANEUVER: {maneuver_status}"
+        f"MANEUVER: {maneuver_status} | FEASIBILITY: {feasibility_status}"
     )
     status_color = "#148F77" if all_pass else "#C0392B"
 
@@ -476,6 +673,14 @@ def _render_info_panel(
         f"Goal policy       {dataset_meta.get('goal_policy', 'unknown')}",
         f"Dynamic event     {event_text}",
         "",
+        "DRILL RIG MODEL",
+        f"Name              {vehicle_config.name}",
+        f"Version           {vehicle_config.model_version}",
+        f"Envelope          {vehicle_config.length:.2f} x {vehicle_config.width:.2f} m",
+        f"Planning v        {vehicle_config.plan_v:.2f} m/s",
+        f"Planning omega    {vehicle_config.plan_max_omega:.2f} rad/s",
+        f"Model metadata    {'confirmed' if model_confirmed else 'missing/fallback'}",
+        "",
         "TRAJECTORY",
         f"Points            {point_count}",
         f"Path length       {path_length:.2f} m",
@@ -488,6 +693,11 @@ def _render_info_panel(
         ),
         f"Maneuver check    {maneuver_status}",
         f"Direction changes {switch_count}",
+        f"Pivot segments    {_audit_value(feasibility_audit, 'pivot_segment_count', 'unknown')}",
+        f"Max speed         {_audit_number(feasibility_audit, 'max_linear_speed_mps', 'm/s')}",
+        f"Max yaw rate      {_audit_number(feasibility_audit, 'max_angular_speed_radps', 'rad/s')}",
+        f"Lateral residual  {_audit_number(feasibility_audit, 'max_lateral_residual_m', 'm')}",
+        f"Feasibility       {feasibility_status}",
         "",
         "FINAL ERROR",
         f"Position          {final_position_error:.3f} m",
@@ -506,8 +716,8 @@ def _render_info_panel(
         ha="left",
         va="top",
         family="monospace",
-        fontsize=9.2,
-        linespacing=1.32,
+        fontsize=8.35,
+        linespacing=1.2,
         color="#17202A",
     )
     axis.text(
@@ -526,6 +736,25 @@ def _render_info_panel(
             "edgecolor": "none",
         },
     )
+
+
+def _audit_value(
+    audit: dict[str, Any] | None, key: str, fallback: str
+) -> str:
+    if audit is None or key not in audit:
+        return fallback
+    return str(audit[key])
+
+
+def _audit_number(
+    audit: dict[str, Any] | None, key: str, unit: str
+) -> str:
+    if audit is None or key not in audit:
+        return "unknown"
+    try:
+        return f"{float(audit[key]):.3f} {unit}"
+    except (TypeError, ValueError):
+        return "invalid"
 
 
 def _distribution(values: list[float]) -> dict[str, float]:
@@ -567,3 +796,8 @@ def _to_local(points: np.ndarray, x: float, y: float, yaw: float) -> np.ndarray:
 
 def _wrap_angle(angle: float) -> float:
     return float(np.arctan2(np.sin(angle), np.cos(angle)))
+
+
+def _wrap_angles(angles: np.ndarray) -> np.ndarray:
+    values = np.asarray(angles, dtype=np.float64)
+    return np.arctan2(np.sin(values), np.cos(values))

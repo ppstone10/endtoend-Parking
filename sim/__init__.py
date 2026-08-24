@@ -39,10 +39,12 @@ from .tasks import (
 )
 from .vehicle_config import (
     LEGACY_4X2,
+    MINING_DRILL_RIG,
     MINING_TRUCK,
     VEHICLE_PRESETS,
     VehicleConfig,
     get_vehicle,
+    load_vehicle_config,
 )
 from .vehicle_model import DifferentialDriveModel
 
@@ -70,10 +72,12 @@ __all__ = [
     "SimulatedLiDAR",
     "DifferentialDriveModel",
     "VehicleConfig",
+    "MINING_DRILL_RIG",
     "MINING_TRUCK",
     "LEGACY_4X2",
     "VEHICLE_PRESETS",
     "get_vehicle",
+    "load_vehicle_config",
     "DistanceTier",
     "DynamicObstacleEvent",
     "Maneuver",

@@ -6,11 +6,11 @@
 |---|---|---|
 | 统一接口 | `interfaces/` | 定义三阶段共用的数据契约：传感器帧、BEV 空间配置/张量、车辆状态、目标位姿、轨迹、控制指令；坐标统一为车辆中心局部坐标系 |
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像按共享 `BEVConfig` 转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
-| Python 仿真与任务 | `sim/` | 二维矿区泊车环境、携带场景级 `BEVConfig` 的 S1–S9 场景与 T1–T5 任务层；`noise.py` 提供 clean/low/high 与自定义传感器噪声 profile，注入模拟 LiDAR/Camera；`vehicle_config.py` 是车辆参数统一来源 |
+| Python 仿真与任务 | `sim/` | 二维矿区泊车环境、携带场景级 `BEVConfig` 的 S1–S9 场景与 T1–T5 任务层；`noise.py` 提供传感器噪声；`vehicle_config.py` 严格加载 `configs/vehicles/`，是履带钻机外廓、执行上限和规划搜索参数的统一来源 |
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
-| 专家轨迹 | `planner/` | Hybrid A* 生成差分驱动可行轨迹（离散运动基元 + 48 词族 Reeds–Shepp 解析扩展 + C-space 膨胀与加密碰撞校验）；`smoothing.py` 提供保留换向点的三次捷径，`profile.py` 提供换向停车与倒车降速的梯形速度剖面 |
-| 数据管线 | `dataset/` | 兼容旧式随机采样，并以 Task 驱动专家轨迹与传感器→BEV 生成；在纯几何矩阵上叠加专家可生成能力，以统一方向审计执行生成/发布双门禁，按可用单元分配难度配额、同单元重采并以 S9 整场景留出，NPZ schema v2 自描述保存并提供统计/验收图抽检 |
+| 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
+| 数据管线 | `dataset/` | Task 驱动专家轨迹与传感器→BEV 生成；`maneuver.py` 审计任务方向，`feasibility.py` 独立复算起终位姿、线/角速度、横向残差并核对生成期扫掠碰撞证据和模型版本；生成/partial 发布执行双层门禁，NPZ schema v2 自描述保存并提供中心轨迹/中间外廓验收图 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
 | 可视化 | `viz/` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图（动画与实验图后续里程碑） |
@@ -28,16 +28,18 @@ LiDARFrame/CameraFrame → sensor2bev(BEVConfig) → BEVTensor
   BEVFusion 拼接两路并追加 [vehicle] → 统一 BEVTensor
 SceneBundle + (TaskType, difficulty axes, seed, sample index) → TaskSampler → Task
   Task = scene + start + single/candidate goals + stable metadata + optional T5 event
-VehicleState + GoalPose → HybridAStarPlanner（运动基元 + Reeds–Shepp）→ Trajectory（专家轨迹）
+VehicleConfig JSON → HybridAStarPlanner/MPC/车辆模型/碰撞/inspection
+VehicleState + GoalPose → HybridAStarPlanner（前后弧线 + 原地旋转 + RS/履带解析候选）→ Trajectory（中心位姿专家轨迹）
   Trajectory → 碰撞安全三次捷径（可选）→ Trajectory
   Trajectory → 梯形速度剖面（可选）→ VelocityProfile
 Task[] → DatasetSplits（S9→test；其余按场景×类型分层 train/val）
 Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → TrainingSample
   轨迹方向距离审计：请求方向占比默认 ≥50%；不一致候选拒绝，失败在原场景×类型×难度单元重采
+  轨迹可行性审计：起终位姿、线/角速度、横向残差、完整矩形扫掠、模型版本全部通过
   T4 按稳定候选顺序解析首个可规划且机动一致目标；显式关闭门禁时保留旧策略
-  TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本 task_meta.maneuver_audit）；无版本 NPZ 按 v1 读取
-  partial NPZ → 独立严格机动审计 → 正式 NPZ/manifest；失败保留 partial 且不晋升
-  NPZ → 长度/方向一致性/分层统计 + occupancy/target/专家轨迹验收图
+  TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本车辆模型/机动/可行性证据）；无版本 NPZ 按 v1 读取
+  partial NPZ → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 正式 NPZ/manifest
+  NPZ → 长度/方向/可行性/分层统计 + occupancy/target/中心点/中间车身验收图
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
@@ -66,10 +68,11 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `sim/`、`sensor2bev/`、`model/`、`controller/` 只依赖 `interfaces/` 与 `numpy`，模块间不互相耦合。
 - `runtime/` 依赖 `interfaces/`、`metrics/` 与注入的轨迹源/MPC/车辆模型（依赖注入，不直接 import sim/model）；`metrics/` 无内部依赖。
 - 闭环执行统一经 `runtime/ClosedLoopEngine`，轨迹源策略可替换（Expert/Network/后续基线），指标口径唯一。
-- 车辆尺寸与控制上限统一来自 `sim/vehicle_config.py::VehicleConfig`（预设矿卡 6×3m），规划器/MPC/车辆模型/碰撞检测由同一 config 构造注入。
+- 默认理论车型由 `configs/vehicles/tracked_drill_rig.json` 定义为以两履带几何中心居中的 6×3 m 矩形；`VehicleConfig` 将外廓、执行上限、规划速度/角速度、安全余量与搜索分辨率统一注入规划器/MPC/车辆模型/碰撞/inspection。
 - 批量实验统一经 `experiments/run_experiment.py`（JSON 配置驱动，结果落盘 `experiments/results/`），可视化统一经 `viz/`（PNG+PDF 双格式输出）。
-- 低速泊车采用差分驱动运动模型，控制量为线速度 v 与角速度 omega。
-- Reeds–Shepp 最小转弯半径默认由 `|plan_v / max_omega|` 统一推导；解析路径和平滑捷径必须复用 Hybrid A* 的车身矩形与 `collision_margin` 安全边界。
+- 低速泊车采用理想履带差速运动学，控制量为线速度 v 与角速度 omega；允许 `v=0, omega≠0`，原地旋转中心固定为两履带几何中心。履带滑移、沉陷、质量和惯量不属于当前理论模型。
+- 平移弧线的 Reeds–Shepp 半径由 `|plan_v / plan_max_omega|` 推导，但它不代表履带全部可达集合；Hybrid A* 另有原地旋转基元和履带解析候选。原地旋转施加较高代价，并对矩形最远角点扫掠按配置分辨率加密。
+- `_pose_free` 检查完整定向矩形与圆/矩形/多边形障碍相交，不再只验四角；任一运动基元、解析候选和数据可行性审计都复用相同外廓与 `collision_margin`。
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。
 - `dataset/build.py` 拥有专家可生成能力：不改变任务几何矩阵，单独排除当前 Hybrid A* 持续不可达的监督单元并限制单向可达单元；偶发规划失败仍保持原单元难度重采。
@@ -80,6 +83,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - 数据集 schema v2 将 `BEVTensor.to_metadata()` 与逐样本任务元数据编码为 Unicode JSON 数组，加载始终禁用 pickle；同一归档不允许混合 BEV 元数据或轨迹 `dt`，无版本旧归档识别为 v1。
 - 默认数据构建按 8:1:1 输出 train/val/test，S9 全部且仅进入 test；构建失败只在同一场景×任务类型×难度重采，替代任务避开全计划与已用 task ID；未完成 split 保持 `.partial.npz`，三个 split 完成后才写 manifest。
 - `dataset/maneuver.py` 是轨迹实际方向距离的唯一判定所有者；Task 请求方向默认必须占总行驶距离至少 50%，允许短距离反向调整。Task 生成先门禁候选，构建脚本再独立审计 partial；任一不一致、无效或缺失声明样本都不得晋升为正式数据集。
+- `dataset/feasibility.py` 是归档运动学与模型版本审计所有者；生成期用规划器环境复核完整扫掠，partial 晋升前从数组独立复算并核对碰撞证据。旧 NPZ 或配置版本不匹配样本不得通过严格门禁。
 
 ## 阶段迁移边界
 

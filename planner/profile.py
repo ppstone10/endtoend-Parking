@@ -34,15 +34,16 @@ def trapezoidal_velocity_profile(
     reverse_speed: float = 0.75,
     acceleration: float = 0.8,
     deceleration: float = 1.0,
+    max_omega: float = 0.35,
     directions: np.ndarray | None = None,
 ) -> VelocityProfile:
-    """通过前向/反向约束传播构造含换向停车的梯形剖面。"""
+    """构造含换向停车和原地旋转耗时的梯形线速度剖面。"""
     poses = np.asarray(points, dtype=float)
     if poses.ndim != 2 or poses.shape[1] != 3 or len(poses) < 2:
         raise ValueError("points 必须是至少两点的 (N, 3) 数组")
     if not np.all(np.isfinite(poses)):
         raise ValueError("points 不能含非有限数")
-    limits = (max_speed, reverse_speed, acceleration, deceleration)
+    limits = (max_speed, reverse_speed, acceleration, deceleration, max_omega)
     if any(value <= 0.0 or not np.isfinite(value) for value in limits):
         raise ValueError("速度与加减速限制必须为有限正数")
     if reverse_speed > max_speed:
@@ -54,6 +55,18 @@ def trapezoidal_velocity_profile(
         else _validate_directions(directions, len(poses) - 1)
     )
     ds = np.linalg.norm(np.diff(poses[:, :2], axis=0), axis=1)
+    dyaw = np.abs(
+        np.arctan2(
+            np.sin(np.diff(poses[:, 2])),
+            np.cos(np.diff(poses[:, 2])),
+        )
+    )
+    pivot_segments = (ds <= 1e-12) & (dyaw > 1e-12)
+    pivot_points = np.unique(
+        np.concatenate(
+            (np.flatnonzero(pivot_segments), np.flatnonzero(pivot_segments) + 1)
+        )
+    )
     point_directions = np.empty(len(poses), dtype=np.int8)
     point_directions[0] = segment_directions[0]
     point_directions[1:] = segment_directions
@@ -63,6 +76,7 @@ def trapezoidal_velocity_profile(
     point_limits[0] = 0.0
     point_limits[-1] = 0.0
     point_limits[cusp_indices] = 0.0
+    point_limits[pivot_points] = 0.0
 
     magnitudes = point_limits.copy()
     for index in range(1, len(magnitudes)):
@@ -74,12 +88,15 @@ def trapezoidal_velocity_profile(
 
     speeds = magnitudes * point_directions
     speeds[cusp_indices] = 0.0
+    speeds[pivot_points] = 0.0
     speeds[0] = 0.0
     speeds[-1] = 0.0
     times = np.zeros(len(poses), dtype=float)
     for index, distance in enumerate(ds):
         boundary_speed = magnitudes[index] + magnitudes[index + 1]
-        if distance <= 1e-12:
+        if pivot_segments[index]:
+            delta_t = dyaw[index] / max_omega
+        elif distance <= 1e-12:
             delta_t = 1e-9
         elif boundary_speed > 1e-12:
             delta_t = 2.0 * distance / boundary_speed

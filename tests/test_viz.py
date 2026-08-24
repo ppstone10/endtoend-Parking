@@ -12,7 +12,15 @@ import numpy as np
 
 from interfaces import GoalPose, Trajectory, VehicleState
 from runtime.recorder import EpisodeRecord
-from sim import MINING_TRUCK, ParkingEnvironment, RectangleObstacle, VehicleConfig, get_vehicle
+from sim import (
+    MINING_DRILL_RIG,
+    MINING_TRUCK,
+    ParkingEnvironment,
+    RectangleObstacle,
+    VehicleConfig,
+    get_vehicle,
+    load_vehicle_config,
+)
 from viz import draw_trajectory, render_episode, render_world
 
 
@@ -20,6 +28,8 @@ class TestVehicleConfig(unittest.TestCase):
     def test_presets_available(self):
         truck = get_vehicle("mining_truck")
         self.assertEqual((truck.length, truck.width), (6.0, 3.0))
+        self.assertIs(truck, MINING_DRILL_RIG)
+        self.assertIs(get_vehicle("tracked_drill_rig"), MINING_DRILL_RIG)
         legacy = get_vehicle("legacy_4x2")
         self.assertEqual((legacy.length, legacy.width), (4.0, 2.0))
 
@@ -30,10 +40,37 @@ class TestVehicleConfig(unittest.TestCase):
     def test_kwargs_consistency(self):
         """三类 kwargs 与 config 字段一致，保证尺寸/上限统一注入。"""
         cfg = MINING_TRUCK
-        self.assertEqual(cfg.planner_kwargs(), {"vehicle_length": 6.0, "vehicle_width": 3.0})
+        planner_kwargs = cfg.planner_kwargs()
+        self.assertEqual(planner_kwargs["vehicle_length"], 6.0)
+        self.assertEqual(planner_kwargs["vehicle_width"], 3.0)
+        self.assertEqual(planner_kwargs["plan_v"], cfg.plan_v)
+        self.assertEqual(planner_kwargs["max_omega"], cfg.plan_max_omega)
+        self.assertEqual(planner_kwargs["pivot_omega"], cfg.pivot_omega)
+        self.assertTrue(planner_kwargs["enable_pivot"])
         self.assertEqual(cfg.mpc_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.vehicle_model_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.collision_kwargs(), {"vehicle_length": 6.0, "vehicle_width": 3.0})
+
+    def test_editable_json_config_roundtrip_and_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rig.json")
+            with open(path, "w", encoding="utf-8") as stream:
+                import json
+
+                json.dump(MINING_DRILL_RIG.to_metadata() | {"length": 7.2}, stream)
+            configured = load_vehicle_config(path)
+        self.assertEqual(configured.length, 7.2)
+        self.assertEqual(configured.planner_kwargs()["vehicle_length"], 7.2)
+
+        with self.assertRaises(ValueError):
+            VehicleConfig(
+                "invalid",
+                6.0,
+                3.0,
+                0.4,
+                0.3,
+                plan_v=0.5,
+            )
 
     def test_frozen(self):
         cfg = VehicleConfig("t", 1.0, 1.0, 1.0, 1.0)

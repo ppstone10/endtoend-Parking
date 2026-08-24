@@ -14,9 +14,11 @@ from dataset import (
     DatasetGenerator,
     render_sample_overlay,
     require_maneuver_consistency,
+    require_trajectory_feasibility,
     select_representative_indices,
     summarize_dataset,
 )
+from sim import MINING_DRILL_RIG, load_vehicle_config
 
 
 def main() -> None:
@@ -30,6 +32,17 @@ def main() -> None:
         help="保存的代表样本数；优先覆盖不同任务类型（默认：5）",
     )
     parser.add_argument(
+        "--require-trajectory-feasibility",
+        action="store_true",
+        help="存在运动学不可行、缺少碰撞证据或车辆模型不匹配时返回失败",
+    )
+    parser.add_argument(
+        "--vehicle-config",
+        type=Path,
+        default=None,
+        help="用于审计的履带钻机 JSON 配置；默认使用项目理论车型",
+    )
+    parser.add_argument(
         "--require-maneuver-consistency",
         action="store_true",
         help="存在机动不一致、无效轨迹或缺失机动声明时返回失败",
@@ -39,12 +52,22 @@ def main() -> None:
         parser.error("--samples 不能为负")
 
     data = DatasetGenerator.load(args.path)
-    summary = summarize_dataset(data)
+    vehicle_config = (
+        MINING_DRILL_RIG
+        if args.vehicle_config is None
+        else load_vehicle_config(args.vehicle_config)
+    )
+    summary = summarize_dataset(data, vehicle_config=vehicle_config)
     encoded = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
     print(encoded)
     if args.require_maneuver_consistency:
         try:
             require_maneuver_consistency(summary)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if args.require_trajectory_feasibility:
+        try:
+            require_trajectory_feasibility(summary)
         except ValueError as exc:
             parser.error(str(exc))
     if args.output is None:

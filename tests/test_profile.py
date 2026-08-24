@@ -46,6 +46,22 @@ class TestVelocityProfile(unittest.TestCase):
         with self.assertRaises(ValueError):
             trapezoidal_velocity_profile(points, max_speed=0.0)
 
+    def test_in_place_rotation_stops_and_uses_angular_duration(self):
+        points = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.2],
+                [1.0, 0.0, 0.4],
+                [2.0, 0.0, 0.4],
+            ]
+        )
+        profile = trapezoidal_velocity_profile(points, max_omega=0.2)
+
+        np.testing.assert_allclose(profile.speeds[1:4], 0.0, atol=1e-12)
+        self.assertAlmostEqual(profile.times[2] - profile.times[1], 1.0)
+        self.assertAlmostEqual(profile.times[3] - profile.times[2], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

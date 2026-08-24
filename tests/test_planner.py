@@ -6,7 +6,7 @@ import numpy as np
 
 from interfaces import GoalPose, VehicleState
 from planner import HybridAStarPlanner
-from sim import ParkingEnvironment, RectangleObstacle
+from sim import CircleObstacle, MINING_DRILL_RIG, ParkingEnvironment, RectangleObstacle
 from sim.scenes import build_scene
 
 
@@ -146,10 +146,8 @@ class TestHybridAStarPlanner(unittest.TestCase):
                 goal = bundle.free_spots()[0].pose
                 planner = HybridAStarPlanner(
                     env=bundle.env,
-                    vehicle_length=6.0,
-                    vehicle_width=3.0,
-                    collision_margin=0.1,
                     max_expansions=5000,
+                    **MINING_DRILL_RIG.planner_kwargs(),
                 )
                 self.assertEqual(planner.analytic_expansion_distance, 12.0)
                 traj = planner.plan(start, goal)
@@ -163,6 +161,54 @@ class TestHybridAStarPlanner(unittest.TestCase):
         planner = HybridAStarPlanner(env=_open_env(), analytic_expansion_distance=0.0)
         trajectory = planner.plan(VehicleState(0.0, 0.0, 0.0), GoalPose(4.0, 0.0, 0.0))
         self.assertGreater(trajectory.horizon, 2)
+
+    def test_tracked_rig_pivots_about_fixed_center_to_match_goal_heading(self):
+        planner = HybridAStarPlanner(
+            env=_open_env(),
+            vehicle_length=6.0,
+            vehicle_width=3.0,
+            plan_v=0.5,
+            max_omega=0.35,
+            pivot_omega=0.35,
+            enable_pivot=True,
+        )
+        trajectory = planner.plan(
+            VehicleState(0.0, 0.0, 0.0),
+            GoalPose(0.0, 0.0, np.pi / 2.0),
+        )
+
+        np.testing.assert_allclose(trajectory.points[:, :2], 0.0, atol=1e-7)
+        self.assertGreater(np.ptp(trajectory.points[:, 2]), 1.4)
+        np.testing.assert_allclose(
+            trajectory.points[-1], [0.0, 0.0, np.pi / 2.0], atol=1e-6
+        )
+
+    def test_rotation_sweep_rejects_obstacle_missed_by_endpoint_poses(self):
+        obstacle = CircleObstacle(1.232, 1.866, 0.08)
+        planner = HybridAStarPlanner(
+            env=ParkingEnvironment(world_size=20.0, obstacles=[obstacle]),
+            vehicle_length=4.0,
+            vehicle_width=2.0,
+            collision_check_resolution=0.05,
+        )
+        self.assertTrue(planner._pose_free(0.0, 0.0, 0.0))
+        self.assertTrue(planner._pose_free(0.0, 0.0, np.pi / 2.0))
+        self.assertFalse(
+            planner._swept_segment_free(
+                (0.0, 0.0, 0.0), (0.0, 0.0, np.pi / 2.0)
+            )
+        )
+
+    def test_full_footprint_rejects_obstacle_inside_vehicle_not_at_corners(self):
+        planner = HybridAStarPlanner(
+            env=ParkingEnvironment(
+                world_size=20.0,
+                obstacles=[CircleObstacle(0.0, 0.0, 0.1)],
+            ),
+            vehicle_length=6.0,
+            vehicle_width=3.0,
+        )
+        self.assertFalse(planner._pose_free(0.0, 0.0, 0.0))
 
 
 if __name__ == "__main__":

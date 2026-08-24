@@ -2,6 +2,12 @@
 
 from .build import BuildReport, build_task_plan, expert_maneuvers, generate_with_retries
 from .generator import DatasetGenerator, TaskGenerationError, TrainingSample
+from .feasibility import (
+    TrajectoryFeasibilityAudit,
+    audit_trajectory_feasibility,
+    require_trajectory_feasibility,
+    summarize_trajectory_feasibility,
+)
 from .inspection import (
     render_sample_overlay,
     select_representative_indices,
@@ -23,6 +29,10 @@ __all__ = [
     "DatasetGenerator",
     "TaskGenerationError",
     "TrainingSample",
+    "TrajectoryFeasibilityAudit",
+    "audit_trajectory_feasibility",
+    "require_trajectory_feasibility",
+    "summarize_trajectory_feasibility",
     "SensorBEVPipeline",
     "DatasetSplits",
     "split_tasks",
