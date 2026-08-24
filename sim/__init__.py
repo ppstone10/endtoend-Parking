@@ -2,6 +2,14 @@
 
 from .camera_model import CameraModel
 from .environment import ParkingEnvironment
+from .noise import (
+    NOISE_PROFILES,
+    CameraNoiseConfig,
+    LiDARNoiseConfig,
+    NoiseLevel,
+    NoiseProfile,
+    get_noise_profile,
+)
 from .obstacles import (
     KIND_BERM,
     KIND_CLIFF,
@@ -21,7 +29,6 @@ from .tasks import (
     DistanceTier,
     DynamicObstacleEvent,
     Maneuver,
-    NoiseLevel,
     Task,
     TaskCapability,
     TaskDifficulty,
@@ -41,6 +48,12 @@ from .vehicle_model import DifferentialDriveModel
 
 __all__ = [
     "ParkingEnvironment",
+    "NOISE_PROFILES",
+    "CameraNoiseConfig",
+    "LiDARNoiseConfig",
+    "NoiseLevel",
+    "NoiseProfile",
+    "get_noise_profile",
     "Obstacle",
     "RectangleObstacle",
     "PolygonObstacle",
@@ -64,7 +77,6 @@ __all__ = [
     "DistanceTier",
     "DynamicObstacleEvent",
     "Maneuver",
-    "NoiseLevel",
     "Task",
     "TaskCapability",
     "TaskDifficulty",

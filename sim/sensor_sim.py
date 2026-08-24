@@ -9,6 +9,7 @@ import numpy as np
 
 from interfaces import LiDARFrame
 from .environment import ParkingEnvironment
+from .noise import NoiseLevel, NoiseProfile, get_noise_profile
 
 
 class SimulatedLiDAR:
@@ -18,12 +19,21 @@ class SimulatedLiDAR:
     """
 
     def __init__(
-        self, env: ParkingEnvironment, beams: int = 360, max_range: float = 20.0, z: float = 1.0
+        self,
+        env: ParkingEnvironment,
+        beams: int = 360,
+        max_range: float = 20.0,
+        z: float = 1.0,
+        *,
+        noise: NoiseLevel | str | NoiseProfile = NoiseLevel.CLEAN,
+        seed: int = 0,
     ) -> None:
         self.env = env
         self.beams = beams
         self.max_range = max_range
         self.z = z
+        self.noise_profile = get_noise_profile(noise)
+        self.rng = np.random.default_rng(seed)
 
     def capture(self, x: float, y: float, yaw: float) -> LiDARFrame:
         """采集一帧点云。
@@ -32,10 +42,29 @@ class SimulatedLiDAR:
         """
         origin = np.array([x, y])
         angles = np.linspace(0.0, 2.0 * np.pi, self.beams, endpoint=False) + yaw
-        points = np.empty((self.beams, 4), dtype=np.float32)
-        for i, angle in enumerate(angles):
-            dist = self.env.raycast(origin, float(angle), self.max_range)
-            hit = dist < self.max_range
+        config = self.noise_profile.lidar
+        if config.is_clean:
+            effective_range = self.max_range
+            kept_angles = angles
+        else:
+            jitter = (
+                float(self.rng.normal(0.0, config.range_jitter_std))
+                if config.range_jitter_std > 0.0 else 0.0
+            )
+            effective_range = max(1e-3, self.max_range + jitter)
+            if config.dropout_rate > 0.0:
+                kept_angles = angles[self.rng.random(self.beams) >= config.dropout_rate]
+            else:
+                kept_angles = angles
+
+        points = np.empty((len(kept_angles), 4), dtype=np.float32)
+        for i, angle in enumerate(kept_angles):
+            dist = self.env.raycast(origin, float(angle), effective_range)
+            hit = dist < effective_range
+            if config.range_std > 0.0:
+                dist = float(np.clip(
+                    dist + self.rng.normal(0.0, config.range_std), 0.0, effective_range
+                ))
             points[i, 0] = x + dist * np.cos(angle)
             points[i, 1] = y + dist * np.sin(angle)
             points[i, 2] = self.z

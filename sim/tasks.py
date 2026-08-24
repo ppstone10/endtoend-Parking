@@ -14,6 +14,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from interfaces import GoalPose, VehicleState
+from sim.noise import NoiseLevel
 from sim.scenes import SCENE_REGISTRY, SceneBundle, build_scene
 from sim.spots import ParkingSpot
 
@@ -59,12 +60,6 @@ class DistanceTier(str, Enum):
 class Maneuver(str, Enum):
     FORWARD = "forward"
     REVERSE = "reverse"
-
-
-class NoiseLevel(str, Enum):
-    CLEAN = "clean"
-    LOW = "low"
-    HIGH = "high"
 
 
 class UnsupportedTaskError(ValueError):

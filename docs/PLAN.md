@@ -38,8 +38,8 @@
 
 - [x] P2.1 障碍体系重构（FR-SIM-01）：Obstacle ABC + Polygon/Circle/Rectangle；kind 语义（wall/berm/cliff/rock/vehicle/equipment）；解析线段求交 raycast；悬崖"碰撞但不挡射线"。出口：新旧 raycast 一致性回归。（2026-08-24 完成：`sim/obstacles.py` 三形状 + 三语义属性；`environment.py` 解析 raycast 与旧步进一致性 ≤0.05m；LiDAR 一帧 56→1.2ms、NetworkSource 推理 158→5.4ms 达 NFR-05；新增 SIM Spec 3 规范 ID，86 项测试全过）
 - [x] P2.2 场景库（FR-SIM-04/05）：spots.py、scenes.py 注册表 S1–S9、scenes_validate.py、experiments/scenes/*.yaml。出口：V1 九场景图。（2026-08-24 完成：`sim/spots.py` ParkingSpot（容差/占用/编号）+ `sim/scenes.py` 九场景注册表（S1 驻地/S2 斜列/S3 维修/S4 排土场卸载/S5 破碎站/S6 装载/S7 加油/S8 称重/S9 综合矿场）+ `sim/scenes_validate.py` 自检（捕获并修复 3 处车位-禁区几何冲突）；V1 渲染 20 文件（3×3 总览+九单图，PNG+PDF）；新增 SCENE Spec 4 规范 ID，95 项测试全过；YAML 落盘暂缓——构造参数即配置，M4 实验矩阵按需补）
-- [ ] P2.3 车辆参数化（FR-SIM-02）：已在 M1 提前。
-- [ ] P2.4 噪声模型（FR-SIM-03）：sim/noise.py 三档。
+- [x] P2.3 车辆参数化（FR-SIM-02）：已在 M1 提前完成。（2026-08-24 状态复核：`VehicleConfig` 统一 6×3m 矿卡与 4×2m 回归预设，规划器/MPC/车辆模型/碰撞 kwargs 统一注入；既有 VehicleConfig 回归与全仓门禁持续通过）
+- [x] P2.4 噪声模型（FR-SIM-03）：sim/noise.py 三档。（2026-08-24 完成：clean/low/high 与自定义 `NoiseProfile`；LiDAR 距离高斯噪声、随机丢点、逐帧量程抖动；Camera 像素高斯噪声、目标漏检/误检；传感器私有 RNG 与 seed 复现，默认 clean 逐元素兼容；14 项噪声测试、受影响链路 53 项与全仓 138 项通过）
 - [ ] P2.5 BEV 参数化（FR-SIM-06）：extent 随场景配置；npz schema v2（bev_meta + task_meta）。
 - [x] P2.6 任务层（FR-TASK-01）：Task + TaskSampler 矩阵采样。（2026-08-24 完成：`Task`/`TaskGoal`/五类任务与正交难度元数据；`SeedSequence` 按根 seed×场景×类型×样本索引稳定派生；45 单元能力矩阵显式区分 40 个可采样单元与 5 个默认几何不支持单元，严格/非严格模式不静默降级；T4 保留 3–6 候选不预选，T5 输出进度触发障碍载荷；1000 任务压测零采样失败，T1–T5 代表规划集成与全仓 124 项测试通过）
 - [x] P2.7 专家系统增强（FR-PLAN-01/02）：reeds_shepp.py（48 词曲表）；smoothing.py；profile.py 梯形速度剖面。（2026-08-24 完成：12 基本公式×4 对称的 48 词族、米制弧长采样与全候选排序；Hybrid A* 车身尺度解析邻域+每 5 节点门控+逐位姿碰撞安全接入，自动回归覆盖 S3/S5 直线及转向入位；三次 Hermite 捷径保留换向点并校验碰撞/曲率；梯形剖面约束加减速、换向停车和倒车降速。111 项全仓测试通过；1000 组随机 SE(2) 候选失败 0；200 回合闭环成功率 99.0%、碰撞率 1.0%、规划失败重采 26 次、耗时 139s，较 M1 基线 98.5%/1.5%/43 次/183s 改善）

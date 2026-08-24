@@ -11,6 +11,7 @@ import numpy as np
 from interfaces import CameraFrame, CameraIntrinsics, GoalPose
 from .camera_model import CameraModel
 from .environment import ParkingEnvironment
+from .noise import NoiseLevel, NoiseProfile, get_noise_profile
 
 
 class SimulatedCamera:
@@ -28,11 +29,16 @@ class SimulatedCamera:
         height: float = 1.5,
         pitch: float = np.deg2rad(30.0),
         parking_area: tuple[float, float] = (6.0, 3.0),
+        *,
+        noise: NoiseLevel | str | NoiseProfile = NoiseLevel.CLEAN,
+        seed: int = 0,
     ) -> None:
         self.env = env
         self.intrinsics = intrinsics
         self.model = CameraModel(intrinsics, height=height, pitch=pitch)
         self.parking_area = parking_area
+        self.noise_profile = get_noise_profile(noise)
+        self.rng = np.random.default_rng(seed)
 
     def capture(self, x: float, y: float, yaw: float) -> CameraFrame:
         """采集一帧图像。
@@ -44,21 +50,45 @@ class SimulatedCamera:
         h = self.intrinsics.image_height
         image = np.zeros((h, w), dtype=np.uint8)
 
-        if not self.env.parking_spots:
-            return CameraFrame(image=image[:, :, None], intrinsics=self.intrinsics)
+        config = self.noise_profile.camera
+        missed = (
+            bool(self.rng.random() < config.false_negative_rate)
+            if self.env.parking_spots and config.false_negative_rate > 0.0 else False
+        )
+        if self.env.parking_spots and not missed:
+            goal = self.env.parking_spots[0]
+            rect = self._parking_rectangle(goal)
+            pixels = []
+            for px, py in rect:
+                local = self._to_local(px, py, x, y, yaw)
+                proj = self.model.project(float(local[0]), float(local[1]))
+                if proj is None:
+                    pixels = []
+                    break
+                pixels.append(proj)
+            if pixels:
+                self._fill_polygon(image, pixels, 255)
 
-        goal = self.env.parking_spots[0]
-        rect = self._parking_rectangle(goal)
-        pixels = []
-        for px, py in rect:
-            local = self._to_local(px, py, x, y, yaw)
-            proj = self.model.project(float(local[0]), float(local[1]))
-            if proj is None:
-                return CameraFrame(image=image[:, :, None], intrinsics=self.intrinsics)
-            pixels.append(proj)
-        self._fill_polygon(image, pixels, 255)
+        if config.false_positive_rate > 0.0 and self.rng.random() < config.false_positive_rate:
+            self._add_false_positive(image)
+        if config.pixel_std > 0.0:
+            image = np.clip(
+                image.astype(np.float32)
+                + self.rng.normal(0.0, config.pixel_std, size=image.shape),
+                0.0,
+                255.0,
+            ).astype(np.uint8)
 
         return CameraFrame(image=image[:, :, None], intrinsics=self.intrinsics)
+
+    def _add_false_positive(self, image: np.ndarray) -> None:
+        """在图像内增加一个随机矩形伪目标。"""
+        h, w = image.shape
+        patch_w = int(self.rng.integers(max(2, w // 30), max(3, w // 12)))
+        patch_h = int(self.rng.integers(max(2, h // 30), max(3, h // 12)))
+        x0 = int(self.rng.integers(0, max(1, w - patch_w + 1)))
+        y0 = int(self.rng.integers(0, max(1, h - patch_h + 1)))
+        image[y0 : y0 + patch_h, x0 : x0 + patch_w] = 255
 
     def _parking_rectangle(self, goal: GoalPose) -> list[tuple[float, float]]:
         """计算目标位姿对应的全局矩形四角（沿 yaw 方向）。"""
