@@ -273,6 +273,38 @@ class TaskSampler:
         self.collision_margin = float(collision_margin)
         self.max_attempts = int(max_attempts)
 
+    @staticmethod
+    def supports_adjacent_occupancy(scene_name: str) -> bool:
+        """返回场景构造器是否支持相邻占用难度轴。"""
+        if scene_name not in SCENE_REGISTRY:
+            raise ValueError(f"未知场景 {scene_name}")
+        return scene_name in _OCCUPANCY_SCENES
+
+    def adjacent_occupancy_levels(
+        self, scene_name: str, task_type: TaskType | str
+    ) -> tuple[int, ...]:
+        """返回场景×任务类型实际可表达的相邻占用等级。"""
+        kind = _as_task_type(task_type)
+        if scene_name not in SCENE_REGISTRY:
+            raise ValueError(f"未知场景 {scene_name}")
+        if scene_name not in _OCCUPANCY_SCENES:
+            return (0,)
+        scene = build_scene(scene_name, seed=0)
+        eligible = self._eligible_spot_indices(scene, _TASK_DISTANCE[kind])
+        levels = [0]
+        for count in (1, 2):
+            patterns = self._valid_occupancy_patterns(
+                scene_name, 0, scene, eligible, count
+            )
+            if kind == TaskType.T4_MULTI_SPOT:
+                patterns = {
+                    index: bundle for index, bundle in patterns.items()
+                    if len(bundle.free_spots()) >= 3
+                }
+            if patterns:
+                levels.append(count)
+        return tuple(levels)
+
     def capability_matrix(
         self,
         scene_names: Iterable[str] | None = None,
@@ -351,8 +383,12 @@ class TaskSampler:
         if adjacent_occupancy:
             scene, target_index = self._with_adjacent_occupancy(
                 scene_name, scene_seed, scene, eligible_indices,
-                target_index, adjacent_occupancy, rng,
+                target_index, adjacent_occupancy, kind, rng,
             )
+            if kind == TaskType.T4_MULTI_SPOT and len(scene.free_spots()) < 3:
+                raise UnsupportedTaskError(
+                    f"{scene_name}/T4: 相邻占用后不足 3 个候选空闲车位"
+                )
 
         reference_spot = scene.spots[target_index]
         start = self._sample_start(scene, reference_spot, tier, selected_maneuver, kind, rng)
@@ -493,25 +529,54 @@ class TaskSampler:
         eligible_indices: list[int],
         target_index: int,
         count: int,
+        task_type: TaskType,
         rng: np.random.Generator,
     ) -> tuple[SceneBundle, int]:
         if scene_name not in _OCCUPANCY_SCENES:
             raise UnsupportedTaskError(f"{scene_name} 不支持相邻占用参数")
+        patterns = self._valid_occupancy_patterns(
+            scene_name, scene_seed, scene, eligible_indices, count
+        )
+        if task_type == TaskType.T4_MULTI_SPOT:
+            patterns = {
+                index: bundle for index, bundle in patterns.items()
+                if len(bundle.free_spots()) >= 3
+            }
+        valid_targets = list(patterns)
+        if not valid_targets:
+            raise UnsupportedTaskError(
+                f"{scene_name}/{task_type.value} 无法表达 {count} 个相邻占用且保持目标安全"
+            )
+        if target_index not in patterns:
+            target_index = int(rng.choice(valid_targets))
+        return patterns[target_index], target_index
+
+    def _valid_occupancy_patterns(
+        self,
+        scene_name: str,
+        scene_seed: int,
+        scene: SceneBundle,
+        eligible_indices: list[int],
+        count: int,
+    ) -> dict[int, SceneBundle]:
+        """枚举保持目标矿卡 footprint 安全的相邻占用场景。"""
         occupiable = list(range(len(scene.spots)))
         if scene_name == "S9_mine_complex":
             occupiable = [index for index, spot in enumerate(scene.spots) if spot.id.startswith("P")]
-        neighbor_map = {
-            index: self._side_neighbors(scene, index, occupiable, count)
-            for index in eligible_indices if index in occupiable
-        }
-        valid_targets = [index for index, neighbors in neighbor_map.items() if len(neighbors) == count]
-        if not valid_targets:
-            raise UnsupportedTaskError(f"{scene_name} 无法表达 {count} 侧相邻占用")
-        if target_index not in valid_targets:
-            target_index = int(rng.choice(valid_targets))
-        neighbors = neighbor_map[target_index]
-        rebuilt = build_scene(scene_name, seed=scene_seed, occupied_pattern=neighbors)
-        return rebuilt, target_index
+        patterns: dict[int, SceneBundle] = {}
+        for index in eligible_indices:
+            if index not in occupiable:
+                continue
+            neighbors = self._side_neighbors(scene, index, occupiable, count)
+            if len(neighbors) != count:
+                continue
+            rebuilt = build_scene(
+                scene_name, seed=scene_seed, occupied_pattern=neighbors
+            )
+            goal = rebuilt.spots[index].pose
+            if self.pose_is_free(rebuilt.env, goal.x, goal.y, goal.yaw):
+                patterns[index] = rebuilt
+        return patterns
 
     @staticmethod
     def _side_neighbors(
@@ -594,6 +659,8 @@ class TaskSampler:
         scene: SceneBundle, reference_spot: ParkingSpot, rng: np.random.Generator
     ) -> list[ParkingSpot]:
         free = scene.free_spots()
+        if len(free) < 3:
+            raise UnsupportedTaskError("T4 需要至少 3 个候选空闲车位")
         max_count = min(6, len(free))
         count = int(rng.integers(3, max_count + 1))
         others = [spot for spot in free if spot.id != reference_spot.id]

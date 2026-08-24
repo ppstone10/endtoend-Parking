@@ -6,11 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from dataset import DatasetGenerator, SensorBEVPipeline, TrainingSample
+from dataset import DatasetGenerator, SensorBEVPipeline, TaskGenerationError, TrainingSample
 from interfaces import BEVConfig, BEVTensor, CameraIntrinsics, GoalPose, Trajectory, VehicleState
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import ParkingEnvironment, RectangleObstacle, SimulatedCamera, SimulatedLiDAR
+from sim.tasks import NoiseLevel, TaskSampler, TaskType
 
 
 def _build_generator(seed: int = 0) -> DatasetGenerator:
@@ -155,6 +156,85 @@ class TestDatasetGenerator(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(ValueError):
                 generator.save([first, second], Path(temp_dir) / "invalid.npz")
+
+
+class _TaskPipeline:
+    def __init__(self, task):
+        self.bev_config = task.scene.bev_config
+
+    def capture_bev(self, x: float, y: float, yaw: float) -> BEVTensor:
+        config = self.bev_config
+        return BEVTensor(
+            data=np.zeros((5, *config.shape), dtype=np.float32),
+            resolution=config.resolution,
+            extent=config.extent,
+            channels=["occupancy", "height", "density", "target", "vehicle"],
+        )
+
+
+class _TaskPlanner:
+    def __init__(self, rejected_x: float | None = None, reject_all: bool = False):
+        self.rejected_x = rejected_x
+        self.reject_all = reject_all
+
+    def plan(self, start: VehicleState, goal: GoalPose) -> Trajectory:
+        if self.reject_all or self.rejected_x == goal.x:
+            raise RuntimeError("测试规划失败")
+        return Trajectory(
+            points=np.array(
+                [[start.x, start.y, start.yaw], [goal.x, goal.y, goal.yaw]],
+                dtype=np.float32,
+            ),
+            dt=0.1,
+        )
+
+
+class TestTaskDrivenDataset(unittest.TestCase):
+    def test_single_goal_task_becomes_self_describing_sample(self):
+        task = TaskSampler(seed=20260824).sample(
+            "S1_parking_lot", TaskType.T1_NEAR, noise_level=NoiseLevel.LOW
+        )
+        generator = DatasetGenerator(
+            component_factory=lambda current: (_TaskPlanner(), _TaskPipeline(current))
+        )
+        sample = generator.generate([task])[0]
+
+        self.assertEqual(sample.state, task.start)
+        self.assertEqual(sample.goal, task.goal.as_goal_pose())
+        self.assertEqual(sample.task_meta["task_id"], task.task_id)
+        self.assertEqual(sample.task_meta["dataset"]["goal_policy"], "task_goal")
+        self.assertEqual(sample.task_meta["noise_profile"]["level"], "low")
+
+    def test_t4_uses_first_plannable_candidate_and_records_policy(self):
+        task = TaskSampler(seed=77).sample("S1_parking_lot", TaskType.T4_MULTI_SPOT)
+        rejected_x = task.candidate_goals[0].x
+        generator = DatasetGenerator(
+            component_factory=lambda current: (
+                _TaskPlanner(rejected_x=rejected_x),
+                _TaskPipeline(current),
+            )
+        )
+        sample = generator.generate([task])[0]
+
+        self.assertNotEqual(sample.goal.x, rejected_x)
+        self.assertEqual(
+            sample.task_meta["dataset"]["goal_policy"],
+            "first_plannable_candidate",
+        )
+        self.assertEqual(
+            sample.task_meta["dataset"]["selected_goal"]["x"], sample.goal.x
+        )
+
+    def test_task_failure_identifies_task(self):
+        task = TaskSampler(seed=8).sample("S1_parking_lot", TaskType.T1_NEAR)
+        generator = DatasetGenerator(
+            component_factory=lambda current: (
+                _TaskPlanner(reject_all=True),
+                _TaskPipeline(current),
+            )
+        )
+        with self.assertRaisesRegex(TaskGenerationError, task.task_id):
+            generator.generate([task])
 
 
 if __name__ == "__main__":

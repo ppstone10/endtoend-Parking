@@ -99,6 +99,37 @@ class TestTaskSampling(unittest.TestCase):
                 "S6_loading_face", TaskType.T2_MEDIUM, adjacent_occupancy=1
             )
 
+    def test_t4_rejects_occupancy_that_leaves_too_few_candidates(self):
+        with self.assertRaises(UnsupportedTaskError):
+            TaskSampler(seed=9).sample(
+                "S4_dump_area", TaskType.T4_MULTI_SPOT, adjacent_occupancy=2
+            )
+
+    def test_adjacent_occupancy_levels_respect_scene_and_t4_capacity(self):
+        sampler = TaskSampler(seed=9)
+        self.assertEqual(
+            sampler.adjacent_occupancy_levels("S7_fuel_station", TaskType.T1_NEAR),
+            (0, 1),
+        )
+        self.assertEqual(
+            sampler.adjacent_occupancy_levels("S4_dump_area", TaskType.T4_MULTI_SPOT),
+            (0, 1),
+        )
+        self.assertEqual(
+            sampler.adjacent_occupancy_levels("S6_loading_face", TaskType.T1_NEAR),
+            (0,),
+        )
+        self.assertEqual(
+            sampler.adjacent_occupancy_levels("S2_diagonal_lot", TaskType.T1_NEAR),
+            (0,),
+        )
+
+    def test_adjacent_occupancy_keeps_target_vehicle_footprint_safe(self):
+        with self.assertRaisesRegex(UnsupportedTaskError, "保持目标安全"):
+            TaskSampler(seed=9).sample(
+                "S2_diagonal_lot", TaskType.T1_NEAR, adjacent_occupancy=1
+            )
+
 
 class TestTaskMatrix(unittest.TestCase):
     def setUp(self):

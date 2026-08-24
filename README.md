@@ -34,6 +34,15 @@ python -m unittest discover -s tests -v
 ```bash
 # 生成小批量训练样本（默认 5 条，可传数量参数）
 python scripts/generate_dataset.py 5
+
+# 预览 3000 条任务分层计划（不生成 BEV/轨迹）
+python scripts/build_dataset.py --count 3000 --dry-run
+
+# 按 8:1:1 构建 train/val/test，默认将 S9 整场景保留为泛化测试集
+python scripts/build_dataset.py --count 3000 --output data/task_dataset
+
+# 输出统计，并保存 BEV+专家轨迹叠加抽检图
+python scripts/inspect_dataset.py data/task_dataset/train.npz --output data/task_dataset/inspection
 ```
 
 ```bash
@@ -58,7 +67,7 @@ sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟�
 model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
 controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       Hybrid A* 专家轨迹生成（差分驱动）
-dataset/       训练样本生成（采样位姿对 + 专家轨迹 + 融合 BEV）
+dataset/       Task 分层/划分/重采、专家轨迹与融合 BEV、schema v2 数据集统计
 runtime/       滚动闭环引擎（轨迹源→MPC→车辆，终止判定与失败分类）
 metrics/       回合指标定义与聚合（成功率/碰撞率/误差等）
 scripts/       运行脚本

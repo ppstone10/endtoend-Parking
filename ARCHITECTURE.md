@@ -10,7 +10,7 @@
 | 端到端网络 | `model/` | MineParkingNet：BEV CNN 编码 + 目标/状态融合，输出未来 N 个局部轨迹点；`loss_fn` 为掩码 MSE |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成差分驱动可行轨迹（离散运动基元 + 48 词族 Reeds–Shepp 解析扩展 + C-space 膨胀与加密碰撞校验）；`smoothing.py` 提供保留换向点的三次捷径，`profile.py` 提供换向停车与倒车降速的梯形速度剖面 |
-| 数据管线 | `dataset/` | 随机采样泊车位姿对，规划专家轨迹并复用传感器→BEV 链路生成训练样本；`SensorBEVPipeline` 构造期校验两路空间配置，NPZ schema v2 自描述保存 BEV/任务元数据并兼容读取 v1 |
+| 数据管线 | `dataset/` | 兼容旧式随机采样，并以 Task 驱动专家轨迹与传感器→BEV 生成；在纯几何矩阵上叠加专家可生成能力，按可用单元分配难度配额、同单元重采并以 S9 整场景留出，NPZ schema v2 自描述保存并提供统计/叠加抽检 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
 | 可视化 | `viz/` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图（动画与实验图后续里程碑） |
@@ -31,8 +31,11 @@ SceneBundle + (TaskType, difficulty axes, seed, sample index) → TaskSampler �
 VehicleState + GoalPose → HybridAStarPlanner（运动基元 + Reeds–Shepp）→ Trajectory（专家轨迹）
   Trajectory → 碰撞安全三次捷径（可选）→ Trajectory
   Trajectory → 梯形速度剖面（可选）→ VelocityProfile
-DatasetGenerator：采样位姿对 + SensorBEVPipeline(融合BEV) + 专家轨迹 → TrainingSample
+Task[] → DatasetSplits（S9→test；其余按场景×类型分层 train/val）
+Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → TrainingSample
+  T4 按稳定候选顺序解析首个可规划目标；失败在原场景×类型×难度单元重采
   TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本 task_meta）；无版本 NPZ 按 v1 读取
+  NPZ → 长度/倒车/分层统计 + occupancy/target/专家轨迹叠加抽检
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
@@ -67,10 +70,13 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - Reeds–Shepp 最小转弯半径默认由 `|plan_v / max_omega|` 统一推导；解析路径和平滑捷径必须复用 Hybrid A* 的车身矩形与 `collision_margin` 安全边界。
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。
+- `dataset/build.py` 拥有专家可生成能力：不改变任务几何矩阵，单独排除当前 Hybrid A* 持续不可达的监督单元并限制单向可达单元；偶发规划失败仍保持原单元难度重采。
+- 相邻占用能力按场景×任务类型枚举实际可表达的 0/1/2 等级；T4 在占用后仍必须保留至少 3 个空闲候选位。
 - 任务随机流由根 seed、场景稳定序号、任务类型稳定序号和样本索引派生；T4 不预选目标，T5 只描述触发与载荷且不在采样时修改环境。
 - 传感器噪声只改变观测帧，不改变环境真值；默认 `clean` 与原输出兼容，非干净 profile 使用各传感器私有 seed/RNG，不读写 NumPy 全局随机状态。
 - BEV 以车辆为中心生成；默认 40×40m@0.25m，场景可覆盖范围/分辨率但同一融合管道两路必须共用配置；S9 用 80×80m@0.5m，并与默认配置保持 160×160 栅格。
 - 数据集 schema v2 将 `BEVTensor.to_metadata()` 与逐样本任务元数据编码为 Unicode JSON 数组，加载始终禁用 pickle；同一归档不允许混合 BEV 元数据或轨迹 `dt`，无版本旧归档识别为 v1。
+- 默认数据构建按 8:1:1 输出 train/val/test，S9 全部且仅进入 test；构建失败只在同一场景×任务类型×难度重采，替代任务避开全计划与已用 task ID；未完成 split 保持 `.partial.npz`，三个 split 完成后才写 manifest。
 
 ## 阶段迁移边界
 

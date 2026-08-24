@@ -17,7 +17,7 @@
 
 - 不做轮胎侧偏、载荷转移等高阶动力学优化；速度剖面只约束纵向加减速、限速与换向停车。
 - 不实现网络训练、MPC 闭环（后续阶段）。
-- 不实现任务驱动批量生成、数据集分层划分与训练集规模生产；这些由 P2.8 扩展，P2.5 只固定落盘兼容边界。
+- 不在本模块实现网络训练或 P4.1 多车位五项代价 oracle；P2.8 只为 T4 解析一个可规划监督目标并记录策略。
 
 ## 边界与约束
 
@@ -36,6 +36,8 @@
 - `VelocityProfile`：与轨迹等长的带符号速度数组和单调时间数组；位于 `planner/` 内，在任务/数据层决定落盘 schema 前不扩展 `interfaces/Trajectory`。
 - `HybridAStarPlanner.plan` 的输入、返回类型和已有异常类型保持兼容。
 - NPZ schema v2：保留 v1 的 `bevs/goals/states/trajs/masks/dt` 数组，新增标量 `schema_version=2`、单份 `bev_meta` 与逐样本 `task_meta`。元数据以 Unicode JSON 数组保存，加载后解码为字典/字典列表。
+- Task 驱动入口：`DatasetGenerator.generate` 同时接受旧式整数数量或 `Task` 可迭代对象；跨场景生成由调用方注入 task→(planner, SensorBEVPipeline) 工厂。
+- 划分结果：`DatasetSplits` 拥有互斥的 train/val/test Task；默认 test 场景为 S9，任何该场景样本不得进入 train/val。
 
 ## 行为与验收
 
@@ -66,6 +68,35 @@
 - 行为：始终以 `allow_pickle=False` 加载；无版本归档识别为 v1，新格式只接受已知版本 2。
 - 结果：v1 原数组字段保持可用，并附加 `schema_version=1`、`bev_meta=None`、`task_meta=None`；现有训练和闭环读取方无需迁移即可继续消费数组。
 - 异常与恢复：未知显式版本或 v2 元数据缺失/JSON 损坏时抛出 `ValueError`，禁止猜测字段语义。
+
+### `EXPTRAJ-DATA-004`：Task 驱动专家样本生成
+
+- 前置：Task 合法；组件工厂返回与 Task 场景和 BEV 配置一致的规划器/传感器管道。
+- 行为：单目标任务直接规划；T4 按稳定候选顺序选择首个可规划目标。采集 Task 起点 BEV，并把 `Task.to_metadata()`、实际噪声 profile、选中目标及解析策略写入样本元数据。
+- 结果：每个成功 Task 恰生成一条 `TrainingSample`，状态等于 Task 起点、目标等于已解析目标、轨迹通过专家规划器；输入顺序与输出顺序一致。
+- 异常与恢复：所有目标不可规划或组件配置不匹配时抛出携带 task ID 的 `TaskGenerationError`；构建层可据此在同一场景×任务类型单元重采。旧 `generate(int)` 行为保持兼容。
+- T4 边界：`first_plannable_candidate` 不是“最优车位”标签；P4.1 可通过 goal selector 注入五项代价 oracle。
+
+### `EXPTRAJ-DATA-005`：稳定分层与整场景泛化集
+
+- 前置：Task ID 唯一，划分比例合法且测试保留场景存在。
+- 行为：默认把 S9 全部放入 test；其余任务按场景×任务类型分层、用 seed 可复现地选择 val，剩余进入 train。
+- 结果：三集合互斥且并集等于输入；S9 不进入 train/val；同一输入与 seed 返回相同 Task ID 集合。构建计划按总量预留 10% S9，使目标比例为 8:1:1。
+- 异常与恢复：重复 Task ID、空输入、非法比例、测试场景无样本或非测试任务不足时抛出 `ValueError`。
+
+### `EXPTRAJ-DATA-006`：配额构建与失败重采
+
+- 前置：总量为正，能力矩阵含可支持单元，单元重试上限为正。
+- 行为：在任务几何能力矩阵上叠加当前专家可生成能力，排除持续不可达单元并约束单向可达单元；按其余场景×任务类型单元分配配额，循环 noise/可表达的 maneuver 与相邻占用难度；规划失败只在原单元增加 sample index 重采，并累计失败原因。
+- 结果：成功时各 split 达到计划数量，写出 schema v2 NPZ 与 JSON manifest；`--dry-run` 只输出计划，不生成 BEV/轨迹文件。
+- 异常与恢复：某单元超过重试上限时终止并报告单元、成功数和失败原因；替代任务必须避开所有原计划及已用 task ID，禁止跨 split 泄漏；已完成文件不被伪装为完整数据集。
+
+### `EXPTRAJ-DATA-007`：数据集统计与叠加抽检
+
+- 前置：可读取的 NPZ 数据集；叠加图要求 v2 `bev_meta`。
+- 行为：按 mask 统计专家轨迹长度，以轨迹切向相对车头投影统计倒车距离占比，并汇总场景/任务/噪声数量；抽样图把 occupancy/target BEV 与转到起点局部系的专家轨迹叠加。
+- 结果：CLI 输出 JSON 统计，可选保存统计文件与 PNG 抽检图。
+- 异常与恢复：v1 可输出不依赖任务元数据的基础统计；缺少 BEV 元数据时拒绝绘制并给出明确错误。
 
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
@@ -107,6 +138,10 @@
 | `EXPTRAJ-DATA-001` | 样本含 5 通道 BEV 且位姿自由 | `tests/test_dataset.py` | `dataset/generator.py::DatasetGenerator` | unittest 2 项通过 | ✅ |
 | `EXPTRAJ-DATA-002` | v2 版本、BEV/任务元数据往返与一致性拒绝 | `tests/test_dataset.py::TestDatasetGenerator` | `dataset/generator.py::DatasetGenerator.save/load`; `dataset/generator.py::TrainingSample.task_meta` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-003` | 无版本 v1 安全加载 | `tests/test_dataset.py::TestDatasetGenerator.test_v1_archive_still_loads` | `dataset/generator.py::DatasetGenerator.load` | 定向 unittest 通过 | ✅ |
+| `EXPTRAJ-DATA-004` | 单目标/T4 Task→样本、元数据与失败定位 | `tests/test_dataset.py::TestTaskDrivenDataset` | `dataset/generator.py::DatasetGenerator`; `dataset/pipeline.py::SensorBEVPipeline.set_target_goals` | 全仓 169 项通过；真实 S1/T1 目标通道与 3000 条 Task 生产通过 | ✅ |
+| `EXPTRAJ-DATA-005` | 8:1:1 目标、S9 隔离、seed 复现与无重叠 | `tests/test_splits.py` | `dataset/splits.py::split_tasks`; `DatasetSplits` | 正式归档为 2400/300/300；跨 split 重叠 0、唯一 task ID 3000、test 仅 S9 | ✅ |
+| `EXPTRAJ-DATA-006` | 配额、dry-run、同单元重采与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/build.py::build_task_plan/generate_with_retries/expert_maneuvers`; `sim/tasks.py::TaskSampler.adjacent_occupancy_levels` | 3000 条正式生产完成；train/val/test 重采 296/150/66 次；manifest 与全局 ID 保留验证通过 | ✅ |
+| `EXPTRAJ-DATA-007` | 长度/倒车/分布统计与 BEV 叠加图 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py` | `dataset/inspection.py::summarize_dataset/render_sample_overlay` | 三份统计 JSON 与 12 张 PNG 写出；全仓 169 项通过 | ✅ |
 | `EXPTRAJ-MARGIN-001` | 膨胀裕度语义与净空保持 | `tests/test_planner.py`（margin 两项测试） | `HybridAStarPlanner._pose_free`/`_splice_valid` | unittest 通过；200 回合地基基线碰撞率 11%→1.5% | ✅ |
 | `EXPTRAJ-RS-001` | 48 词族、精确到达、S3/S5 紧凑场景可规划 | `tests/test_reeds_shepp.py`; `tests/test_planner.py` | `planner/reeds_shepp.py::reeds_shepp_paths`; `HybridAStarPlanner._analytic_connection` | 3 项几何 + 3 项解析接入回归通过；1000 组随机 SE(2) 失败 0；200 回合 99.0% 成功/1.0% 碰撞 | ✅ |
 | `EXPTRAJ-SMOOTH-001` | 轨迹不变长、不跨换向、所有捷径全位姿无碰撞 | `tests/test_smoothing.py` | `planner/smoothing.py::smooth_trajectory` | 3 项定向回归通过 | ✅ |

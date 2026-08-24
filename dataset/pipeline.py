@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from interfaces import BEVConfig, BEVTensor
+from interfaces import BEVConfig, BEVTensor, GoalPose
 
 
 class SensorBEVPipeline:
@@ -47,3 +47,7 @@ class SensorBEVPipeline:
         lidar_bev = self.lidar2bev.to_bev(lidar_frame, x, y, yaw)
         camera_bev = self.camera2bev.to_bev(camera_frame, x, y, yaw)
         return self.bev_fusion.fuse(lidar_bev, camera_bev)
+
+    def set_target_goals(self, goals: list[GoalPose]) -> None:
+        """设置当前监督样本要渲染到 Camera target 通道的目标。"""
+        self.camera_sensor.env.parking_spots = list(goals)

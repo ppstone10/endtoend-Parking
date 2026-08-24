@@ -12,11 +12,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 import numpy as np
 
 from interfaces import BEVTensor, GoalPose, Trajectory, VehicleState
+from sim.noise import get_noise_profile
+from sim.tasks import Task, TaskGoal
+
+
+class TaskGenerationError(RuntimeError):
+    """某个 Task 无法生成专家样本，并保留稳定任务标识。"""
+
+    def __init__(self, task_id: str, reason: str) -> None:
+        self.task_id = task_id
+        self.reason = reason
+        super().__init__(f"任务 {task_id} 生成失败：{reason}")
 
 
 @dataclass
@@ -33,18 +44,20 @@ class TrainingSample:
 class DatasetGenerator:
     """训练样本生成器。
 
-    在给定环境中随机采样可行起始/目标位姿，使用 Hybrid A* 生成专家轨迹，
-    并通过传感器 → Sensor2BEV → 融合链路生成 BEV。
+    可兼容旧式环境内随机采样，也可把 Task 逐项转换为专家轨迹和融合 BEV。
     """
 
     def __init__(
         self,
-        env,
-        planner,
-        sensor_pipeline,
+        env=None,
+        planner=None,
+        sensor_pipeline=None,
         seed: int = 0,
         min_distance: float = 3.0,
         max_distance: float = 12.0,
+        *,
+        component_factory: Callable[[Task], tuple[Any, Any]] | None = None,
+        goal_selector: Callable[[Task, Any], TaskGoal] | None = None,
     ) -> None:
         self.env = env
         self.planner = planner
@@ -54,9 +67,21 @@ class DatasetGenerator:
         # 泊车场景轨迹通常较短；限制起终点距离保证规划快速收敛。
         self.min_distance = min_distance
         self.max_distance = max_distance
+        self.component_factory = component_factory
+        self.goal_selector = goal_selector
 
-    def generate(self, count: int) -> list[TrainingSample]:
-        """生成 count 条样本；跳过规划失败的样本直到凑够数量。"""
+    def generate(self, count: int | Iterable[Task]) -> list[TrainingSample]:
+        """生成随机样本，或按输入顺序把 Task 转为专家样本。"""
+        if isinstance(count, (int, np.integer)):
+            return self._generate_random(int(count))
+        return [self._generate_task(task) for task in count]
+
+    def _generate_random(self, count: int) -> list[TrainingSample]:
+        """兼容旧入口：随机采样并跳过规划失败，直到凑够 count 条。"""
+        if self.env is None or self.planner is None or self.sensor_pipeline is None:
+            raise ValueError("随机生成要求 env、planner 与 sensor_pipeline")
+        if count < 0:
+            raise ValueError("样本数量不能为负")
         samples: list[TrainingSample] = []
         attempts = 0
         max_attempts = count * 20 + 100
@@ -78,6 +103,69 @@ class DatasetGenerator:
                 f"仅生成 {len(samples)}/{count} 条样本，尝试 {attempts} 次后仍未凑齐"
             )
         return samples
+
+    def _generate_task(self, task: Task) -> TrainingSample:
+        planner, pipeline = self._components_for(task)
+        if getattr(pipeline, "bev_config", None) != task.scene.bev_config:
+            raise TaskGenerationError(task.task_id, "传感器管道 BEV 配置与场景不一致")
+
+        goal, trajectory, goal_policy = self._resolve_goal(task, planner)
+        if hasattr(pipeline, "set_target_goals"):
+            pipeline.set_target_goals([goal.as_goal_pose()])
+        try:
+            bev = pipeline.capture_bev(task.start.x, task.start.y, task.start.yaw)
+        except (RuntimeError, ValueError) as exc:
+            raise TaskGenerationError(task.task_id, f"BEV 采集失败：{exc}") from exc
+
+        task_meta = task.to_metadata()
+        task_meta["noise_profile"] = get_noise_profile(
+            task.difficulty.noise_level
+        ).to_metadata()
+        task_meta["dataset"] = {
+            "goal_policy": goal_policy,
+            "selected_goal": goal.to_metadata(),
+        }
+        return TrainingSample(
+            bev=bev,
+            goal=goal.as_goal_pose(),
+            state=task.start,
+            expert_trajectory=trajectory,
+            task_meta=task_meta,
+        )
+
+    def _components_for(self, task: Task) -> tuple[Any, Any]:
+        if self.component_factory is not None:
+            return self.component_factory(task)
+        if self.planner is None or self.sensor_pipeline is None:
+            raise TaskGenerationError(task.task_id, "未配置 task 组件工厂或默认组件")
+        return self.planner, self.sensor_pipeline
+
+    def _resolve_goal(
+        self, task: Task, planner: Any
+    ) -> tuple[TaskGoal, Trajectory, str]:
+        if task.goal is not None:
+            goals = (task.goal,)
+            policy = "task_goal"
+        elif self.goal_selector is not None:
+            selected = self.goal_selector(task, planner)
+            if selected not in task.candidate_goals:
+                raise TaskGenerationError(task.task_id, "goal_selector 返回了候选集外目标")
+            goals = (selected,)
+            policy = "goal_selector"
+        else:
+            goals = task.candidate_goals
+            policy = "first_plannable_candidate"
+
+        failures: list[str] = []
+        for goal in goals:
+            try:
+                trajectory = planner.plan(task.start, goal.as_goal_pose())
+            except (RuntimeError, ValueError) as exc:
+                failures.append(f"{goal.spot_id}: {exc}")
+                continue
+            return goal, trajectory, policy
+        detail = "; ".join(failures) or "没有可用目标"
+        raise TaskGenerationError(task.task_id, f"所有目标均不可规划（{detail}）")
 
     def save(self, samples: list[TrainingSample], path: str | Path) -> None:
         """按 schema v2 写入 npz（轨迹补零，元数据使用 Unicode JSON）。"""
