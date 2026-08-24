@@ -9,3 +9,5 @@ models/
 runs/
 *.pt
 data_training.npz
+data_closed_loop.npz
+out/

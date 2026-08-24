@@ -37,7 +37,7 @@
 ## M2 平台与数据（约 1.5~2 周）
 
 - [x] P2.1 障碍体系重构（FR-SIM-01）：Obstacle ABC + Polygon/Circle/Rectangle；kind 语义（wall/berm/cliff/rock/vehicle/equipment）；解析线段求交 raycast；悬崖"碰撞但不挡射线"。出口：新旧 raycast 一致性回归。（2026-08-24 完成：`sim/obstacles.py` 三形状 + 三语义属性；`environment.py` 解析 raycast 与旧步进一致性 ≤0.05m；LiDAR 一帧 56→1.2ms、NetworkSource 推理 158→5.4ms 达 NFR-05；新增 SIM Spec 3 规范 ID，86 项测试全过）
-- [ ] P2.2 场景库（FR-SIM-04/05）：spots.py、scenes.py 注册表 S1–S9、scenes_validate.py、experiments/scenes/*.yaml。出口：V1 九场景图。
+- [x] P2.2 场景库（FR-SIM-04/05）：spots.py、scenes.py 注册表 S1–S9、scenes_validate.py、experiments/scenes/*.yaml。出口：V1 九场景图。（2026-08-24 完成：`sim/spots.py` ParkingSpot（容差/占用/编号）+ `sim/scenes.py` 九场景注册表（S1 驻地/S2 斜列/S3 维修/S4 排土场卸载/S5 破碎站/S6 装载/S7 加油/S8 称重/S9 综合矿场）+ `sim/scenes_validate.py` 自检（捕获并修复 3 处车位-禁区几何冲突）；V1 渲染 20 文件（3×3 总览+九单图，PNG+PDF）；新增 SCENE Spec 4 规范 ID，95 项测试全过；YAML 落盘暂缓——构造参数即配置，M4 实验矩阵按需补）
 - [ ] P2.3 车辆参数化（FR-SIM-02）：已在 M1 提前。
 - [ ] P2.4 噪声模型（FR-SIM-03）：sim/noise.py 三档。
 - [ ] P2.5 BEV 参数化（FR-SIM-06）：extent 随场景配置；npz schema v2（bev_meta + task_meta）。

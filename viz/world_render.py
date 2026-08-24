@@ -1,24 +1,59 @@
-"""世界俯视图渲染：障碍、边界、车位、车辆矩形。
+"""世界俯视图渲染：障碍（矩形/多边形/圆）、边界、车位、车辆、悬崖纹理。
 
-当前支持 RectangleObstacle；多边形障碍（M2 障碍体系）扩展时在本模块
-增加分支，调用方接口不变。
+渲染按障碍 kind 分样式：cliff 斜纹填充、berm 深色条带、rock 圆斑、
+vehicle 半透明、line 虚线框、wall/其余常规灰色。
 """
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrow, Rectangle
+from matplotlib.patches import Circle, FancyArrow, Polygon, Rectangle
 
 from interfaces import GoalPose, VehicleState
+from sim.spots import ParkingSpot
 from .style import COLORS
 
+# kind → 渲染样式
+_KIND_STYLE = {
+    "cliff": {"facecolor": "#4a4a4a", "alpha": 0.9, "hatch": "xx", "edgecolor": "black"},
+    "berm": {"facecolor": "#8b4513", "alpha": 0.95, "edgecolor": "black"},
+    "rock": {"facecolor": "#a9a9a9", "alpha": 0.8, "edgecolor": "dimgray"},
+    "vehicle": {"facecolor": "#4682b4", "alpha": 0.5, "edgecolor": "steelblue"},
+    "equipment": {"facecolor": "#b8860b", "alpha": 0.7, "edgecolor": "darkgoldenrod"},
+    "line": {"facecolor": "none", "alpha": 1.0, "edgecolor": "#ffcc00", "linestyle": "--"},
+    "wall": {"facecolor": COLORS["obstacle"], "alpha": 0.6, "edgecolor": "black"},
+}
 
-def render_world(ax, env, spots: list[GoalPose] | None = None, spot_size: tuple[float, float] = (7.0, 3.5)) -> None:
-    """在 ax 上渲染环境：边界、障碍物、车位框。
 
-    spots 为目标车位位姿列表（含单个目标），spot_size 为车位框尺寸
-    (length, width)。
+def _draw_obstacle(ax, obs) -> None:
+    style = _KIND_STYLE.get(obs.kind, _KIND_STYLE["wall"])
+    if hasattr(obs, "vertices"):
+        ax.add_patch(Polygon(np.array(obs.vertices), closed=True, linewidth=0.8, **style))
+    elif hasattr(obs, "radius"):
+        ax.add_patch(Circle((obs.x, obs.y), obs.radius, linewidth=0.8, **style))
+    else:
+        ax.add_patch(
+            Rectangle(
+                (obs.x_min, obs.y_min),
+                obs.x_max - obs.x_min,
+                obs.y_max - obs.y_min,
+                linewidth=0.8,
+                **style,
+            )
+        )
+
+
+def render_world(
+    ax,
+    env,
+    spots: list[GoalPose] | list[ParkingSpot] | None = None,
+    spot_size: tuple[float, float] = (7.0, 3.5),
+) -> None:
+    """在 ax 上渲染环境：边界、障碍物（按 kind 样式）、车位框。
+
+    spots 为 ParkingSpot 列表（优先，含占用状态与编号）或 GoalPose 列表；
+    spot_size 仅对 GoalPose 列表生效。
     """
     half = env.world_size / 2.0
     ax.plot(
@@ -26,49 +61,34 @@ def render_world(ax, env, spots: list[GoalPose] | None = None, spot_size: tuple[
         [-half, -half, half, half, -half],
         color="black",
         linewidth=1.0,
-        label="Boundary" if not getattr(ax, "_world_legend", False) else None,
     )
-    ax._world_legend = True
 
-    for i, obs in enumerate(env.obstacles):
-        ax.add_patch(
-            Rectangle(
-                (obs.x_min, obs.y_min),
-                obs.x_max - obs.x_min,
-                obs.y_max - obs.y_min,
-                facecolor=COLORS["obstacle"],
-                alpha=0.6,
-                edgecolor="black",
-                linewidth=0.5,
-            )
-        )
-    if env.obstacles:
-        ax.add_patch(
-            Rectangle(
-                (env.obstacles[0].x_min, env.obstacles[0].y_min),
-                0.0,
-                0.0,
-                facecolor=COLORS["obstacle"],
-                alpha=0.6,
-                label="Obstacle",
-            )
-        )
+    for obs in env.obstacles:
+        _draw_obstacle(ax, obs)
 
     if spots:
-        l, w = spot_size
         for spot in spots:
-            ax.add_patch(
-                Rectangle(
-                    (spot.x - l / 2.0, spot.y - w / 2.0),
-                    l,
-                    w,
-                    fill=False,
-                    edgecolor=COLORS["spot"],
-                    linewidth=1.5,
-                    linestyle="--",
+            if isinstance(spot, ParkingSpot):
+                l, w = spot.size
+                pose = spot.pose
+                face = "#cccccc" if not spot.occupied else "#999999"
+                ax.add_patch(
+                    Polygon(
+                        spot.footprint_corners(), closed=True,
+                        facecolor=face, edgecolor=COLORS["spot"],
+                        linewidth=1.2, linestyle="--", alpha=0.6,
+                    )
                 )
-            )
-        ax.plot([], [], color=COLORS["spot"], linestyle="--", linewidth=1.5, label="Parking spot")
+                ax.text(pose.x, pose.y, spot.id, ha="center", va="center", fontsize=7, color="black")
+            else:
+                pose = spot
+                l, w = spot_size
+                ax.add_patch(
+                    Rectangle(
+                        (pose.x - l / 2.0, pose.y - w / 2.0), l, w,
+                        fill=False, edgecolor=COLORS["spot"], linewidth=1.5, linestyle="--",
+                    )
+                )
 
     ax.set_aspect("equal")
     ax.set_xlabel("x [m]")
