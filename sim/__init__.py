@@ -17,6 +17,19 @@ from .obstacles import (
 )
 from .sensor_camera import SimulatedCamera
 from .sensor_sim import SimulatedLiDAR
+from .tasks import (
+    DistanceTier,
+    DynamicObstacleEvent,
+    Maneuver,
+    NoiseLevel,
+    Task,
+    TaskCapability,
+    TaskDifficulty,
+    TaskGoal,
+    TaskSampler,
+    TaskType,
+    UnsupportedTaskError,
+)
 from .vehicle_config import (
     LEGACY_4X2,
     MINING_TRUCK,
@@ -48,4 +61,15 @@ __all__ = [
     "LEGACY_4X2",
     "VEHICLE_PRESETS",
     "get_vehicle",
+    "DistanceTier",
+    "DynamicObstacleEvent",
+    "Maneuver",
+    "NoiseLevel",
+    "Task",
+    "TaskCapability",
+    "TaskDifficulty",
+    "TaskGoal",
+    "TaskSampler",
+    "TaskType",
+    "UnsupportedTaskError",
 ]

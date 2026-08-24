@@ -1,0 +1,173 @@
+"""任务层测试：T1–T5 契约、可复现采样与 9×5 能力矩阵。"""
+
+from dataclasses import replace
+import json
+import math
+import unittest
+
+from sim.tasks import (
+    Maneuver,
+    NoiseLevel,
+    TaskSampler,
+    TaskType,
+    UnsupportedTaskError,
+)
+from planner.hybrid_astar import HybridAStarPlanner
+
+
+class TestTaskModel(unittest.TestCase):
+    def setUp(self):
+        self.sampler = TaskSampler(seed=20260824)
+
+    def test_task_metadata_is_json_serializable(self):
+        task = self.sampler.sample("S1_parking_lot", TaskType.T1_NEAR)
+        encoded = json.dumps(task.to_metadata(), sort_keys=True)
+        self.assertIn('"schema_version": 1', encoded)
+        self.assertIn('"task_type": "T1"', encoded)
+
+    def test_single_goal_and_candidate_goal_invariants(self):
+        single = self.sampler.sample("S1_parking_lot", TaskType.T1_NEAR)
+        self.assertIsNotNone(single.goal)
+        self.assertEqual(single.candidate_goals, ())
+        with self.assertRaises(ValueError):
+            replace(single, goal=None)
+
+        multi = self.sampler.sample("S1_parking_lot", TaskType.T4_MULTI_SPOT)
+        self.assertIsNone(multi.goal)
+        self.assertGreaterEqual(len(multi.candidate_goals), 3)
+        self.assertLessEqual(len(multi.candidate_goals), 6)
+        with self.assertRaises(ValueError):
+            replace(multi, goal=multi.candidate_goals[0])
+
+
+class TestTaskSampling(unittest.TestCase):
+    def test_same_coordinates_have_same_metadata(self):
+        left = TaskSampler(seed=1234).sample(
+            "S2_diagonal_lot", TaskType.T2_MEDIUM, sample_index=7,
+            maneuver=Maneuver.REVERSE, noise_level=NoiseLevel.LOW,
+        )
+        right = TaskSampler(seed=1234).sample(
+            "S2_diagonal_lot", TaskType.T2_MEDIUM, sample_index=7,
+            maneuver=Maneuver.REVERSE, noise_level=NoiseLevel.LOW,
+        )
+        self.assertEqual(left.to_metadata(), right.to_metadata())
+
+    def test_sample_index_derives_independent_identity(self):
+        sampler = TaskSampler(seed=1234)
+        first = sampler.sample("S1_parking_lot", TaskType.T1_NEAR, sample_index=0)
+        second = sampler.sample("S1_parking_lot", TaskType.T1_NEAR, sample_index=1)
+        self.assertNotEqual(first.task_id, second.task_id)
+        self.assertNotEqual(first.seed, second.seed)
+
+    def test_distance_tiers_and_vehicle_footprint(self):
+        sampler = TaskSampler(seed=42)
+        cases = [
+            ("S1_parking_lot", TaskType.T1_NEAR, 4.0, 8.0),
+            ("S2_diagonal_lot", TaskType.T2_MEDIUM, 8.0, 15.0),
+            ("S9_mine_complex", TaskType.T3_LONG, 15.0, 30.0),
+        ]
+        for scene, kind, lower, upper in cases:
+            with self.subTest(scene=scene, kind=kind):
+                task = sampler.sample(scene, kind)
+                self.assertIsNotNone(task.goal)
+                distance = math.hypot(task.start.x - task.goal.x, task.start.y - task.goal.y)
+                self.assertGreaterEqual(distance, lower)
+                self.assertLessEqual(distance, upper)
+                self.assertTrue(
+                    sampler.pose_is_free(task.scene.env, task.start.x, task.start.y, task.start.yaw)
+                )
+
+    def test_requested_difficulty_axes_are_recorded(self):
+        task = TaskSampler(seed=9).sample(
+            "S1_parking_lot", TaskType.T2_MEDIUM,
+            maneuver=Maneuver.REVERSE, adjacent_occupancy=2,
+            noise_level=NoiseLevel.HIGH,
+        )
+        self.assertEqual(task.difficulty.maneuver, Maneuver.REVERSE)
+        self.assertEqual(task.difficulty.adjacent_occupancy, 2)
+        self.assertEqual(task.difficulty.noise_level, NoiseLevel.HIGH)
+        self.assertEqual(task.difficulty.aisle_width, 12.0)
+        occupied = [spot for spot in task.scene.spots if spot.occupied]
+        self.assertEqual(len(occupied), 2)
+        target_x = task.goal.x
+        self.assertTrue(any(spot.pose.x < target_x for spot in occupied))
+        self.assertTrue(any(spot.pose.x > target_x for spot in occupied))
+
+    def test_unrepresentable_adjacent_occupancy_is_rejected(self):
+        with self.assertRaises(UnsupportedTaskError):
+            TaskSampler(seed=9).sample(
+                "S6_loading_face", TaskType.T2_MEDIUM, adjacent_occupancy=1
+            )
+
+
+class TestTaskMatrix(unittest.TestCase):
+    def setUp(self):
+        self.sampler = TaskSampler(seed=77)
+
+    def test_capability_matrix_contains_all_45_cells(self):
+        cells = self.sampler.capability_matrix()
+        self.assertEqual(len(cells), 45)
+        self.assertEqual(len({(c.scene_name, c.task_type) for c in cells}), 45)
+        unsupported = [cell for cell in cells if not cell.supported]
+        self.assertTrue(unsupported)
+        self.assertTrue(all(cell.reason for cell in unsupported))
+
+    def test_non_strict_matrix_only_returns_supported_tasks(self):
+        cells = self.sampler.capability_matrix()
+        tasks = self.sampler.sample_matrix()
+        self.assertEqual(len(tasks), sum(cell.supported for cell in cells))
+        self.assertEqual(
+            {(task.scene.name, task.task_type) for task in tasks},
+            {(cell.scene_name, cell.task_type) for cell in cells if cell.supported},
+        )
+
+    def test_strict_matrix_rejects_unsupported_cells(self):
+        with self.assertRaises(UnsupportedTaskError):
+            self.sampler.sample_matrix(strict=True)
+
+    def test_single_spot_scene_does_not_fake_t4(self):
+        cell = next(
+            c for c in self.sampler.capability_matrix()
+            if c.scene_name == "S6_loading_face" and c.task_type == TaskType.T4_MULTI_SPOT
+        )
+        self.assertFalse(cell.supported)
+        with self.assertRaises(UnsupportedTaskError):
+            self.sampler.sample("S6_loading_face", TaskType.T4_MULTI_SPOT)
+
+
+class TestTaskDynamicEvent(unittest.TestCase):
+    def test_t5_has_one_progress_triggered_event_without_mutating_environment(self):
+        task = TaskSampler(seed=55).sample("S8_weigh_station", TaskType.T5_DYNAMIC)
+        self.assertIsNotNone(task.dynamic_event)
+        event = task.dynamic_event
+        self.assertGreater(event.trigger_progress, 0.0)
+        self.assertLess(event.trigger_progress, 1.0)
+        self.assertGreater(event.radius, 0.0)
+        self.assertEqual(event.obstacle_kind, "vehicle")
+        self.assertTrue(task.scene.env.is_free(event.x, event.y))
+        self.assertFalse(any(getattr(obs, "x", None) == event.x for obs in task.scene.env.obstacles))
+
+
+class TestTaskPlannerIntegration(unittest.TestCase):
+    def test_representative_t1_to_t5_tasks_are_plannable(self):
+        sampler = TaskSampler(seed=20260824)
+        cases = [
+            ("S1_parking_lot", TaskType.T1_NEAR),
+            ("S3_maintenance", TaskType.T2_MEDIUM),
+            ("S6_loading_face", TaskType.T3_LONG),
+            ("S1_parking_lot", TaskType.T4_MULTI_SPOT),
+            ("S8_weigh_station", TaskType.T5_DYNAMIC),
+        ]
+        for scene_name, task_type in cases:
+            with self.subTest(scene=scene_name, task_type=task_type):
+                task = sampler.sample(scene_name, task_type)
+                target = task.goal or task.candidate_goals[0]
+                planner = HybridAStarPlanner(
+                    task.scene.env, vehicle_length=6.0, vehicle_width=3.0
+                )
+                trajectory = planner.plan(task.start, target.as_goal_pose())
+                self.assertGreater(trajectory.horizon, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
