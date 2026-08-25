@@ -157,6 +157,34 @@ class TestDatasetGenerator(unittest.TestCase):
             with self.assertRaises(ValueError):
                 generator.save([first, second], Path(temp_dir) / "invalid.npz")
 
+    def test_merge_archives_repads_trajectories_and_preserves_metadata(self):
+        generator = _build_generator()
+        short = _sample({"task_id": "short"})
+        long = _sample({"task_id": "long"})
+        long.expert_trajectory = Trajectory(
+            points=np.array(
+                [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+                dtype=np.float32,
+            ),
+            dt=0.1,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "first.npz"
+            second = root / "second.npz"
+            merged = root / "merged.npz"
+            generator.save([short], first)
+            generator.save([long], second)
+            DatasetGenerator.merge_archives([first, second], merged)
+            data = DatasetGenerator.load(merged)
+
+        self.assertEqual(data["trajs"].shape, (2, 3, 3))
+        self.assertEqual(data["masks"].tolist(), [[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
+        self.assertEqual(
+            [item["task_id"] for item in data["task_meta"]],
+            ["short", "long"],
+        )
+
 
 class _TaskPipeline:
     def __init__(self, task):
@@ -177,7 +205,14 @@ class _TaskPlanner:
         self.rejected_x = rejected_x
         self.reject_all = reject_all
 
-    def plan(self, start: VehicleState, goal: GoalPose) -> Trajectory:
+    def plan(
+        self,
+        start: VehicleState,
+        goal: GoalPose,
+        *,
+        preferred_direction: int | None = None,
+    ) -> Trajectory:
+        self.preferred_direction = preferred_direction
         if self.reject_all or self.rejected_x == goal.x:
             raise RuntimeError("测试规划失败")
         return Trajectory(
@@ -239,8 +274,9 @@ class TestTaskDrivenDataset(unittest.TestCase):
         task = TaskSampler(seed=20260824).sample(
             "S1_parking_lot", TaskType.T1_NEAR, noise_level=NoiseLevel.LOW
         )
+        planner = _TaskPlanner()
         generator = DatasetGenerator(
-            component_factory=lambda current: (_TaskPlanner(), _TaskPipeline(current)),
+            component_factory=lambda current: (planner, _TaskPipeline(current)),
             enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
@@ -251,6 +287,10 @@ class TestTaskDrivenDataset(unittest.TestCase):
         self.assertEqual(sample.task_meta["dataset"]["goal_policy"], "task_goal")
         self.assertEqual(sample.task_meta["noise_profile"]["level"], "low")
         self.assertTrue(sample.task_meta["dataset"]["maneuver_audit"]["consistent"])
+        self.assertEqual(
+            planner.preferred_direction,
+            1 if task.difficulty.maneuver == Maneuver.FORWARD else -1,
+        )
 
     def test_t4_uses_first_plannable_candidate_and_records_policy(self):
         task = TaskSampler(seed=77).sample("S1_parking_lot", TaskType.T4_MULTI_SPOT)

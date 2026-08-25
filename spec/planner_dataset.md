@@ -5,7 +5,7 @@
 - Spec ID 前缀：`EXPTRAJ`
 - 强度：完整
 - 状态：已采纳
-- 最后更新：2026-08-24
+- 最后更新：2026-08-25
 
 ## 目标
 
@@ -35,7 +35,7 @@
 - `ReedsSheppPath`：保存 48 词族中某个可行候选的转向类型、带符号米制段长、最小转弯半径和总长。段长正/负分别表示前进/倒车。
 - 平滑结果：平滑入口仍接收/返回 `Trajectory`，不新增数据类，不改变三阶段统一轨迹接口。
 - `VelocityProfile`：与轨迹等长的带符号速度数组和单调时间数组；位于 `planner/` 内，在任务/数据层决定落盘 schema 前不扩展 `interfaces/Trajectory`。
-- `HybridAStarPlanner.plan` 的输入、返回类型和已有异常类型保持兼容。
+- `HybridAStarPlanner.plan` 保持原有起终位姿调用兼容，并可选接收任务请求方向；返回类型和已有异常类型保持兼容。
 - `VehicleConfig`：统一保存理论外廓、执行上限和规划搜索参数；默认从可编辑 JSON 配置加载并可序列化为稳定模型元数据。新数据必须记录模型名称、版本和关键数值，用于阻止旧模型轨迹混入新训练集。
 - NPZ schema v2：保留 v1 的 `bevs/goals/states/trajs/masks/dt` 数组，新增标量 `schema_version=2`、单份 `bev_meta` 与逐样本 `task_meta`。元数据以 Unicode JSON 数组保存，加载后解码为字典/字典列表。
 - Task 驱动入口：`DatasetGenerator.generate` 同时接受旧式整数数量或 `Task` 可迭代对象；跨场景生成由调用方注入 task→(planner, SensorBEVPipeline) 工厂。
@@ -45,8 +45,8 @@
 
 ### `EXPTRAJ-TRACK-001`：可配置履带钻机模型
 
-- 前置：配置包含有限正数的长、宽、速度/角速度上限、规划分辨率和非负安全余量；规划速度/角速度不超过底盘执行上限。
-- 行为：默认从 `configs/vehicles/tracked_drill_rig.json` 加载居中 6×3 m 理论车型；同一配置向 Hybrid A*、差分运动模型、MPC、碰撞和 inspection 提供参数，并输出稳定模型元数据。
+- 前置：配置包含有限正数的长、宽、速度/角速度上限、规划分辨率、单次规划墙钟上限、至少为 1 的反方向代价系数和非负安全余量；规划速度/角速度不超过底盘执行上限。
+- 行为：默认从 `configs/vehicles/tracked_drill_rig.json` 加载居中 6×3 m 理论车型；同一配置向 Hybrid A*、差分运动模型、MPC、碰撞和 inspection 提供参数，并输出稳定模型元数据。影响轨迹标签的搜索限制和方向代价变化必须更新模型版本。
 - 结果：只修改配置即可改变外廓、控制上限与 Hybrid A* 搜索参数，无需修改算法源码；默认配置明确标识为理论模型而非实车标定。
 - 异常与恢复：缺字段、未知字段、非法数值或规划上限高于执行上限时拒绝加载；可显式传入其他配置文件回退或适配实车。
 
@@ -60,9 +60,9 @@
 ### `EXPTRAJ-PLAN-001`：专家轨迹生成
 
 - 前置：起始 `VehicleState` 与目标 `GoalPose` 均无碰撞。
-- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径。
+- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径；调用方提供前进/倒车请求时，对反方向平移基元和解析段施加同一可配置代价，但不禁止必要的短距离反向调整。
 - 结果：返回 `Trajectory`，终点与目标位姿偏差 ≤ 0.6m；轨迹各点均位于自由空间。
-- 异常与恢复：起始/目标碰撞抛 `ValueError`；搜索发散或超出上限抛 `RuntimeError`，由调用方重试新位姿。
+- 异常与恢复：起始/目标碰撞抛 `ValueError`；搜索发散、节点数超限或超过配置的单次规划墙钟上限时抛 `RuntimeError`，由调用方在原任务单元重采。
 
 ### `EXPTRAJ-DATA-001`：训练样本生成
 
@@ -103,9 +103,9 @@
 ### `EXPTRAJ-DATA-006`：配额构建与失败重采
 
 - 前置：总量为正，能力矩阵含可支持单元，单元重试上限为正。
-- 行为：在任务几何能力矩阵上叠加当前专家可生成能力，排除持续不可达单元并约束单向可达单元；按其余场景×任务类型单元分配配额，循环 noise/可表达的 maneuver 与相邻占用难度；规划失败只在原单元增加 sample index 重采，并累计失败原因。
-- 结果：成功时各 split 达到计划数量，写出 schema v2 NPZ 与 JSON manifest；`--dry-run` 只输出计划，不生成 BEV/轨迹文件。
-- 异常与恢复：某单元超过重试上限时终止并报告单元、成功数和失败原因；替代任务必须避开所有原计划及已用 task ID，禁止跨 split 泄漏；已完成文件不被伪装为完整数据集。
+- 行为：在任务几何能力矩阵上叠加当前专家可生成能力，排除持续不可达单元并约束单向可达单元；按其余场景×任务类型单元分配配额，循环 noise/可表达的 maneuver 与相邻占用难度；规划失败只在原单元增加 sample index 重采，并累计失败原因。正式构建按固定批量输出完成数、耗时、失败数和预计剩余量，并把每个已通过双门禁的批次原子写入独立检查点。
+- 结果：成功时各 split 达到计划数量，合并检查点写出 schema v2 NPZ 与 JSON manifest；`--dry-run` 只输出计划，不生成 BEV/轨迹文件。相同 seed、车辆模型版本和任务计划可跳过已验证检查点继续构建。
+- 异常与恢复：单次规划超时作为稳定失败原因参与重采；某单元超过重试上限时终止并报告单元、成功数和失败原因；替代任务必须避开所有原计划及已用 task ID，禁止跨 split 泄漏；配置、计划或检查点审计不匹配时拒绝恢复，已完成文件不被伪装为完整数据集。
 
 ### `EXPTRAJ-DATA-007`：数据集统计与叠加抽检
 
@@ -185,15 +185,15 @@
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
 |---|---|---|---|---|---|
-| `EXPTRAJ-TRACK-001` | JSON 配置统一驱动外廓、控制与搜索参数，非法配置拒绝 | `tests/test_viz.py::TestVehicleConfig` | `sim/vehicle_config.py::VehicleConfig/load_vehicle_config`; `configs/vehicles/tracked_drill_rig.json` | 配置往返/非法上限/预设注入测试通过；全仓 191 项通过 | ✅ |
+| `EXPTRAJ-TRACK-001` | JSON 配置统一驱动外廓、控制、方向代价和时间上限，非法配置拒绝 | `tests/test_viz.py::TestVehicleConfig`; `tests/test_planner.py` | 待补 | 待验证 | ⏳ |
 | `EXPTRAJ-TRACK-002` | 同中心异航向可规划；旋转中间姿态碰撞时拒绝 | `tests/test_planner.py` | `planner/hybrid_astar.py::HybridAStarPlanner._expand/_tracked_direct_candidates`; `planner/collision.py::RectangleFootprintCollisionChecker` | 纯原地旋转、端点自由但扫掠碰撞、车内障碍三项回归通过；S3/S5 回归通过 | ✅ |
-| `EXPTRAJ-PLAN-001` | 终点偏差≤0.6m、轨迹点与完整外廓扫掠自由 | `tests/test_planner.py` | `planner/hybrid_astar.py::HybridAStarPlanner`; `planner/collision.py::RectangleFootprintCollisionChecker` | 履带运动集、完整外廓与解析接入回归通过；全仓 191 项通过 | ✅ |
+| `EXPTRAJ-PLAN-001` | 请求方向参与搜索代价、单次规划有墙钟上限，终点与完整外廓仍满足原契约 | `tests/test_planner.py`; 正式计划长尾基准 | 待补 | 待验证 | ⏳ |
 | `EXPTRAJ-DATA-001` | 样本含 5 通道 BEV 且位姿自由 | `tests/test_dataset.py` | `dataset/generator.py::DatasetGenerator` | unittest 2 项通过 | ✅ |
 | `EXPTRAJ-DATA-002` | v2 版本、BEV/任务元数据往返与一致性拒绝 | `tests/test_dataset.py::TestDatasetGenerator` | `dataset/generator.py::DatasetGenerator.save/load`; `dataset/generator.py::TrainingSample.task_meta` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-003` | 无版本 v1 安全加载 | `tests/test_dataset.py::TestDatasetGenerator.test_v1_archive_still_loads` | `dataset/generator.py::DatasetGenerator.load` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-004` | 单目标/T4 Task→样本、元数据与失败定位 | `tests/test_dataset.py::TestTaskDrivenDataset` | `dataset/generator.py::DatasetGenerator`; `dataset/pipeline.py::SensorBEVPipeline.set_target_goals` | 全仓 169 项通过；真实 S1/T1 目标通道与 3000 条 Task 生产通过 | ✅ |
 | `EXPTRAJ-DATA-005` | 8:1:1 目标、S9 隔离、seed 复现与无重叠 | `tests/test_splits.py` | `dataset/splits.py::split_tasks`; `DatasetSplits` | 正式归档为 2400/300/300；跨 split 重叠 0、唯一 task ID 3000、test 仅 S9 | ✅ |
-| `EXPTRAJ-DATA-006` | 配额、dry-run、同单元重采与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/build.py::build_task_plan/generate_with_retries/expert_maneuvers`; `sim/tasks.py::TaskSampler.adjacent_occupancy_levels` | 3000 条正式生产完成；train/val/test 重采 296/150/66 次；manifest 与全局 ID 保留验证通过 | ✅ |
+| `EXPTRAJ-DATA-006` | 配额、方向感知重采、批量进度、可恢复检查点与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py`; 中断恢复烟测 | 待补 | 待验证 | ⏳ |
 | `EXPTRAJ-DATA-007` | 长度/倒车/分布统计与 BEV 叠加图 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py` | `dataset/inspection.py::summarize_dataset/render_sample_overlay` | 三份统计 JSON 与 12 张 PNG 写出；全仓 169 项通过 | ✅ |
 | `EXPTRAJ-DATA-008` | 起终矿卡位姿、行驶方向、换向与到位误差可视；代表样本优先覆盖任务类型 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::render_sample_overlay/select_representative_indices` | 5 项定向测试与全仓 172 项通过；三 split 共 15 张增强图写出，S9/T1–T5 人工图审通过 | ✅ |
 | `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |

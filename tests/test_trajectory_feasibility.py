@@ -13,6 +13,28 @@ from sim import MINING_DRILL_RIG
 
 
 class TestTrajectoryFeasibility(unittest.TestCase):
+    def test_float32_quantization_at_speed_limit_is_not_false_overrun(self):
+        at_limit = np.array(
+            [[10.0, 0.0, 0.0], [10.1, 0.0, 0.0]], dtype=np.float32
+        )
+        over_limit = np.array(
+            [[10.0, 0.0, 0.0], [10.102, 0.0, 0.0]], dtype=np.float32
+        )
+        common = {
+            "dt": 0.2,
+            "max_v": 0.5,
+            "max_omega": 0.8,
+            "pose_free": None,
+            "model_metadata": {"name": "test", "model_version": "v1"},
+        }
+
+        self.assertTrue(
+            audit_trajectory_feasibility(at_limit, **common).kinematically_feasible
+        )
+        self.assertFalse(
+            audit_trajectory_feasibility(over_limit, **common).kinematically_feasible
+        )
+
     def test_forward_and_fixed_center_pivot_are_feasible(self):
         points = np.array(
             [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.1, 0.0, 0.07]]

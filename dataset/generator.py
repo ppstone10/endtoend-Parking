@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 import json
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -241,7 +242,7 @@ class DatasetGenerator:
         unavailable_feasibility_count = 0
         for goal in goals:
             try:
-                trajectory = planner.plan(task.start, goal.as_goal_pose())
+                trajectory = self._plan_task_goal(planner, task, goal)
             except (RuntimeError, ValueError) as exc:
                 failures.append(f"{goal.spot_id}: {exc}")
                 continue
@@ -305,6 +306,24 @@ class DatasetGenerator:
             f"所有目标均不可用于专家监督（{detail}）",
             code=code,
         )
+
+    @staticmethod
+    def _plan_task_goal(planner: Any, task: Task, goal: TaskGoal) -> Trajectory:
+        """向支持任务方向偏好的规划器传参，同时兼容既有自定义规划器。"""
+        try:
+            parameters = inspect.signature(planner.plan).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "preferred_direction" in parameters:
+            preferred_direction = (
+                1 if task.difficulty.maneuver.value == "forward" else -1
+            )
+            return planner.plan(
+                task.start,
+                goal.as_goal_pose(),
+                preferred_direction=preferred_direction,
+            )
+        return planner.plan(task.start, goal.as_goal_pose())
 
     @staticmethod
     def _audit_feasibility(
@@ -403,6 +422,59 @@ class DatasetGenerator:
         loaded["bev_meta"] = bev_meta
         loaded["task_meta"] = task_meta
         return loaded
+
+    @staticmethod
+    def merge_archives(paths: Iterable[str | Path], output: str | Path) -> None:
+        """合并多个 schema v2 检查点，并按全局最长轨迹重新补零。"""
+        archives = [DatasetGenerator.load(path) for path in paths]
+        if not archives:
+            raise ValueError("至少需要一个数据集检查点")
+        if any(archive["schema_version"] != 2 for archive in archives):
+            raise ValueError("只能合并 schema v2 数据集检查点")
+
+        bev_meta = archives[0]["bev_meta"]
+        dt = float(np.asarray(archives[0]["dt"]).reshape(-1)[0])
+        for archive in archives[1:]:
+            current_dt = float(np.asarray(archive["dt"]).reshape(-1)[0])
+            if archive["bev_meta"] != bev_meta:
+                raise ValueError("数据集检查点的 BEV 元数据不一致")
+            if not np.isclose(current_dt, dt):
+                raise ValueError("数据集检查点的轨迹 dt 不一致")
+
+        max_horizon = max(archive["trajs"].shape[1] for archive in archives)
+        total_count = sum(archive["trajs"].shape[0] for archive in archives)
+        trajs = np.zeros((total_count, max_horizon, 3), dtype=np.float32)
+        masks = np.zeros((total_count, max_horizon), dtype=np.float32)
+        cursor = 0
+        task_meta: list[dict[str, Any]] = []
+        for archive in archives:
+            count, horizon = archive["trajs"].shape[:2]
+            trajs[cursor : cursor + count, :horizon] = archive["trajs"]
+            masks[cursor : cursor + count, :horizon] = archive["masks"]
+            task_meta.extend(archive["task_meta"])
+            cursor += count
+
+        np.savez_compressed(
+            output,
+            schema_version=np.asarray(2, dtype=np.uint16),
+            bev_meta=np.asarray(
+                DatasetGenerator._encode_metadata(bev_meta, "bev_meta"),
+                dtype=np.str_,
+            ),
+            task_meta=np.asarray(
+                [
+                    DatasetGenerator._encode_metadata(item, "task_meta")
+                    for item in task_meta
+                ],
+                dtype=np.str_,
+            ),
+            bevs=np.concatenate([archive["bevs"] for archive in archives]),
+            goals=np.concatenate([archive["goals"] for archive in archives]),
+            states=np.concatenate([archive["states"] for archive in archives]),
+            trajs=trajs,
+            masks=masks,
+            dt=np.asarray([dt]),
+        )
 
     @staticmethod
     def _encode_metadata(metadata: dict[str, Any], field_name: str) -> str:

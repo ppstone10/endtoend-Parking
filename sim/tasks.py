@@ -14,6 +14,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from interfaces import GoalPose, VehicleState
+from sim.footprint import rectangle_pose_is_free
 from sim.noise import NoiseLevel
 from sim.scenes import SCENE_REGISTRY, SceneBundle, build_scene
 from sim.spots import ParkingSpot
@@ -428,19 +429,17 @@ class TaskSampler:
         )
 
     def pose_is_free(self, env, x: float, y: float, yaw: float) -> bool:
-        """使用与 Hybrid A* 相同的矩形四角 footprint 门检查位姿。"""
+        """使用与 Hybrid A* 相同的完整矩形 footprint 检查位姿。"""
         half_l = self.vehicle_length / 2.0 + self.collision_margin
         half_w = self.vehicle_width / 2.0 + self.collision_margin
-        cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
-        for local_x, local_y in (
-            (half_l, half_w), (half_l, -half_w),
-            (-half_l, half_w), (-half_l, -half_w),
-        ):
-            cx = x + local_x * cos_yaw - local_y * sin_yaw
-            cy = y + local_x * sin_yaw + local_y * cos_yaw
-            if not env.is_free(cx, cy):
-                return False
-        return env.is_free(x, y)
+        return rectangle_pose_is_free(
+            env,
+            x,
+            y,
+            yaw,
+            half_length=half_l,
+            half_width=half_w,
+        )
 
     def _random_stream(
         self, scene_name: str, task_type: TaskType, sample_index: int

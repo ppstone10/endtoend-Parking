@@ -13,6 +13,7 @@ from sim.tasks import (
     UnsupportedTaskError,
 )
 from planner.hybrid_astar import HybridAStarPlanner
+from sim import ParkingEnvironment, RectangleObstacle
 
 
 class TestTaskModel(unittest.TestCase):
@@ -41,6 +42,15 @@ class TestTaskModel(unittest.TestCase):
 
 
 class TestTaskSampling(unittest.TestCase):
+    def test_full_footprint_rejects_obstacle_between_center_and_corners(self):
+        sampler = TaskSampler(seed=1, vehicle_length=6.0, vehicle_width=3.0)
+        env = ParkingEnvironment(
+            world_size=20.0,
+            obstacles=[RectangleObstacle(0.8, 1.2, -0.2, 0.2)],
+        )
+
+        self.assertFalse(sampler.pose_is_free(env, 0.0, 0.0, 0.0))
+
     def test_same_coordinates_have_same_metadata(self):
         left = TaskSampler(seed=1234).sample(
             "S2_diagonal_lot", TaskType.T2_MEDIUM, sample_index=7,

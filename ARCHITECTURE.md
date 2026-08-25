@@ -38,7 +38,8 @@ Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → Traini
   轨迹可行性审计：起终位姿、线/角速度、横向残差、完整矩形扫掠、模型版本全部通过
   T4 按稳定候选顺序解析首个可规划且机动一致目标；显式关闭门禁时保留旧策略
   TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本车辆模型/机动/可行性证据）；无版本 NPZ 按 v1 读取
-  partial NPZ → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 正式 NPZ/manifest
+  固定批次 → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 原子检查点
+  同身份检查点（seed/计划/车辆模型/重试参数/批大小）→ 补齐合并 → 正式 NPZ/manifest
   NPZ → 长度/方向/可行性/分层统计 + occupancy/target/中心点/中间车身验收图
 BEVTensor + VehicleState + GoalPose → MineParkingNet → Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → 掩码 MSE 训练 MineParkingNet）

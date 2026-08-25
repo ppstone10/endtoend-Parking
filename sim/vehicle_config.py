@@ -38,6 +38,8 @@ class VehicleConfig:
     enable_pivot: bool = False
     pivot_omega: float = 0.35
     rotation_penalty: float = 5.0
+    direction_mismatch_penalty: float = 2.0
+    max_planning_time_s: float = 8.0
 
     def __post_init__(self) -> None:
         positive = {
@@ -53,6 +55,8 @@ class VehicleConfig:
             "collision_check_resolution": self.collision_check_resolution,
             "pivot_omega": self.pivot_omega,
             "rotation_penalty": self.rotation_penalty,
+            "direction_mismatch_penalty": self.direction_mismatch_penalty,
+            "max_planning_time_s": self.max_planning_time_s,
         }
         invalid = [
             key
@@ -69,6 +73,8 @@ class VehicleConfig:
             raise ValueError("plan_max_omega 不能高于底盘 max_omega")
         if self.enable_pivot and self.pivot_omega > self.plan_max_omega:
             raise ValueError("pivot_omega 不能高于 plan_max_omega")
+        if self.direction_mismatch_penalty < 1.0:
+            raise ValueError("direction_mismatch_penalty 不能小于 1")
         if not self.name or not self.model_version:
             raise ValueError("name 与 model_version 不能为空")
 
@@ -87,6 +93,8 @@ class VehicleConfig:
             "enable_pivot": self.enable_pivot,
             "pivot_omega": self.pivot_omega,
             "rotation_penalty": self.rotation_penalty,
+            "direction_mismatch_penalty": self.direction_mismatch_penalty,
+            "max_planning_time_s": self.max_planning_time_s,
             "vehicle_model_name": self.name,
             "vehicle_model_version": self.model_version,
             "vehicle_model_metadata": self.to_metadata(),

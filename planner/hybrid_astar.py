@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import heapq
+import time
 
 import numpy as np
 
@@ -24,7 +25,18 @@ from .reeds_shepp import reeds_shepp_paths
 class _Node:
     """搜索节点：记录连续位姿、累计成本、父节点与插值路径。"""
 
-    __slots__ = ("x", "y", "yaw", "g", "parent", "xs", "ys", "yaws")
+    __slots__ = (
+        "x",
+        "y",
+        "yaw",
+        "g",
+        "parent",
+        "xs",
+        "ys",
+        "yaws",
+        "forward_distance",
+        "reverse_distance",
+    )
 
     def __init__(
         self,
@@ -42,6 +54,8 @@ class _Node:
         self.xs: list[float] = []
         self.ys: list[float] = []
         self.yaws: list[float] = []
+        self.forward_distance = 0.0
+        self.reverse_distance = 0.0
 
 
 class HybridAStarPlanner:
@@ -72,6 +86,8 @@ class HybridAStarPlanner:
         enable_pivot: bool = False,
         pivot_omega: float | None = None,
         rotation_penalty: float = 5.0,
+        direction_mismatch_penalty: float = 2.0,
+        max_planning_time_s: float = 8.0,
         collision_check_resolution: float = 0.1,
         vehicle_model_name: str = "tracked_kinematic",
         vehicle_model_version: str = "tracked_pivot_v1",
@@ -98,6 +114,10 @@ class HybridAStarPlanner:
             raise ValueError("collision_check_resolution 必须为正数")
         if rotation_penalty <= 0.0:
             raise ValueError("rotation_penalty 必须为正数")
+        if not np.isfinite(direction_mismatch_penalty) or direction_mismatch_penalty < 1.0:
+            raise ValueError("direction_mismatch_penalty 必须为有限且不小于 1")
+        if not np.isfinite(max_planning_time_s) or max_planning_time_s <= 0.0:
+            raise ValueError("max_planning_time_s 必须为有限正数")
         resolved_pivot_omega = max_omega if pivot_omega is None else float(pivot_omega)
         if resolved_pivot_omega <= 0.0 or resolved_pivot_omega > abs(max_omega):
             raise ValueError("pivot_omega 必须为正且不超过 max_omega")
@@ -117,6 +137,8 @@ class HybridAStarPlanner:
         self.enable_pivot = bool(enable_pivot)
         self.pivot_omega = resolved_pivot_omega
         self.rotation_penalty = float(rotation_penalty)
+        self.direction_mismatch_penalty = float(direction_mismatch_penalty)
+        self.max_planning_time_s = float(max_planning_time_s)
         self.collision_check_resolution = float(collision_check_resolution)
         self.trajectory_dt = self.motion_resolution / abs(self.plan_v)
         self.vehicle_model_name = str(vehicle_model_name)
@@ -146,8 +168,17 @@ class HybridAStarPlanner:
     # 规划入口
     # ------------------------------------------------------------------
 
-    def plan(self, start: VehicleState, goal: GoalPose) -> Trajectory:
+    def plan(
+        self,
+        start: VehicleState,
+        goal: GoalPose,
+        *,
+        preferred_direction: int | None = None,
+    ) -> Trajectory:
         """从起始状态规划到目标位姿，返回全局坐标轨迹点 (N, 3)。"""
+        if preferred_direction not in (None, -1, 1):
+            raise ValueError("preferred_direction 必须为 -1、1 或 None")
+        deadline = time.perf_counter() + self.max_planning_time_s
         if not self._pose_free(start.x, start.y, start.yaw):
             raise ValueError("起始位姿与障碍物冲突")
         if not self._pose_free(goal.x, goal.y, goal.yaw):
@@ -165,6 +196,10 @@ class HybridAStarPlanner:
         expansions = 0
 
         while open_heap:
+            if time.perf_counter() >= deadline:
+                raise RuntimeError(
+                    f"Hybrid A* 规划超时（{self.max_planning_time_s:.1f}s）"
+                )
             if expansions >= self.max_expansions:
                 raise RuntimeError("Hybrid A* 探索节点数超出上限，规划失败")
             expansions += 1
@@ -183,14 +218,16 @@ class HybridAStarPlanner:
                 analytic_due
                 and self._heuristic_distance(current, goal) <= self.analytic_expansion_distance
             ):
-                analytic_node = self._analytic_connection(current, goal)
+                analytic_node = self._analytic_connection(
+                    current, goal, preferred_direction, deadline
+                )
                 if analytic_node is not None:
                     return self._extract_trajectory(analytic_node, goal)
 
             if self.analytic_expansion_distance == 0.0 and cur_idx == goal_idx:
                 return self._extract_trajectory(current, goal)
 
-            for node in self._expand(current):
+            for node in self._expand(current, preferred_direction, deadline):
                 n_idx = self._pose_index(node.x, node.y, node.yaw)
                 if n_idx in closed and closed[n_idx] <= node.g:
                     continue
@@ -220,7 +257,12 @@ class HybridAStarPlanner:
         x_min, x_max, y_min, y_max = self._search_bounds
         return x_min <= x <= x_max and y_min <= y <= y_max
 
-    def _expand(self, node: _Node) -> list[_Node]:
+    def _expand(
+        self,
+        node: _Node,
+        preferred_direction: int | None = None,
+        deadline: float | None = None,
+    ) -> list[_Node]:
         """按运动基元扩展邻居节点，过滤碰撞与越界。"""
         children: list[_Node] = []
         arc_len = self.xy_resolution * 1.5
@@ -228,6 +270,7 @@ class HybridAStarPlanner:
         dt = self.trajectory_dt
         for omega in self.omega_values:
             for direction in (1.0, -1.0):
+                self._raise_if_timed_out(deadline)
                 v = direction * self.plan_v
                 xs: list[float] = []
                 ys: list[float] = []
@@ -251,8 +294,26 @@ class HybridAStarPlanner:
                 if collision:
                     continue
                 duration = n_steps * dt
-                child = _Node(x, y, yaw, node.g + duration, parent=node)
+                direction_factor = (
+                    self.direction_mismatch_penalty
+                    if preferred_direction is not None
+                    and int(direction) != preferred_direction
+                    else 1.0
+                )
+                child = _Node(
+                    x,
+                    y,
+                    yaw,
+                    node.g + duration * direction_factor,
+                    parent=node,
+                )
                 child.xs, child.ys, child.yaws = xs, ys, yaws
+                child.forward_distance = node.forward_distance
+                child.reverse_distance = node.reverse_distance
+                if direction > 0.0:
+                    child.forward_distance += n_steps * abs(v) * dt
+                else:
+                    child.reverse_distance += n_steps * abs(v) * dt
                 children.append(child)
         if self.enable_pivot:
             for direction in (-1.0, 1.0):
@@ -275,6 +336,8 @@ class HybridAStarPlanner:
                 child.xs = points[1:, 0].astype(float).tolist()
                 child.ys = points[1:, 1].astype(float).tolist()
                 child.yaws = points[1:, 2].astype(float).tolist()
+                child.forward_distance = node.forward_distance
+                child.reverse_distance = node.reverse_distance
                 children.append(child)
         return children
 
@@ -287,30 +350,118 @@ class HybridAStarPlanner:
     def _heuristic_distance(node: _Node, goal: GoalPose) -> float:
         return float(np.hypot(goal.x - node.x, goal.y - node.y))
 
-    def _analytic_connection(self, node: _Node, goal: GoalPose) -> _Node | None:
+    def _analytic_connection(
+        self,
+        node: _Node,
+        goal: GoalPose,
+        preferred_direction: int | None = None,
+        deadline: float | None = None,
+    ) -> _Node | None:
         """比较履带直接候选与 48 词族候选，返回最低成本可行连接。"""
         start_pose = (node.x, node.y, node.yaw)
         goal_pose = (goal.x, goal.y, goal.yaw)
-        feasible: list[tuple[float, np.ndarray]] = []
+        candidates: list[tuple[float, np.ndarray]] = []
         if self.enable_pivot:
-            for cost, points in self._tracked_direct_candidates(start_pose, goal_pose):
-                if self._path_free(points):
-                    feasible.append((cost, points))
-            if self._heuristic_distance(node, goal) <= 1e-9 and feasible:
-                feasible.sort(key=lambda item: item[0])
-                return self._terminal_node(node, goal, *feasible[0])
+            candidates.extend(
+                self._tracked_direct_candidates(
+                    start_pose, goal_pose, preferred_direction
+                )
+            )
+            if self._heuristic_distance(node, goal) <= 1e-9:
+                for cost, points in self._rank_candidates(
+                    node, candidates, preferred_direction
+                ):
+                    if not self._candidate_matches_preference(
+                        node, points, preferred_direction
+                    ):
+                        continue
+                    self._raise_if_timed_out(deadline)
+                    if self._path_free(points):
+                        self._raise_if_timed_out(deadline)
+                        return self._terminal_node(node, goal, cost, points)
+                return None
         for candidate in reeds_shepp_paths(start_pose, goal_pose, self.min_turning_radius):
             points, _directions = candidate.sample(start_pose, self.motion_resolution)
             # 公式误差已在 reeds_shepp_paths 中限定；此处压到调用方的精确目标值，
             # 避免 _extract_trajectory 为 1e-15 量级残差再添加一个伪短段。
             points[-1] = goal_pose
-            if not self._path_free(points):
+            candidates.append(
+                (
+                    self._directional_translation_cost(
+                        candidate.lengths, preferred_direction
+                    ),
+                    points,
+                )
+            )
+        for cost, points in self._rank_candidates(
+            node, candidates, preferred_direction
+        ):
+            if not self._candidate_matches_preference(
+                node, points, preferred_direction
+            ):
                 continue
-            feasible.append((candidate.total_length / abs(self.plan_v), points))
-        if not feasible:
-            return None
-        feasible.sort(key=lambda item: item[0])
-        return self._terminal_node(node, goal, *feasible[0])
+            self._raise_if_timed_out(deadline)
+            if self._path_free(points):
+                self._raise_if_timed_out(deadline)
+                return self._terminal_node(node, goal, cost, points)
+        return None
+
+    def _rank_candidates(
+        self,
+        node: _Node,
+        candidates: list[tuple[float, np.ndarray]],
+        preferred_direction: int | None,
+    ) -> list[tuple[float, np.ndarray]]:
+        """优先检查满足任务主导方向的候选，仍保留反向候选作为回退。"""
+        if preferred_direction is None:
+            return sorted(candidates, key=lambda item: item[0])
+
+        def rank(item: tuple[float, np.ndarray]) -> tuple[float, float, float]:
+            ratio = self._candidate_requested_ratio(
+                node, item[1], preferred_direction
+            )
+            return (0.0 if ratio >= 0.5 else 1.0, -ratio, item[0])
+
+        return sorted(candidates, key=rank)
+
+    def _candidate_matches_preference(
+        self,
+        node: _Node,
+        points: np.ndarray,
+        preferred_direction: int | None,
+    ) -> bool:
+        return (
+            preferred_direction is None
+            or self._candidate_requested_ratio(node, points, preferred_direction)
+            >= 0.5
+        )
+
+    def _candidate_requested_ratio(
+        self, node: _Node, points: np.ndarray, preferred_direction: int
+    ) -> float:
+        forward, reverse = self._path_direction_distances(points)
+        forward += node.forward_distance
+        reverse += node.reverse_distance
+        total = forward + reverse
+        requested = forward if preferred_direction > 0 else reverse
+        return requested / total if total > 1e-9 else 1.0
+
+    @staticmethod
+    def _path_direction_distances(points: np.ndarray) -> tuple[float, float]:
+        delta = np.diff(points[:, :2], axis=0)
+        lengths = np.linalg.norm(delta, axis=1)
+        heading = points[:-1, 2]
+        progress = delta[:, 0] * np.cos(heading) + delta[:, 1] * np.sin(heading)
+        return (
+            float(lengths[progress >= -1e-9].sum()),
+            float(lengths[progress < -1e-9].sum()),
+        )
+
+    def _raise_if_timed_out(self, deadline: float | None) -> None:
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise RuntimeError(
+                f"Hybrid A* 规划超时（{self.max_planning_time_s:.1f}s）"
+            )
 
     def _terminal_node(
         self, node: _Node, goal: GoalPose, cost: float, points: np.ndarray
@@ -319,24 +470,32 @@ class HybridAStarPlanner:
         terminal.xs = points[1:, 0].astype(float).tolist()
         terminal.ys = points[1:, 1].astype(float).tolist()
         terminal.yaws = points[1:, 2].astype(float).tolist()
+        forward, reverse = self._path_direction_distances(points)
+        terminal.forward_distance = node.forward_distance + forward
+        terminal.reverse_distance = node.reverse_distance + reverse
         return terminal
 
     def _tracked_direct_candidates(
         self,
         start_pose: tuple[float, float, float],
         goal_pose: tuple[float, float, float],
+        preferred_direction: int | None = None,
     ) -> list[tuple[float, np.ndarray]]:
         """生成前/倒车的“旋转—直行—旋转”履带解析候选。"""
         sx, sy, syaw = start_pose
         gx, gy, gyaw = goal_pose
         dx, dy = gx - sx, gy - sy
         distance = float(np.hypot(dx, dy))
-        headings = [syaw] if distance <= 1e-9 else [
-            float(np.arctan2(dy, dx)),
-            self._norm_angle(float(np.arctan2(dy, dx)) + np.pi),
-        ]
+        headings = (
+            [(syaw, preferred_direction or 1)]
+            if distance <= 1e-9
+            else [
+                (float(np.arctan2(dy, dx)), 1),
+                (self._norm_angle(float(np.arctan2(dy, dx)) + np.pi), -1),
+            ]
+        )
         candidates: list[tuple[float, np.ndarray]] = []
-        for heading in headings:
+        for heading, direction in headings:
             first_delta = self._angle_delta(heading, syaw)
             last_delta = self._angle_delta(gyaw, heading)
             pieces = [self._sample_pivot(start_pose, first_delta)]
@@ -353,11 +512,30 @@ class HybridAStarPlanner:
             for piece in pieces[1:]:
                 points = np.vstack((points, piece[1:]))
             points[-1] = goal_pose
-            cost = distance / abs(self.plan_v) + self.rotation_penalty * (
+            translation_cost = distance / abs(self.plan_v)
+            if preferred_direction is not None and direction != preferred_direction:
+                translation_cost *= self.direction_mismatch_penalty
+            cost = translation_cost + self.rotation_penalty * (
                 abs(first_delta) + abs(last_delta)
             ) / self.pivot_omega
             candidates.append((cost, points))
         return candidates
+
+    def _directional_translation_cost(
+        self,
+        signed_lengths: tuple[float, ...],
+        preferred_direction: int | None,
+    ) -> float:
+        cost = 0.0
+        for length in signed_lengths:
+            factor = (
+                self.direction_mismatch_penalty
+                if preferred_direction is not None
+                and (1 if length >= 0.0 else -1) != preferred_direction
+                else 1.0
+            )
+            cost += abs(length) * factor / abs(self.plan_v)
+        return cost
 
     def _sample_pivot(
         self, start_pose: tuple[float, float, float], delta_yaw: float
@@ -501,6 +679,8 @@ class HybridAStarPlanner:
             "enable_pivot": self.enable_pivot,
             "pivot_omega": self.pivot_omega,
             "rotation_penalty": self.rotation_penalty,
+            "direction_mismatch_penalty": self.direction_mismatch_penalty,
+            "max_planning_time_s": self.max_planning_time_s,
         }
 
     @staticmethod

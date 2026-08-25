@@ -75,7 +75,8 @@ def audit_trajectory_feasibility(
     endpoint_yaw_tolerance_rad: float = 1e-3,
 ) -> TrajectoryFeasibilityAudit:
     """从中心位姿序列复算线/角速度、横向残差和扫掠碰撞。"""
-    trajectory = np.asarray(points, dtype=np.float64)
+    source = np.asarray(points)
+    trajectory = np.asarray(source, dtype=np.float64)
     if trajectory.ndim != 2 or trajectory.shape[1] != 3 or len(trajectory) < 2:
         raise ValueError("专家轨迹必须是至少两个点的 (N, 3) 数组")
     if not np.all(np.isfinite(trajectory)):
@@ -108,9 +109,25 @@ def audit_trajectory_feasibility(
     max_linear = float(linear_speed.max(initial=0.0))
     max_angular = float(angular_speed.max(initial=0.0))
     max_lateral = float(lateral_residual[moving].max(initial=0.0))
+    # 轨迹归档为 float32；在较大的世界坐标上相邻点相减后再除以 dt，
+    # 量化误差会被放大到数微米/秒。余量按源精度与坐标尺度推导，
+    # 避免把严格贴合速度上限的合法规划段误判为超速。
+    source_epsilon = (
+        float(np.finfo(source.dtype).eps)
+        if np.issubdtype(source.dtype, np.floating)
+        else 0.0
+    )
+    position_scale = max(1.0, float(np.abs(trajectory[:, :2]).max(initial=0.0)))
+    yaw_scale = max(1.0, float(np.abs(trajectory[:, 2]).max(initial=0.0)))
+    linear_limit_epsilon = max(
+        _LIMIT_EPSILON, 4.0 * source_epsilon * position_scale / dt
+    )
+    angular_limit_epsilon = max(
+        _LIMIT_EPSILON, 4.0 * source_epsilon * yaw_scale / dt
+    )
     kinematically_feasible = bool(
-        max_linear <= max_v + _LIMIT_EPSILON
-        and max_angular <= max_omega + _LIMIT_EPSILON
+        max_linear <= max_v + linear_limit_epsilon
+        and max_angular <= max_omega + angular_limit_epsilon
         and max_lateral <= lateral_tolerance_m + _LIMIT_EPSILON
     )
 

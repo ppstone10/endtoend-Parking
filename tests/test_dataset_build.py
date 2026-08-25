@@ -55,6 +55,12 @@ class TestTaskPlan(unittest.TestCase):
             expert_maneuvers("S8_weigh_station", TaskType.T5_DYNAMIC),
             (Maneuver.FORWARD,),
         )
+        for task_type in TaskType:
+            with self.subTest(scene="S3_maintenance", task_type=task_type):
+                self.assertEqual(
+                    expert_maneuvers("S3_maintenance", task_type),
+                    (Maneuver.REVERSE,),
+                )
         plan = build_task_plan(total_count=3000, seed=123)
         s8_t5 = [
             task for task in (*plan.train, *plan.val)
@@ -79,7 +85,7 @@ class TestTaskPlan(unittest.TestCase):
         self.assertTrue(sample.task_meta["dataset"]["feasibility_audit"]["feasible"])
         self.assertEqual(
             sample.task_meta["dataset"]["vehicle_model"]["model_version"],
-            "tracked_pivot_v1",
+            "tracked_pivot_v3",
         )
 
 
@@ -109,6 +115,22 @@ class _FailConsistencyOnceGenerator(_FailOnceGenerator):
 
 
 class TestBuildRetries(unittest.TestCase):
+    def test_retry_progress_callback_exposes_stable_failure_event(self):
+        original = build_task_plan(total_count=20, seed=7).train[0]
+        events = []
+        generate_with_retries(
+            [original],
+            generator=_FailOnceGenerator(),
+            seed=7,
+            max_retries=2,
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["original_task_id"], original.task_id)
+        self.assertEqual(events[0]["retry"], 1)
+        self.assertEqual(events[0]["failure_code"], "测试失败")
+
     def test_failure_is_resampled_in_same_cell(self):
         plan = build_task_plan(total_count=20, seed=7)
         original = plan.train[0]
@@ -144,6 +166,24 @@ class TestBuildRetries(unittest.TestCase):
             reserved_task_ids={blocked.task_id},
         )
         self.assertNotEqual(report.replacements[0].task_id, blocked.task_id)
+
+    def test_replacement_index_starts_after_all_reserved_plan_ids(self):
+        plan = build_task_plan(total_count=20, seed=7)
+        original = plan.train[0]
+        reserved = {
+            f"{original.scene_name}-{original.task_type.value}-{index:04d}-deadbeef"
+            for index in range(121)
+        }
+        report = generate_with_retries(
+            [original],
+            generator=_FailOnceGenerator(),
+            seed=7,
+            max_retries=2,
+            reserved_task_ids=reserved,
+        )
+
+        replacement_index = int(report.replacements[0].task_id.rsplit("-", 2)[1])
+        self.assertGreaterEqual(replacement_index, 121)
 
     def test_maneuver_failures_use_stable_reason_and_preserve_difficulty(self):
         original = build_task_plan(total_count=20, seed=7).train[0]

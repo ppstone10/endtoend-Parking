@@ -1,6 +1,6 @@
 {
   "name": "tracked_drill_rig",
-  "model_version": "tracked_pivot_v1",
+  "model_version": "tracked_pivot_v3",
   "length": 6.0,
   "width": 3.0,
   "max_v": 2.0,
@@ -14,5 +14,7 @@
   "collision_check_resolution": 0.1,
   "enable_pivot": true,
   "pivot_omega": 0.35,
-  "rotation_penalty": 5.0
+  "rotation_penalty": 5.0,
+  "direction_mismatch_penalty": 2.0,
+  "max_planning_time_s": 8.0
 }

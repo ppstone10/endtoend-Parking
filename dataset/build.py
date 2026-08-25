@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 import math
 import re
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from sim.tasks import (
     Maneuver,
@@ -30,6 +30,10 @@ _EXPERT_UNREACHABLE_CELLS = {
     ("S8_weigh_station", TaskType.T3_LONG),
 }
 _EXPERT_MANEUVER_OVERRIDES = {
+    **{
+        ("S3_maintenance", task_type): (Maneuver.REVERSE,)
+        for task_type in TaskType
+    },
     ("S8_weigh_station", TaskType.T5_DYNAMIC): (Maneuver.FORWARD,),
 }
 
@@ -50,6 +54,9 @@ def build_task_plan(
     seed: int,
     test_scene: str = "S9_mine_complex",
     ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    vehicle_length: float = 6.0,
+    vehicle_width: float = 3.0,
+    collision_margin: float = 0.0,
 ) -> DatasetSplits:
     """按能力矩阵构造目标比例任务，并将测试配额全部分给保留场景。"""
     if total_count < 10:
@@ -58,7 +65,12 @@ def build_task_plan(
         raise ValueError("train/val/test 比例必须包含三个正数")
     if not math.isclose(sum(ratios), 1.0, rel_tol=0.0, abs_tol=1e-9):
         raise ValueError("train/val/test 比例之和必须为 1")
-    sampler = TaskSampler(seed=seed)
+    sampler = TaskSampler(
+        seed=seed,
+        vehicle_length=vehicle_length,
+        vehicle_width=vehicle_width,
+        collision_margin=collision_margin,
+    )
     supported = [
         cell for cell in sampler.capability_matrix()
         if cell.supported and expert_maneuvers(cell.scene_name, cell.task_type)
@@ -98,6 +110,8 @@ def generate_with_retries(
     seed: int,
     max_retries: int = 20,
     reserved_task_ids: Iterable[str] = (),
+    task_sampler: TaskSampler | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> BuildReport:
     """逐 Task 生成；失败时保持场景×类型×难度并增加样本索引。"""
     if max_retries <= 0:
@@ -105,11 +119,20 @@ def generate_with_retries(
     task_list = tuple(tasks)
     reserved_ids = set(reserved_task_ids)
     reserved_ids.update(task.task_id for task in task_list)
-    sampler = TaskSampler(seed=seed)
+    sampler = TaskSampler(seed=seed) if task_sampler is None else task_sampler
+    if sampler.seed != int(seed):
+        raise ValueError("task_sampler.seed 必须与 seed 一致")
     next_indices: dict[tuple[str, Any], int] = {}
     for task in task_list:
         key = (task.scene_name, task.task_type)
         next_indices[key] = max(next_indices.get(key, 0), _task_index(task) + 1)
+    for task_id in reserved_ids:
+        coordinates = _task_id_coordinates(task_id)
+        if coordinates is None:
+            continue
+        scene_name, task_type, sample_index = coordinates
+        key = (scene_name, task_type)
+        next_indices[key] = max(next_indices.get(key, 0), sample_index + 1)
 
     samples: list[Any] = []
     replacements: list[Task] = []
@@ -124,6 +147,16 @@ def generate_with_retries(
             except TaskGenerationError as exc:
                 failure_count += 1
                 reasons[exc.code] += 1
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "original_task_id": original.task_id,
+                            "current_task_id": current.task_id,
+                            "retry": retry + 1,
+                            "max_attempts": max_retries + 1,
+                            "failure_code": exc.code,
+                        }
+                    )
                 if retry == max_retries:
                     raise RuntimeError(
                         f"{original.scene_name}/{original.task_type.value} 超过 "
@@ -245,7 +278,14 @@ def _replacement_task(
 
 
 def _task_index(task: Task) -> int:
-    match = re.search(r"-(\d+)-[0-9a-f]+$", task.task_id)
+    coordinates = _task_id_coordinates(task.task_id)
+    return 0 if coordinates is None else coordinates[2]
+
+
+def _task_id_coordinates(
+    task_id: str,
+) -> tuple[str, TaskType, int] | None:
+    match = re.match(r"^(.+)-(T[1-5])-(\d+)-[0-9a-f]+$", task_id)
     if match is None:
-        return 0
-    return int(match.group(1))
+        return None
+    return match.group(1), TaskType(match.group(2)), int(match.group(3))

@@ -5,8 +5,9 @@ import unittest
 import numpy as np
 
 from interfaces import GoalPose, VehicleState
+from dataset.maneuver import audit_maneuver_consistency
 from planner import HybridAStarPlanner
-from sim import CircleObstacle, MINING_DRILL_RIG, ParkingEnvironment, RectangleObstacle
+from sim import CircleObstacle, MINING_DRILL_RIG, Maneuver, ParkingEnvironment, RectangleObstacle
 from sim.scenes import build_scene
 
 
@@ -156,6 +157,33 @@ class TestHybridAStarPlanner(unittest.TestCase):
     def test_invalid_analytic_interval_raises(self):
         with self.assertRaises(ValueError):
             HybridAStarPlanner(env=_open_env(), analytic_expansion_interval=0)
+
+    def test_planning_wall_clock_limit_raises(self):
+        planner = HybridAStarPlanner(
+            env=_open_env(),
+            max_planning_time_s=1e-9,
+        )
+        with self.assertRaisesRegex(RuntimeError, "规划超时"):
+            planner.plan(VehicleState(0.0, 0.0, 0.0), GoalPose(6.0, 0.0, 0.0))
+
+    def test_requested_direction_biases_search_without_forbidding_other_direction(self):
+        planner = HybridAStarPlanner(
+            env=_open_env(),
+            enable_pivot=True,
+            direction_mismatch_penalty=10.0,
+        )
+        start = VehicleState(0.0, 0.0, 0.0)
+        goal = GoalPose(-6.0, 0.0, 0.0)
+
+        reverse = planner.plan(start, goal, preferred_direction=-1)
+        forward = planner.plan(start, goal, preferred_direction=1)
+
+        self.assertTrue(
+            audit_maneuver_consistency(reverse.points, Maneuver.REVERSE).consistent
+        )
+        self.assertTrue(
+            audit_maneuver_consistency(forward.points, Maneuver.FORWARD).consistent
+        )
 
     def test_analytic_expansion_can_be_disabled_for_rollback(self):
         planner = HybridAStarPlanner(env=_open_env(), analytic_expansion_distance=0.0)

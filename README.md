@@ -38,11 +38,15 @@ python scripts/generate_dataset.py 5
 # 预览 3000 条任务分层计划（不生成 BEV/轨迹）
 python scripts/build_dataset.py --count 3000 --dry-run
 
-# 按 8:1:1 构建 train/val/test；默认保留 S9，并在发布前执行机动/轨迹可行性双门禁
-python scripts/build_dataset.py --count 3000 --output data/task_dataset
+# 按 8:1:1 构建 train/val/test；默认保留 S9，每 10 条经双门禁后写可恢复检查点
+python scripts/build_dataset.py --count 3000 --output data/task_dataset --batch-size 10
 
 # 使用自定义钻机外廓、速度与搜索参数
 python scripts/build_dataset.py --count 3000 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset
+
+# 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过
+# JSON 中 direction_mismatch_penalty 与 max_planning_time_s 可调搜索方向偏好和单次规划预算
+python scripts/build_dataset.py --count 3000 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset --batch-size 10
 
 # 输出统计/机动一致性审计，并保存可解释的专家轨迹验收图
 python scripts/inspect_dataset.py data/task_dataset/train.npz --output data/task_dataset/inspection
