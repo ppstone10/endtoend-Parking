@@ -8,6 +8,8 @@ import numpy as np
 
 from dataset.inspection import (
     _intermediate_pose_indices,
+    _orient_left_positive_axis,
+    _pivot_arrow_points,
     _pivot_events,
     _to_local,
     _vehicle_polygon,
@@ -159,6 +161,35 @@ class TestDatasetInspection(unittest.TestCase):
         self.assertEqual(
             [event.turn_label for event in reverse_events], ["LEFT", "RIGHT"]
         )
+
+    def test_left_positive_axis_and_body_left_turn_are_not_mirrored(self):
+        import matplotlib.pyplot as plt
+
+        figure, axis = plt.subplots()
+        axis.set_xlim(-2.0, 2.0)
+        axis.set_ylim(-2.0, 2.0)
+        _orient_left_positive_axis(axis)
+        figure.canvas.draw()
+
+        positive_left_screen_x = axis.transData.transform((1.0, 0.0))[0]
+        negative_left_screen_x = axis.transData.transform((-1.0, 0.0))[0]
+        self.assertLess(positive_left_screen_x, negative_left_screen_x)
+
+        event = _pivot_events(
+            np.array(
+                [
+                    [0.0, 0.0, np.pi],
+                    [0.0, 0.0, np.pi + np.deg2rad(3.0)],
+                ]
+            )
+        )[0]
+        arrow = _pivot_arrow_points(
+            np.array([0.0, 0.0, np.pi]), event, radius=1.0
+        )
+        start_screen_x = axis.transData.transform(tuple(arrow[0]))[0]
+        end_screen_x = axis.transData.transform(tuple(arrow[-1]))[0]
+        self.assertGreater(end_screen_x, start_screen_x)
+        plt.close(figure)
 
     def test_summary_records_pivot_event_angle_statistics(self):
         data = _data()

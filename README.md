@@ -10,7 +10,7 @@
 
 ## 安装
 
-```bash
+```powershell
 conda activate endtoend-parking
 pip install numpy
 pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -32,7 +32,7 @@ python scripts/run_sim.py
 python -m unittest discover -s tests -v
 ```
 
-```bash
+```powershell
 # 生成小批量训练样本（默认 5 条，可传数量参数）
 python scripts/generate_dataset.py 5
 
@@ -40,32 +40,22 @@ python scripts/generate_dataset.py 5
 python scripts/build_dataset.py --count 3000 --dry-run
 
 # 正式构建前校准全部 35 个专家能力单元；每个 case 独立落盘并受 30 秒硬预算约束
-python scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration/tracked_pivot_v4
 
 # 校准中断后使用完全相同的命令和输出目录恢复；已完成 case 会按 identity 校验后跳过
 # report.json、cells.csv 和 run_state.json 可用于一次性判断成功率、超时与剩余量
 
-# 按 8:1:1 构建 train/val/test；默认保留 S9，每 10 条经双门禁后写可恢复检查点
-python scripts/build_dataset.py --count 3000 --output data/task_dataset --batch-size 10
-
-# 使用自定义钻机外廓、速度与搜索参数
-python scripts/build_dataset.py --count 3000 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset
-
-# 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过
-# JSON 中 direction_mismatch_penalty 与 max_planning_time_s 可调搜索方向偏好和单次规划预算
-python scripts/build_dataset.py --count 3000 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset --batch-size 10
-
-# 输出统计/机动一致性审计，并保存可解释的专家轨迹验收图
-python scripts/inspect_dataset.py data/task_dataset/train.npz --output data/task_dataset/inspection
-
 # tracked_pivot_v4：倒车/反方向与原地旋转采用约 2:1 代价；必须使用新输出目录，不能混用旧 v3 检查点
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v4_3000 --batch-size 5 --max-retries 10
 
-# 新验收图在旋转中心标注 LEFT/RIGHT 与累计角度；summary.json 记录事件数、累计角和最大单次角
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py data/task_dataset/tracked_pivot_v4_3000/train.npz --output data/task_dataset/tracked_pivot_v4_3000/inspection/train
+# 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过
+# 新验收图以“前方 x、车体左方 y”为局部坐标，正 Left 显示在画面左侧；原地旋转标注 body LEFT/RIGHT 与真实有符号旋转弧
+foreach ($split in 'train', 'val', 'test') {
+  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py "data/task_dataset/tracked_pivot_v4_3000/$split.npz" --output "data/task_dataset/tracked_pivot_v4_3000/inspection/$split" --require-maneuver-consistency --require-trajectory-feasibility
+}
 
-# 严格门禁：机动不一致、运动学不可行、缺少扫掠碰撞证据或模型不匹配时返回失败
-python scripts/inspect_dataset.py data/task_dataset/train.npz --samples 0 --require-maneuver-consistency --require-trajectory-feasibility
+# 旧全量数据已清理；仅保留 7 条 tracked_pivot_v3 真实样本用于历史可视化参考，不得用于训练或当作全量备份
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py data/task_dataset/visual_reference_archive_v3/reference_samples.npz --output runs/visual-reference-v3-review
 ```
 
 ```bash
@@ -77,7 +67,7 @@ python scripts/train.py --samples 40 --epochs 30
 python scripts/train_model.py --config configs/training/net-v1.yaml
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
-python scripts/eval_openloop.py --data data/task_dataset/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
+python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v4_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
 ```
 
 ```bash

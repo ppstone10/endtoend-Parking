@@ -11,10 +11,10 @@
 | 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有训练/验证、逐 epoch 进度、early stopping 和兼容原子 checkpoint；runner 输出历史、PNG/PDF 曲线和 val 开环报告 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
-| 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图 |
+| 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图；`scripts/archive_visual_references.py` 负责在删除旧数据前生成自描述可视化参考归档 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较 |
-| 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图；专家验收图把连续零位移航向变化汇总为带方向、累计角度和固定中心的原地旋转事件 |
+| 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图；专家验收图使用“前方 x、车体左方 y”右手局部系，将正 Left 显示在画面左侧，并把连续零位移航向变化汇总为从旋转前航向出发的有符号旋转弧 |
 | 批量实验 | `experiments/` | 配置驱动 runner（JSON 配置 → 引擎批量回合 → 指标汇总 → 结果落盘），配置与结果归档 `configs/`、`results/` |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
@@ -73,6 +73,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 
 - 网络输入输出契约在三个阶段保持不变；迁移只替换传感器来源和底盘执行接口。
 - 坐标统一使用车辆中心局部坐标系。
+- 专家验收图的数值局部系为前方 `x`、车体左方 `y`、正 `yaw` 为车体左转；画面水平轴反向显示数值 `y`，使数值正 Left 在画面上仍为左，不得直接按屏幕右正方向绘制。
 - `interfaces/` 不依赖任何仿真、网络或硬件实现，反向依赖。
 - `sim/`、`sensor2bev/`、`model/`、`controller/` 依赖 `interfaces/` 与各自必要的 `numpy`/`torch` 数值运行时，模块间不互相耦合；`training/` 依赖 `model/` 与 PyTorch，不反向进入模型或数据层。
 - `runtime/` 依赖 `interfaces/`、`metrics/` 与注入的轨迹源/MPC/车辆模型（依赖注入，不直接 import sim/model）；`metrics/` 无内部依赖。

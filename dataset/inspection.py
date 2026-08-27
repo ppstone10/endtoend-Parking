@@ -366,7 +366,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
     scene_name = str(item_meta.get("scene_name", "unknown"))
     task_type = str(item_meta.get("task_type", "unknown"))
     axis.set(
-        xlabel="Left / m",
+        xlabel="Left / m (positive shown left)",
         ylabel="Forward / m",
         title=f"Expert parking evidence\n{scene_name} · {task_type} · sample {index}",
     )
@@ -378,6 +378,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         x_bounds=(-right, left),
         y_bounds=(-back, front),
     )
+    _orient_left_positive_axis(axis)
     axis.set_aspect("equal")
     axis.grid(color="#7F8C8D", alpha=0.25, linewidth=0.7)
     legend_handles = [
@@ -609,31 +610,33 @@ def _draw_pivot_event(
     event_index: int,
 ) -> None:
     """在固定中心画带方向箭头和累计角度文本的原地旋转符号。"""
-    from matplotlib.patches import FancyArrowPatch
-
     center_left = float(local_pose[1])
     center_forward = float(local_pose[0])
     radius = max(0.55, min(vehicle_config.length, vehicle_config.width) * 0.24)
-    left = (center_left - 0.72 * radius, center_forward + 0.50 * radius)
-    right = (center_left + 0.72 * radius, center_forward + 0.50 * radius)
-    start, end = (left, right) if event.signed_angle_rad > 0.0 else (right, left)
-    axis.add_patch(
-        FancyArrowPatch(
-            start,
-            end,
-            arrowstyle="-|>",
-            mutation_scale=14,
-            connectionstyle="arc3,rad=0.82",
-            color="#D35400",
-            linewidth=2.2,
-            zorder=10,
-        )
+    arrow = _pivot_arrow_points(local_pose, event, radius=radius)
+    axis.plot(
+        arrow[:, 0],
+        arrow[:, 1],
+        color="#D35400",
+        linewidth=2.2,
+        zorder=10,
     )
-    signed_degrees = np.degrees(event.signed_angle_rad)
+    axis.annotate(
+        "",
+        xy=tuple(arrow[-1]),
+        xytext=tuple(arrow[-2]),
+        arrowprops={
+            "arrowstyle": "-|>",
+            "color": "#D35400",
+            "lw": 2.2,
+            "mutation_scale": 14,
+        },
+        zorder=10,
+    )
     axis.text(
         center_left,
         center_forward - radius * (0.68 + 0.18 * (event_index - 1)),
-        f"P{event_index} {event.turn_label} {signed_degrees:+.0f}°",
+        f"P{event_index} {event.turn_label} {event.abs_angle_deg:.0f}°",
         ha="center",
         va="top",
         fontsize=7.6,
@@ -647,6 +650,39 @@ def _draw_pivot_event(
         },
         zorder=11,
     )
+
+
+def _pivot_arrow_points(
+    local_pose: np.ndarray,
+    event: PivotEvent,
+    *,
+    radius: float,
+) -> np.ndarray:
+    """返回以 (left, forward) 表示、沿真实有符号航向变化的旋转箭头。"""
+    if not np.isfinite(radius) or radius <= 0.0:
+        raise ValueError("旋转箭头半径必须为有限正数")
+    pose = np.asarray(local_pose, dtype=np.float64)
+    if pose.shape[0] < 3 or not np.all(np.isfinite(pose[:3])):
+        raise ValueError("旋转箭头位姿必须包含有限的 x、y、yaw")
+    visible_sweep = float(
+        np.clip(event.signed_angle_rad, -2.0 * np.pi, 2.0 * np.pi)
+    )
+    sample_count = max(12, int(np.ceil(abs(visible_sweep) / np.deg2rad(4.0))) + 1)
+    yaw = float(pose[2]) + np.linspace(0.0, visible_sweep, sample_count)
+    center_left = float(pose[1])
+    center_forward = float(pose[0])
+    return np.column_stack(
+        (
+            center_left + radius * np.sin(yaw),
+            center_forward + radius * np.cos(yaw),
+        )
+    )
+
+
+def _orient_left_positive_axis(axis) -> None:
+    """让车体局部系正 Left 显示在屏幕左侧，避免俯视图横向镜像。"""
+    if not axis.xaxis_inverted():
+        axis.invert_xaxis()
 
 
 def _draw_vehicle_pose(

@@ -163,9 +163,19 @@
 
 ### `EXPTRAJ-DATA-012`：中心轨迹与中间车身姿态验收图
 
-- 行为：验收图除起终外廓外，沿轨迹显示离散车体中心点及航向；按距离、原地旋转段、换向点和曲率变化选择中间位姿，绘制半透明 6×3 m 车身包络。连续零位移航向变化汇总为原地旋转事件，在固定中心使用独立颜色、方向环箭头和 `LEFT/RIGHT + 累计角度` 标注；信息区同时显示事件数、累计绝对旋转角和单次最大角。
-- 结果：即使中心轨迹很短或多个航向点重合，单图仍可直接判断旋转发生位置、方向、累计角度、中心是否固定和中间车身是否侵入障碍，并看到运动学/碰撞可行性 PASS/FAIL。
+- 坐标定义：轨迹局部系为右手系“前方 `x`、车体左方 `y`、正 `yaw` 表示相对当前车头左转”。验收图必须让正 `y` 实际显示在画面左侧，禁止把“左为正”的数值直接映射成“屏幕向右为正”而产生横向镜像。
+- 行为：验收图除起终外廓外，沿轨迹显示离散车体中心点及航向；按距离、原地旋转段、换向点和曲率变化选择中间位姿，绘制半透明 6×3 m 车身包络。连续零位移航向变化汇总为原地旋转事件，在固定中心使用独立颜色，并从旋转前航向沿有符号累计角绘制方向箭头；标签使用车体语义 `LEFT/RIGHT + 角度绝对值`。信息区同时显示事件数、累计绝对旋转角和单次最大角。
+- 结果：即使中心轨迹很短或多个航向点重合，单图仍可按当前车头判断旋转发生位置、车体左/右转、累计角度、旋转后的车头/车尾方向、中心是否固定和中间车身是否侵入障碍，并看到运动学/碰撞可行性 PASS/FAIL。
 - 异常与恢复：缺少模型元数据时使用当前理论配置绘图但明确标为未确认模型；不得把缺少碰撞审计的旧样本显示为可行性 PASS。
+
+### `EXPTRAJ-DATA-013`：旧专家数据可视化参考归档与清理
+
+- 目标与非目标：在重建当前专家数据前，从旧归档保留足以解释可视化行为和历史模型差异的少量真实样本；参考归档不是训练集、校准报告或全量数据备份，不用于恢复被删除的旧 train/val/test。
+- 数据与状态：归档至少包含一个安全加载的 schema v2 NPZ、逐样本来源路径/索引/任务 ID/场景/任务类型/机动/选择理由、来源与归档文件 SHA-256、车辆模型版本、归档前后文件数与字节数，以及使用当前 inspection 生成的 summary 和 PNG。样本覆盖前进、倒车、不同任务类型和大角度原地旋转；重复类别可合并但不得只保留合成样本。
+- 操作接口：清理只能作用于显式解析且位于项目 `data/task_dataset` 下的旧专家数据目标；归档目录必须位于同一根目录并从删除集合排除。归档 NPZ 可由 `DatasetGenerator.load` 在禁用 pickle 的条件下重读，PNG 必须在删除前成功生成。
+- 异常与恢复：任一来源不可读、归档写入失败、哈希/样本数不匹配、PNG 未生成或目标路径越界时，停止删除并保留原数据。归档验证成功后才允许删除其余旧数据；删除完成后再次核对根目录只含保留归档和明确允许的新数据。
+- 兼容与迁移：旧模型版本和可行性状态按原元数据如实保存，不伪装成当前 v4 正式数据。后续 v4 数据必须写入新目录；需要旧全量数据时按原 seed、配置与历史版本代码重建，不能将参考归档扩充或复制为训练集。
+- 安全与隐私：仅处理项目生成的仿真数组和图片，不含个人数据或外部上传；删除前记录精确清单、大小和授权边界。删除是不可逆操作，归档只能恢复保留样本，不能恢复其余旧数据。
 
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
@@ -191,6 +201,7 @@
 - `Trajectory(points, dt)` 与 NPZ schema v2 数组键保持不变；新任务元数据增加车辆模型与可行性审计。旧归档不迁移，严格门禁拒绝缺少新证据的样本，需按原计划重建。
 - 解析扩展可由规划器构造参数禁用，回退到离散 Hybrid A* 路径；平滑与速度剖面为独立调用，不影响旧调用。
 - 新保存文件使用 schema v2；无版本 v1 文件继续读取，旧数组键和含义不变。需要回退写出格式时可由旧版本生成器重建，v2 不覆盖输入归档。
+- 旧专家数据清理只保留显式参考归档；它不改变 NPZ schema，也不提供完整训练集恢复。后续正式数据始终使用新模型版本和新输出目录。
 
 ## 安全、隐私与运行限制
 
@@ -198,6 +209,7 @@
 - 默认配置是理论等比车型；高阶履带滑移和真实制动能力必须由后续实车标定验证，不能仅凭几何/运动学 PASS 宣称实车安全。
 - 本功能不处理个人数据、授权或外部通信。
 - NPZ 元数据仅保存 Unicode 数组，加载显式禁用 pickle；数据规模仍由可信生成流程控制，调用方应避免加载来源不明的超大归档。
+- 清理操作不得使用未解析变量、通配符或工作区根目录作为递归删除目标；归档验证失败时禁止继续删除。
 - 48 词族只在解析邻域计算；候选排序后遇到首条碰撞自由曲线即停止，避免全搜索中无界调用。
 
 ## 追溯
@@ -218,7 +230,8 @@
 | `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |
 | `EXPTRAJ-DATA-010` | 生成前拒绝不一致轨迹、T4 候选继续、稳定重采原因与严格 CLI | `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/inspect_dataset.py`; `scripts/build_dataset.py` | `dataset/generator.py::DatasetGenerator._resolve_goal`; `dataset/build.py::generate_with_retries`; `dataset/maneuver.py::require_maneuver_consistency` | 10 条真实构建烟测经生成/partial 双门禁后全 split 100%；旧 test 严格检查按预期失败；Spec 检查 PASS | ✅ |
 | `EXPTRAJ-DATA-011` | 运动学独立复算、生成期扫掠碰撞、模型版本与 partial 严格门禁 | `tests/test_trajectory_feasibility.py`; `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/feasibility.py`; `DatasetGenerator._audit_feasibility`; `require_trajectory_feasibility` | 定向审计/归档门禁通过；真实 10 条 train/val/test 构建可行率 100%；全仓 191 项通过 | ✅ |
-| `EXPTRAJ-DATA-012` | 中心采样点、原地旋转事件方向/角度、中间外廓与可行性摘要可视 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::PivotEvent/_pivot_events/_draw_pivot_event/render_sample_overlay/summarize_dataset` | 事件分组、方向反转、数值噪声、角度统计和渲染回归通过；真实 180° 样本预览显示方向/角度及侧栏汇总；全仓 225 项通过 | ✅ |
+| `EXPTRAJ-DATA-012` | 正 `Left` 显示在画面左侧；旋转箭头从旋转前航向沿真实有符号角绘制；车头/车尾与 body LEFT/RIGHT 一致 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::_orient_left_positive_axis/_pivot_arrow_points/_draw_pivot_event` | 镜像坐标和“右转 180° 后车体左转 3°”屏幕方向回归通过；真实样本 PNG 人工图审通过；全仓 228 项通过 | ✅ |
+| `EXPTRAJ-DATA-013` | 真实代表样本归档含来源、哈希、版本、统计和 PNG；验证成功后仅删除边界内冗余旧数据 | `tests/test_archive_visual_references.py`; 归档 manifest；`DatasetGenerator.load`; 删除前后清单；人工 PNG 检查 | `scripts/archive_visual_references.py::create_visual_reference_archive`; `data/task_dataset/visual_reference_archive_v3` | 7 条 schema v2 真实样本覆盖 T1–T5/前进/倒车，7 张 PNG 和全部 SHA-256 复核通过；912 文件/27,855,463 字节→12 文件/1,758,656 字节；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 105 case 覆盖 30 普通+5 S9 单元；失败继续回归通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |
