@@ -46,6 +46,7 @@ class TestVehicleConfig(unittest.TestCase):
         self.assertEqual(planner_kwargs["plan_v"], cfg.plan_v)
         self.assertEqual(planner_kwargs["max_omega"], cfg.plan_max_omega)
         self.assertEqual(planner_kwargs["pivot_omega"], cfg.pivot_omega)
+        self.assertEqual(planner_kwargs["rotation_penalty"], 2.0)
         self.assertEqual(
             planner_kwargs["direction_mismatch_penalty"],
             cfg.direction_mismatch_penalty,
@@ -54,6 +55,7 @@ class TestVehicleConfig(unittest.TestCase):
             planner_kwargs["max_planning_time_s"], cfg.max_planning_time_s
         )
         self.assertTrue(planner_kwargs["enable_pivot"])
+        self.assertEqual(cfg.model_version, "tracked_pivot_v4")
         self.assertEqual(cfg.mpc_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.vehicle_model_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.collision_kwargs(), {"vehicle_length": 6.0, "vehicle_width": 3.0})

@@ -8,6 +8,7 @@ import numpy as np
 
 from dataset.inspection import (
     _intermediate_pose_indices,
+    _pivot_events,
     _to_local,
     _vehicle_polygon,
     render_sample_overlay,
@@ -119,6 +120,61 @@ class TestDatasetInspection(unittest.TestCase):
             points, lengths, np.array([], dtype=int), pivot
         )
         self.assertIn(2, selected)
+
+    def test_pivot_events_preserve_location_direction_and_cumulative_angle(self):
+        points = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, np.pi / 4.0],
+                [1.0, 0.0, np.pi / 2.0],
+                [2.0, 0.0, np.pi / 2.0],
+                [2.0, 0.0, np.pi / 4.0],
+            ]
+        )
+
+        events = _pivot_events(points)
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual((events[0].start_index, events[0].end_index), (1, 3))
+        np.testing.assert_allclose(events[0].center, [1.0, 0.0])
+        self.assertAlmostEqual(events[0].signed_angle_rad, np.pi / 2.0)
+        self.assertEqual(events[0].turn_label, "LEFT")
+        self.assertAlmostEqual(events[1].signed_angle_rad, -np.pi / 4.0)
+        self.assertEqual(events[1].turn_label, "RIGHT")
+
+        numerical_jitter = np.array(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, np.deg2rad(0.01)]]
+        )
+        self.assertEqual(_pivot_events(numerical_jitter), ())
+
+        reversing_at_same_center = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, np.pi / 4.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+        reverse_events = _pivot_events(reversing_at_same_center)
+        self.assertEqual(
+            [event.turn_label for event in reverse_events], ["LEFT", "RIGHT"]
+        )
+
+    def test_summary_records_pivot_event_angle_statistics(self):
+        data = _data()
+        data["trajs"][0] = [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, np.pi / 4.0],
+            [0.0, 0.0, np.pi / 2.0],
+        ]
+
+        summary = summarize_dataset(data)
+
+        rotation = summary["in_place_rotation"]
+        self.assertEqual(rotation["event_count"], 1)
+        self.assertEqual(rotation["sample_count"], 1)
+        self.assertAlmostEqual(rotation["total_abs_angle_deg"], 90.0, places=4)
+        self.assertAlmostEqual(rotation["max_event_angle_deg"], 90.0, places=4)
 
     def test_strict_maneuver_gate_rejects_inconsistent_archive_summary(self):
         data = _data()

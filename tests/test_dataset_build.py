@@ -85,7 +85,7 @@ class TestTaskPlan(unittest.TestCase):
         self.assertTrue(sample.task_meta["dataset"]["feasibility_audit"]["feasible"])
         self.assertEqual(
             sample.task_meta["dataset"]["vehicle_model"]["model_version"],
-            "tracked_pivot_v3",
+            "tracked_pivot_v4",
         )
 
 

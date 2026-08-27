@@ -37,7 +37,7 @@ class VehicleConfig:
     collision_check_resolution: float = 0.1
     enable_pivot: bool = False
     pivot_omega: float = 0.35
-    rotation_penalty: float = 5.0
+    rotation_penalty: float = 2.0
     direction_mismatch_penalty: float = 2.0
     max_planning_time_s: float = 8.0
 

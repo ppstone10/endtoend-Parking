@@ -58,6 +58,12 @@ python scripts/build_dataset.py --count 3000 --vehicle-config configs/vehicles/t
 # 输出统计/机动一致性审计，并保存可解释的专家轨迹验收图
 python scripts/inspect_dataset.py data/task_dataset/train.npz --output data/task_dataset/inspection
 
+# tracked_pivot_v4：倒车/反方向与原地旋转采用约 2:1 代价；必须使用新输出目录，不能混用旧 v3 检查点
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v4_3000 --batch-size 5 --max-retries 10
+
+# 新验收图在旋转中心标注 LEFT/RIGHT 与累计角度；summary.json 记录事件数、累计角和最大单次角
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py data/task_dataset/tracked_pivot_v4_3000/train.npz --output data/task_dataset/tracked_pivot_v4_3000/inspection/train
+
 # 严格门禁：机动不一致、运动学不可行、缺少扫掠碰撞证据或模型不匹配时返回失败
 python scripts/inspect_dataset.py data/task_dataset/train.npz --samples 0 --require-maneuver-consistency --require-trajectory-feasibility
 ```

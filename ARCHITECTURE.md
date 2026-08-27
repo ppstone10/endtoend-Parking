@@ -14,7 +14,7 @@
 | 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较 |
-| 可视化 | `viz/` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图（动画与实验图后续里程碑） |
+| 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图；专家验收图把连续零位移航向变化汇总为带方向、累计角度和固定中心的原地旋转事件 |
 | 批量实验 | `experiments/` | 配置驱动 runner（JSON 配置 → 引擎批量回合 → 指标汇总 → 结果落盘），配置与结果归档 `configs/`、`results/` |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
@@ -80,7 +80,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - 默认理论车型由 `configs/vehicles/tracked_drill_rig.json` 定义为以两履带几何中心居中的 6×3 m 矩形；`VehicleConfig` 将外廓、执行上限、规划速度/角速度、安全余量与搜索分辨率统一注入规划器/MPC/车辆模型/碰撞/inspection。
 - 批量实验统一经 `experiments/run_experiment.py`（JSON 配置驱动，结果落盘 `experiments/results/`），可视化统一经 `viz/`（PNG+PDF 双格式输出）。
 - 低速泊车采用理想履带差速运动学，控制量为线速度 v 与角速度 omega；允许 `v=0, omega≠0`，原地旋转中心固定为两履带几何中心。履带滑移、沉陷、质量和惯量不属于当前理论模型。
-- 平移弧线的 Reeds–Shepp 半径由 `|plan_v / plan_max_omega|` 推导，但它不代表履带全部可达集合；Hybrid A* 另有原地旋转基元和履带解析候选。原地旋转施加较高代价，并对矩形最远角点扫掠按配置分辨率加密。
+- 平移弧线的 Reeds–Shepp 半径由 `|plan_v / plan_max_omega|` 推导，但它不代表履带全部可达集合；Hybrid A* 另有原地旋转基元和履带解析候选。默认/前进请求下倒车或反方向平移、以及原地旋转相对常规前进/小转向按 2:1 时间代价计；显式倒车监督任务仍以倒车为请求方向。原地旋转对矩形最远角点扫掠按配置分辨率加密。
 - `_pose_free` 检查完整定向矩形与圆/矩形/多边形障碍相交，不再只验四角；任一运动基元、解析候选和数据可行性审计都复用相同外廓与 `collision_margin`。
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。

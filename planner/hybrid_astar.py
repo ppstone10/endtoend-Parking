@@ -85,7 +85,7 @@ class HybridAStarPlanner:
         min_turning_radius: float | None = None,
         enable_pivot: bool = False,
         pivot_omega: float | None = None,
-        rotation_penalty: float = 5.0,
+        rotation_penalty: float = 2.0,
         direction_mismatch_penalty: float = 2.0,
         max_planning_time_s: float = 8.0,
         collision_check_resolution: float = 0.1,
@@ -294,11 +294,8 @@ class HybridAStarPlanner:
                 if collision:
                     continue
                 duration = n_steps * dt
-                direction_factor = (
-                    self.direction_mismatch_penalty
-                    if preferred_direction is not None
-                    and int(direction) != preferred_direction
-                    else 1.0
+                direction_factor = self._translation_cost_factor(
+                    int(direction), preferred_direction
                 )
                 child = _Node(
                     x,
@@ -513,8 +510,9 @@ class HybridAStarPlanner:
                 points = np.vstack((points, piece[1:]))
             points[-1] = goal_pose
             translation_cost = distance / abs(self.plan_v)
-            if preferred_direction is not None and direction != preferred_direction:
-                translation_cost *= self.direction_mismatch_penalty
+            translation_cost *= self._translation_cost_factor(
+                direction, preferred_direction
+            )
             cost = translation_cost + self.rotation_penalty * (
                 abs(first_delta) + abs(last_delta)
             ) / self.pivot_omega
@@ -528,14 +526,24 @@ class HybridAStarPlanner:
     ) -> float:
         cost = 0.0
         for length in signed_lengths:
-            factor = (
-                self.direction_mismatch_penalty
-                if preferred_direction is not None
-                and (1 if length >= 0.0 else -1) != preferred_direction
-                else 1.0
+            factor = self._translation_cost_factor(
+                1 if length >= 0.0 else -1,
+                preferred_direction,
             )
             cost += abs(length) * factor / abs(self.plan_v)
         return cost
+
+    def _translation_cost_factor(
+        self, direction: int, preferred_direction: int | None
+    ) -> float:
+        """返回平移时间代价倍率；默认抑制倒车，显式任务方向优先。"""
+        if preferred_direction is None:
+            return self.direction_mismatch_penalty if direction < 0 else 1.0
+        return (
+            self.direction_mismatch_penalty
+            if direction != preferred_direction
+            else 1.0
+        )
 
     def _sample_pivot(
         self, start_pose: tuple[float, float, float], delta_yaw: float

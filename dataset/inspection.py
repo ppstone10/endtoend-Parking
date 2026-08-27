@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 import textwrap
 from typing import Any
@@ -19,6 +20,26 @@ from .maneuver import (
     trajectory_segment_directions,
 )
 
+_PIVOT_VISUAL_ANGLE_EPSILON_RAD = float(np.deg2rad(0.5))
+
+
+@dataclass(frozen=True)
+class PivotEvent:
+    """一段连续原地旋转及其固定中心、方向和累计航向变化。"""
+
+    start_index: int
+    end_index: int
+    center: np.ndarray
+    signed_angle_rad: float
+
+    @property
+    def turn_label(self) -> str:
+        return "LEFT" if self.signed_angle_rad > 0.0 else "RIGHT"
+
+    @property
+    def abs_angle_deg(self) -> float:
+        return float(np.degrees(abs(self.signed_angle_rad)))
+
 
 def summarize_dataset(
     data: dict[str, Any], *, vehicle_config: VehicleConfig = MINING_DRILL_RIG
@@ -30,6 +51,8 @@ def summarize_dataset(
         raise ValueError("trajs 与 masks 形状不一致")
 
     lengths: list[float] = []
+    pivot_angles_deg: list[float] = []
+    pivot_sample_count = 0
     reverse_distance = 0.0
     total_distance = 0.0
     for trajectory, mask in zip(trajs, masks):
@@ -38,6 +61,10 @@ def summarize_dataset(
         if len(points) < 2:
             lengths.append(0.0)
             continue
+        events = _pivot_events(points)
+        if events:
+            pivot_sample_count += 1
+            pivot_angles_deg.extend(event.abs_angle_deg for event in events)
         delta = np.diff(points[:, :2], axis=0)
         segment_length = np.linalg.norm(delta, axis=1)
         heading = points[:-1, 2]
@@ -59,6 +86,13 @@ def summarize_dataset(
         "reverse_distance_ratio": (
             reverse_distance / total_distance if total_distance > 0.0 else 0.0
         ),
+        "in_place_rotation": {
+            "event_count": len(pivot_angles_deg),
+            "sample_count": pivot_sample_count,
+            "total_abs_angle_deg": float(sum(pivot_angles_deg)),
+            "max_event_angle_deg": max(pivot_angles_deg, default=0.0),
+            "event_angle_deg": _distribution(pivot_angles_deg),
+        },
         "scene_counts": _metadata_counts(countable_metadata, "scene_name"),
         "task_type_counts": _metadata_counts(countable_metadata, "task_type"),
         "noise_level_counts": _noise_counts(countable_metadata),
@@ -228,8 +262,10 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         zorder=5,
     )
 
-    yaw_delta = np.abs(_wrap_angles(np.diff(trajectory[:, 2])))
-    pivot_segments = (segment_lengths <= 1e-6) & (yaw_delta > 1e-6)
+    pivot_events = _pivot_events(trajectory)
+    pivot_segments = np.zeros(len(trajectory) - 1, dtype=bool)
+    for event in pivot_events:
+        pivot_segments[event.start_index : event.end_index] = True
     pivot_point_indices = np.unique(
         np.concatenate(
             (
@@ -271,19 +307,34 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
             zorder=7,
         )
 
+    pivot_pose_indices = {
+        index
+        for event in pivot_events
+        for index in range(event.start_index, event.end_index + 1)
+    }
     for pose_index in _intermediate_pose_indices(
         trajectory, segment_lengths, switch_indices, pivot_segments
     ):
+        is_pivot_pose = pose_index in pivot_pose_indices
         _draw_vehicle_pose(
             axis,
             local[pose_index],
             vehicle_config=vehicle_config,
-            facecolor="#5DADE2",
-            edgecolor="#2471A3",
+            facecolor="#F8C471" if is_pivot_pose else "#5DADE2",
+            edgecolor="#B9770E" if is_pivot_pose else "#2471A3",
             label=None,
-            alpha=0.12,
+            alpha=0.18 if is_pivot_pose else 0.12,
             linewidth=0.9,
             draw_heading=True,
+        )
+
+    for event_index, event in enumerate(pivot_events, start=1):
+        _draw_pivot_event(
+            axis,
+            local[event.start_index],
+            event,
+            vehicle_config=vehicle_config,
+            event_index=event_index,
         )
 
     _draw_vehicle_pose(
@@ -356,7 +407,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
             color="none",
             markerfacecolor="#F39C12",
             markeredgecolor="#7D3C98",
-            label="In-place rotation",
+            label="In-place rotation (direction + angle)",
         ),
         Line2D(
             [0],
@@ -383,6 +434,7 @@ def render_sample_overlay(data: dict[str, Any], index: int, path: str | Path) ->
         path_length=path_length,
         reverse_ratio=reverse_ratio,
         switch_count=len(switch_indices),
+        pivot_events=pivot_events,
         requested_distance_ratio=(
             None
             if maneuver_audit is None
@@ -501,6 +553,102 @@ def _vehicle_polygon(
     return forward_left[:, [1, 0]]
 
 
+def _pivot_events(
+    points: np.ndarray,
+    *,
+    translation_epsilon: float = 1e-6,
+    angle_epsilon: float = _PIVOT_VISUAL_ANGLE_EPSILON_RAD,
+) -> tuple[PivotEvent, ...]:
+    """把连续零位移航向变化汇总为可视化和统计使用的旋转事件。"""
+    trajectory = np.asarray(points, dtype=np.float64)
+    if trajectory.ndim != 2 or trajectory.shape[1] < 3:
+        raise ValueError("轨迹必须为 (N, >=3)")
+    if len(trajectory) < 2:
+        return ()
+    segment_lengths = np.linalg.norm(np.diff(trajectory[:, :2], axis=0), axis=1)
+    signed_yaw_delta = _wrap_angles(np.diff(trajectory[:, 2]))
+    pivot_indices = np.flatnonzero(
+        (segment_lengths <= translation_epsilon)
+        & (np.abs(signed_yaw_delta) > angle_epsilon)
+    )
+    if len(pivot_indices) == 0:
+        return ()
+
+    events: list[PivotEvent] = []
+    run_start = 0
+    for position in range(1, len(pivot_indices) + 1):
+        run_ended = (
+            position == len(pivot_indices)
+            or pivot_indices[position] != pivot_indices[position - 1] + 1
+            or np.sign(signed_yaw_delta[pivot_indices[position]])
+            != np.sign(signed_yaw_delta[pivot_indices[position - 1]])
+        )
+        if not run_ended:
+            continue
+        run = pivot_indices[run_start:position]
+        first_segment = int(run[0])
+        last_segment = int(run[-1])
+        events.append(
+            PivotEvent(
+                start_index=first_segment,
+                end_index=last_segment + 1,
+                center=trajectory[first_segment, :2].copy(),
+                signed_angle_rad=float(signed_yaw_delta[run].sum()),
+            )
+        )
+        run_start = position
+    return tuple(events)
+
+
+def _draw_pivot_event(
+    axis,
+    local_pose: np.ndarray,
+    event: PivotEvent,
+    *,
+    vehicle_config: VehicleConfig,
+    event_index: int,
+) -> None:
+    """在固定中心画带方向箭头和累计角度文本的原地旋转符号。"""
+    from matplotlib.patches import FancyArrowPatch
+
+    center_left = float(local_pose[1])
+    center_forward = float(local_pose[0])
+    radius = max(0.55, min(vehicle_config.length, vehicle_config.width) * 0.24)
+    left = (center_left - 0.72 * radius, center_forward + 0.50 * radius)
+    right = (center_left + 0.72 * radius, center_forward + 0.50 * radius)
+    start, end = (left, right) if event.signed_angle_rad > 0.0 else (right, left)
+    axis.add_patch(
+        FancyArrowPatch(
+            start,
+            end,
+            arrowstyle="-|>",
+            mutation_scale=14,
+            connectionstyle="arc3,rad=0.82",
+            color="#D35400",
+            linewidth=2.2,
+            zorder=10,
+        )
+    )
+    signed_degrees = np.degrees(event.signed_angle_rad)
+    axis.text(
+        center_left,
+        center_forward - radius * (0.68 + 0.18 * (event_index - 1)),
+        f"P{event_index} {event.turn_label} {signed_degrees:+.0f}°",
+        ha="center",
+        va="top",
+        fontsize=7.6,
+        fontweight="bold",
+        color="#873600",
+        bbox={
+            "boxstyle": "round,pad=0.22",
+            "facecolor": "#FEF5E7",
+            "edgecolor": "#D35400",
+            "alpha": 0.94,
+        },
+        zorder=11,
+    )
+
+
 def _draw_vehicle_pose(
     axis,
     pose,
@@ -610,6 +758,7 @@ def _render_info_panel(
     path_length: float,
     reverse_ratio: float,
     switch_count: int,
+    pivot_events: tuple[PivotEvent, ...],
     requested_distance_ratio: float | None,
     maneuver_consistent: bool | None,
     feasibility_audit: dict[str, Any] | None,
@@ -693,6 +842,9 @@ def _render_info_panel(
         ),
         f"Maneuver check    {maneuver_status}",
         f"Direction changes {switch_count}",
+        f"Pivot events      {len(pivot_events)}",
+        f"Pivot total       {sum(event.abs_angle_deg for event in pivot_events):.1f} deg",
+        f"Pivot max         {max((event.abs_angle_deg for event in pivot_events), default=0.0):.1f} deg",
         f"Pivot segments    {_audit_value(feasibility_audit, 'pivot_segment_count', 'unknown')}",
         f"Max speed         {_audit_number(feasibility_audit, 'max_linear_speed_mps', 'm/s')}",
         f"Max yaw rate      {_audit_number(feasibility_audit, 'max_angular_speed_radps', 'rad/s')}",

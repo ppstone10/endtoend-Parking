@@ -60,7 +60,7 @@
 ### `EXPTRAJ-PLAN-001`：专家轨迹生成
 
 - 前置：起始 `VehicleState` 与目标 `GoalPose` 均无碰撞。
-- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径；调用方提供前进/倒车请求时，对反方向平移基元和解析段施加同一可配置代价，但不禁止必要的短距离反向调整。
+- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径；默认或前进请求下，倒车/反方向平移相对前进/请求方向按 `2:1` 时间代价计；明确的倒车监督任务仍以倒车为请求方向，从而保留所需能力样本，但不鼓励额外换向。原地旋转相对同持续时间的直行或小范围弧线转向同样按 `2:1` 计，正常平移弧线不附加旋转惩罚。
 - 结果：返回 `Trajectory`，终点与目标位姿偏差 ≤ 0.6m；轨迹各点均位于自由空间。
 - 异常与恢复：起始/目标碰撞抛 `ValueError`；搜索发散、节点数超限或超过配置的单次规划墙钟上限时抛 `RuntimeError`，由调用方在原任务单元重采。
 
@@ -163,8 +163,8 @@
 
 ### `EXPTRAJ-DATA-012`：中心轨迹与中间车身姿态验收图
 
-- 行为：验收图除起终外廓外，沿轨迹显示离散车体中心点及航向；按距离、原地旋转段、换向点和曲率变化选择中间位姿，绘制半透明 6×3 m 车身包络；原地旋转段使用独立颜色/标记。
-- 结果：单图可判断中心路径是否连续、旋转中心是否固定、中间车身是否侵入障碍，并在信息区看到运动学/碰撞可行性 PASS/FAIL 与原地旋转段数。
+- 行为：验收图除起终外廓外，沿轨迹显示离散车体中心点及航向；按距离、原地旋转段、换向点和曲率变化选择中间位姿，绘制半透明 6×3 m 车身包络。连续零位移航向变化汇总为原地旋转事件，在固定中心使用独立颜色、方向环箭头和 `LEFT/RIGHT + 累计角度` 标注；信息区同时显示事件数、累计绝对旋转角和单次最大角。
+- 结果：即使中心轨迹很短或多个航向点重合，单图仍可直接判断旋转发生位置、方向、累计角度、中心是否固定和中间车身是否侵入障碍，并看到运动学/碰撞可行性 PASS/FAIL。
 - 异常与恢复：缺少模型元数据时使用当前理论配置绘图但明确标为未确认模型；不得把缺少碰撞审计的旧样本显示为可行性 PASS。
 
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
@@ -206,7 +206,7 @@
 |---|---|---|---|---|---|
 | `EXPTRAJ-TRACK-001` | JSON 配置统一驱动外廓、控制、方向代价和时间上限，非法配置拒绝 | `tests/test_viz.py::TestVehicleConfig`; `tests/test_planner.py` | 待补 | 待验证 | ⏳ |
 | `EXPTRAJ-TRACK-002` | 同中心异航向可规划；旋转中间姿态碰撞时拒绝 | `tests/test_planner.py` | `planner/hybrid_astar.py::HybridAStarPlanner._expand/_tracked_direct_candidates`; `planner/collision.py::RectangleFootprintCollisionChecker` | 纯原地旋转、端点自由但扫掠碰撞、车内障碍三项回归通过；S3/S5 回归通过 | ✅ |
-| `EXPTRAJ-PLAN-001` | 请求方向参与搜索代价、单次规划有墙钟上限，终点与完整外廓仍满足原契约 | `tests/test_planner.py`; 正式计划长尾基准 | 待补 | 待验证 | ⏳ |
+| `EXPTRAJ-PLAN-001` | 默认倒车/反方向与原地旋转相对常规前进/小转向按 2:1 计；显式倒车任务仍保留；单次规划有墙钟上限 | `tests/test_planner.py`; 正式计划长尾基准 | `planner/hybrid_astar.py::HybridAStarPlanner._translation_cost_factor/_expand/_directional_translation_cost/_tracked_direct_candidates`; `configs/vehicles/tracked_drill_rig.json` | 2:1 定向回归、模型 v4 注入和全仓 225 项通过；长耗时 v4 校准/正式生成按约定留给用户执行 | ✅ |
 | `EXPTRAJ-DATA-001` | 样本含 5 通道 BEV 且位姿自由 | `tests/test_dataset.py` | `dataset/generator.py::DatasetGenerator` | unittest 2 项通过 | ✅ |
 | `EXPTRAJ-DATA-002` | v2 版本、BEV/任务元数据往返与一致性拒绝 | `tests/test_dataset.py::TestDatasetGenerator` | `dataset/generator.py::DatasetGenerator.save/load`; `dataset/generator.py::TrainingSample.task_meta` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-003` | 无版本 v1 安全加载 | `tests/test_dataset.py::TestDatasetGenerator.test_v1_archive_still_loads` | `dataset/generator.py::DatasetGenerator.load` | 定向 unittest 通过 | ✅ |
@@ -218,7 +218,7 @@
 | `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |
 | `EXPTRAJ-DATA-010` | 生成前拒绝不一致轨迹、T4 候选继续、稳定重采原因与严格 CLI | `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/inspect_dataset.py`; `scripts/build_dataset.py` | `dataset/generator.py::DatasetGenerator._resolve_goal`; `dataset/build.py::generate_with_retries`; `dataset/maneuver.py::require_maneuver_consistency` | 10 条真实构建烟测经生成/partial 双门禁后全 split 100%；旧 test 严格检查按预期失败；Spec 检查 PASS | ✅ |
 | `EXPTRAJ-DATA-011` | 运动学独立复算、生成期扫掠碰撞、模型版本与 partial 严格门禁 | `tests/test_trajectory_feasibility.py`; `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/feasibility.py`; `DatasetGenerator._audit_feasibility`; `require_trajectory_feasibility` | 定向审计/归档门禁通过；真实 10 条 train/val/test 构建可行率 100%；全仓 191 项通过 | ✅ |
-| `EXPTRAJ-DATA-012` | 中心采样点、原地旋转、中间外廓与可行性摘要可视 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::render_sample_overlay/_intermediate_pose_indices` | 中心/旋转证据选择测试通过；真实 S9 图显示起终位姿、中心点、中间外廓与三项 PASS | ✅ |
+| `EXPTRAJ-DATA-012` | 中心采样点、原地旋转事件方向/角度、中间外廓与可行性摘要可视 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::PivotEvent/_pivot_events/_draw_pivot_event/render_sample_overlay/summarize_dataset` | 事件分组、方向反转、数值噪声、角度统计和渲染回归通过；真实 180° 样本预览显示方向/角度及侧栏汇总；全仓 225 项通过 | ✅ |
 | `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 105 case 覆盖 30 普通+5 S9 单元；失败继续回归通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |

@@ -185,6 +185,34 @@ class TestHybridAStarPlanner(unittest.TestCase):
             audit_maneuver_consistency(forward.points, Maneuver.FORWARD).consistent
         )
 
+    def test_reverse_and_pivot_use_two_to_one_cost_without_overriding_reverse_request(
+        self,
+    ):
+        planner = HybridAStarPlanner(
+            env=_open_env(),
+            plan_v=0.5,
+            max_omega=0.5,
+            pivot_omega=0.5,
+            enable_pivot=True,
+            rotation_penalty=2.0,
+            direction_mismatch_penalty=2.0,
+        )
+
+        forward_cost = planner._directional_translation_cost((1.0,), None)
+        reverse_cost = planner._directional_translation_cost((-1.0,), None)
+        requested_reverse_cost = planner._directional_translation_cost(
+            (-1.0,), -1
+        )
+        self.assertAlmostEqual(reverse_cost, 2.0 * forward_cost)
+        self.assertAlmostEqual(requested_reverse_cost, forward_cost)
+
+        pivot_cost, _ = planner._tracked_direct_candidates(
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, np.pi / 2.0),
+        )[0]
+        pivot_duration = (np.pi / 2.0) / planner.pivot_omega
+        self.assertAlmostEqual(pivot_cost, 2.0 * pivot_duration)
+
     def test_analytic_expansion_can_be_disabled_for_rollback(self):
         planner = HybridAStarPlanner(env=_open_env(), analytic_expansion_distance=0.0)
         trajectory = planner.plan(VehicleState(0.0, 0.0, 0.0), GoalPose(4.0, 0.0, 0.0))

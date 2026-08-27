@@ -276,3 +276,44 @@ Hybrid A* 每次扩展会生成多个前进、倒车和原地旋转基元，并�
 - 并行与串行使用同一任务计划，结果顺序、split、元数据和门禁口径一致；
 - 与 2026-08-25 基线相比，超时重采浪费显著下降；并行化只在有效样本/分钟提高且内存可接受时启用；
 - Agent 侧不再通过持续轮询维持运行，长任务状态由程序日志和检查点提供。
+
+### 9.8 tracked_pivot_v4 数据获取与留痕
+
+`tracked_pivot_v4` 将默认/前进任务中的倒车或反方向平移、以及原地旋转相对常规前进/小转向按约 `2:1` 时间代价计；显式倒车监督任务仍保留倒车主导轨迹。该变化会影响专家标签选择，因此车辆模型版本已更新，不能用 v4 配置继续旧 v3 检查点目录。
+
+先执行全能力校准；该步骤有独立 case 预算和中断恢复，但仍属于可能耗时数十分钟的任务：
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/calibrate_dataset.py `
+  --samples-per-cell 3 `
+  --max-retries 2 `
+  --task-budget-s 30 `
+  --vehicle-config configs/vehicles/tracked_drill_rig.json `
+  --output runs/dataset-calibration/tracked_pivot_v4
+```
+
+校准报告通过后，由用户执行正式 3000 条生成；相同命令可从 v4 检查点续跑：
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py `
+  --count 3000 `
+  --seed 20260824 `
+  --vehicle-config configs/vehicles/tracked_drill_rig.json `
+  --output data/task_dataset/tracked_pivot_v4_3000 `
+  --batch-size 5 `
+  --max-retries 10
+```
+
+生成后对三个 split 分别保存统计与验收图：
+
+```powershell
+foreach ($split in 'train', 'val', 'test') {
+  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py `
+    "data/task_dataset/tracked_pivot_v4_3000/$split.npz" `
+    --output "data/task_dataset/tracked_pivot_v4_3000/inspection/$split" `
+    --require-maneuver-consistency `
+    --require-trajectory-feasibility
+}
+```
+
+本轮需要保留的数据证据为：校准目录中的 `report.json`、`cells.csv`、`run_state.json`；正式目录中的 `manifest.json`、`.checkpoints/` 批次报告和三个 NPZ；每个 inspection 目录中的 `summary.json` 与抽检 PNG。`manifest.json`/任务元数据记录 v4 车辆模型和代价配置，`summary.json.in_place_rotation` 记录旋转事件数、含旋转样本数、累计绝对角、最大单次角和事件角分布。
