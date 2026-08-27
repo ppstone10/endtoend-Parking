@@ -20,75 +20,27 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
-
 from dataset import (
     DatasetGenerator,
     SensorBEVPipeline,
+    build_task_components,
     build_task_plan,
     generate_with_retries,
     require_maneuver_consistency,
     require_trajectory_feasibility,
     summarize_dataset,
 )
-from interfaces import CameraIntrinsics
-from planner import HybridAStarPlanner
-from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import (
     MINING_DRILL_RIG,
-    SimulatedCamera,
-    SimulatedLiDAR,
     VehicleConfig,
     TaskSampler,
-    get_noise_profile,
     load_vehicle_config,
 )
 
 
 def build_components(task, vehicle_config: VehicleConfig = MINING_DRILL_RIG):
     """按 Task 场景、噪声和 BEV 配置构造专家规划/传感器组件。"""
-    profile = get_noise_profile(task.difficulty.noise_level)
-    seed_sequence = np.random.SeedSequence([task.seed, 2, 8])
-    lidar_seed, camera_seed = (
-        int(child.generate_state(1, dtype=np.uint32)[0])
-        for child in seed_sequence.spawn(2)
-    )
-    intrinsics = CameraIntrinsics(
-        fx=400.0,
-        fy=400.0,
-        cx=320.0,
-        cy=240.0,
-        image_width=640,
-        image_height=480,
-    )
-    lidar_range = math.hypot(
-        max(task.scene.bev_config.extent[:2]),
-        max(task.scene.bev_config.extent[2:]),
-    )
-    pipeline = SensorBEVPipeline(
-        lidar_sensor=SimulatedLiDAR(
-            task.scene.env,
-            beams=360,
-            max_range=lidar_range,
-            noise=profile,
-            seed=lidar_seed,
-        ),
-        camera_sensor=SimulatedCamera(
-            task.scene.env,
-            intrinsics,
-            parking_area=(vehicle_config.length, vehicle_config.width),
-            noise=profile,
-            seed=camera_seed,
-        ),
-        lidar2bev=LiDAR2BEV(config=task.scene.bev_config),
-        camera2bev=Camera2BEV(config=task.scene.bev_config),
-        bev_fusion=BEVFusion(
-            vehicle_length=vehicle_config.length,
-            vehicle_width=vehicle_config.width,
-        ),
-    )
-    planner = HybridAStarPlanner(task.scene.env, **vehicle_config.planner_kwargs())
-    return planner, pipeline
+    return build_task_components(task, vehicle_config)
 
 
 def plan_summary(plan) -> dict:

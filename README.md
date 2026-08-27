@@ -38,6 +38,12 @@ python scripts/generate_dataset.py 5
 # 预览 3000 条任务分层计划（不生成 BEV/轨迹）
 python scripts/build_dataset.py --count 3000 --dry-run
 
+# 正式构建前校准全部 35 个专家能力单元；每个 case 独立落盘并受 30 秒硬预算约束
+python scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration
+
+# 校准中断后使用完全相同的命令和输出目录恢复；已完成 case 会按 identity 校验后跳过
+# report.json、cells.csv 和 run_state.json 可用于一次性判断成功率、超时与剩余量
+
 # 按 8:1:1 构建 train/val/test；默认保留 S9，每 10 条经双门禁后写可恢复检查点
 python scripts/build_dataset.py --count 3000 --output data/task_dataset --batch-size 10
 
@@ -74,10 +80,11 @@ python scripts/run_closed_loop.py --source network --data data_closed_loop.npz -
 interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹、控制指令）
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
-model/         MineParkingNet 端到端轨迹生成网络（PyTorch）
+model/         MineParkingNet v0/v1/v2、变长轨迹输出与模型注册表（PyTorch）
+training/      训练/验证、early stopping 与原子 checkpoint 核心
 controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       履带 Hybrid A* 专家轨迹（前后弧线、原地转向、RS/履带解析终连、完整扫掠碰撞）
-dataset/       Task 分层/划分/重采、机动与轨迹可行性双门禁、专家轨迹与融合 BEV、schema v2 统计/验收图
+dataset/       全能力校准、Task 分层/划分/重采、双门禁、专家轨迹与融合 BEV、schema v2 统计/验收图
 configs/       可编辑理论钻机与实验 JSON 配置
 runtime/       滚动闭环引擎（轨迹源→MPC→车辆，终止判定与失败分类）
 metrics/       回合指标定义与聚合（成功率/碰撞率/误差等）

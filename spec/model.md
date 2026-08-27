@@ -3,9 +3,9 @@
 ## 元数据
 
 - Spec ID 前缀：`MODEL`
-- 强度：轻量
+- 强度：完整
 - 状态：已采纳
-- 最后更新：2026-08-21
+- 最后更新：2026-08-27
 
 ## 目标
 
@@ -24,6 +24,9 @@
 - BEV 通道数固定为融合后 5 通道（occupancy/height/density/target/vehicle）。
 - 依赖 PyTorch（CPU 版即可运行），Python 3.12 conda 环境。
 - 轨迹长度以最长样本为准补零，用 mask 屏蔽无效点。
+- `net-v0` 保持既有固定 horizon Tensor 输出兼容；`net-v1`/`net-v2` 额外输出逐步终止 logits，但训练和评估层统一读取轨迹点与可选终止证据。
+- 模型构造只经注册表名称与可序列化配置切换，不允许训练脚本硬编码具体变体。
+- Trainer 拥有设备选择、训练/验证循环、early stopping 和 checkpoint；数据坐标转换与 batch 准备不属于模型实现。
 
 ## 行为与验收
 
@@ -56,6 +59,30 @@
 - 结果：字段完整且轨迹按最长补零。
 - 验收：`scripts/train.py` 数据集生成后可加载训练。
 
+### `MODEL-REG-001`：模型注册表
+
+- 前置：名称为已注册变体，配置字段可序列化。
+- 行为：`build_model(name, cfg)` 构造 `net-v0`、`net-v1` 或 `net-v2`，调用方无需修改代码。
+- 异常：未知名称或非法配置明确失败并列出可选名称。
+- 兼容：`MineParkingNet` 继续表示 `net-v0`，已有导入和固定 horizon 前向不变。
+
+### `MODEL-VAR-001`：v1 变长 GRU 解码
+
+- 前置：BEV、goal、state 输入契约与 v0 一致，最大 horizon 为正。
+- 行为：条件化 GRU 自回归生成轨迹点和逐步终止 logits；训练可提供 teacher forcing 轨迹，推理按终止阈值裁剪且至少返回一个点。
+- 结果：批量前向返回 `(B,N,3)` 点与 `(B,N)` 终止 logits，`predict` 返回有效 `Trajectory`。
+
+### `MODEL-VAR-002`：v2 U-Net 跳连与交叉注意力
+
+- 行为：BEV 经过带跳连的多尺度编码/融合后形成空间 token，goal/state 条件作为 query 进行交叉注意力，再经与 v1 同口径的变长解码器输出。
+- 结果：保持网络输入、轨迹点和终止 logits 契约，可由注册表配置切换。
+
+### `MODEL-TRAIN-002`：可恢复训练器核心
+
+- 前置：训练/验证 batch 统一为 BEV、局部目标、运动状态、局部轨迹和 mask；配置给出 epochs、学习率、patience、设备和 checkpoint 目录。
+- 行为：Trainer 执行训练与验证，按 val loss 保存原子 best/last checkpoint，patience 到达后 early stopping，并返回逐 epoch 历史。
+- 恢复与迁移：checkpoint 保存模型、优化器、epoch、best val 和配置；不同模型变体或不兼容配置不得静默恢复。本轮准备层不承诺 YAML 文件解析与曲线图，它们在 P3.2 配置入口中补齐。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -64,6 +91,10 @@
 | `MODEL-LOSS-001` | 掩码 MSE | `tests/test_model.py::TestLossFn` | `model/network.py::loss_fn` | unittest 通过 | ✅ |
 | `MODEL-TRAIN-001` | 损失下降 | `tests/test_model.py::TestTrainingConvergence` + train.py | `scripts/train.py` | loss 3.38→0.021 | ✅ |
 | `MODEL-DATA-001` | 落盘往返 | `scripts/train.py` 数据链路 | `dataset/generator.py::save/load` | train.py 生成并加载成功 | ✅ |
+| `MODEL-REG-001` | 名称构造 v0/v1/v2，未知名称拒绝 | `tests/test_model_registry.py` | `model/registry.py::available_models/build_model` | 三变体构造/前向与未知名称拒绝通过 | ✅ |
+| `MODEL-VAR-001` | v1 点/终止形状与 teacher forcing | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV1/_ConditionedGRUDecoder` | 点 `(B,N,3)`、终止 `(B,N)` 与变长损失通过；正式收敛待数据 | ✅ |
+| `MODEL-VAR-002` | v2 多尺度条件编码与输出契约 | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV2` | U-Net 跳连、交叉注意力及同口径输出测试通过；正式收敛待数据 | ✅ |
+| `MODEL-TRAIN-002` | val、early stopping、兼容恢复、best/last checkpoint | `tests/test_trainer.py` | `training/trainer.py::Trainer` | early stopping、原子 checkpoint、模型/超参数不兼容拒绝通过；YAML/曲线按契约后续 | ✅ |
 
 ## 待人工确认
 

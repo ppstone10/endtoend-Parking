@@ -1,6 +1,14 @@
 """数据集包。"""
 
 from .build import BuildReport, build_task_plan, expert_maneuvers, generate_with_retries
+from .calibration import (
+    CalibrationCase,
+    CalibrationResult,
+    CalibrationSettings,
+    build_calibration_cases,
+    run_calibration,
+)
+from .components import build_task_components
 from .generator import DatasetGenerator, TaskGenerationError, TrainingSample
 from .feasibility import (
     TrajectoryFeasibilityAudit,
@@ -23,6 +31,12 @@ from .splits import DatasetSplits, split_tasks
 
 __all__ = [
     "BuildReport",
+    "CalibrationCase",
+    "CalibrationResult",
+    "CalibrationSettings",
+    "build_calibration_cases",
+    "run_calibration",
+    "build_task_components",
     "build_task_plan",
     "expert_maneuvers",
     "generate_with_retries",

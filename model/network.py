@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from interfaces import BEVTensor, GoalPose, Trajectory, VehicleState
 
@@ -100,3 +101,29 @@ def loss_fn(
     diff = diff * mask.unsqueeze(-1)
     denom = mask.sum().clamp(min=1.0)
     return diff.sum() / denom
+
+
+def variable_loss_fn(
+    pred: torch.Tensor,
+    stop_logits: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    stop_weight: float = 0.2,
+) -> torch.Tensor:
+    """变长轨迹损失：掩码轨迹 MSE + 有效前缀终止 BCE。"""
+    trajectory_loss = loss_fn(pred, target, mask)
+    lengths = mask.sum(dim=1).long()
+    steps = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
+    valid_sequences = lengths > 0
+    prefix_mask = steps < lengths.unsqueeze(1)
+    stop_targets = torch.zeros_like(stop_logits)
+    if valid_sequences.any():
+        rows = torch.nonzero(valid_sequences, as_tuple=False).squeeze(1)
+        stop_targets[rows, lengths[rows] - 1] = 1.0
+    stop_loss = F.binary_cross_entropy_with_logits(
+        stop_logits, stop_targets, reduction="none"
+    )
+    stop_denom = prefix_mask.sum().clamp(min=1)
+    stop_loss = (stop_loss * prefix_mask).sum() / stop_denom
+    return trajectory_loss + float(stop_weight) * stop_loss
