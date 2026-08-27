@@ -8,12 +8,12 @@
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像按共享 `BEVConfig` 转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
 | Python 仿真与任务 | `sim/` | 二维矿区泊车环境、携带场景级 `BEVConfig` 的 S1–S9 场景与 T1–T5 任务层；`noise.py` 提供传感器噪声；`vehicle_config.py` 严格加载 `configs/vehicles/`，是履带钻机外廓、执行上限和规划搜索参数的统一来源 |
 | 端到端网络 | `model/` | 注册表按 `net-v0/v1/v2` 构造模型：v0 为固定 horizon CNN+MLP，v1 为 CNN+GRU 变长解码和终止 logits，v2 增加 U-Net 跳连空间编码与 goal/state 交叉注意力；损失支持掩码轨迹 MSE 与终止 BCE |
-| 训练体系 | `training/` | `Trainer` 拥有训练/验证循环、early stopping、兼容恢复和原子 best/last checkpoint；YAML 文件入口、曲线与正式指标留在 P3.2/P3.3 |
+| 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有训练/验证、逐 epoch 进度、early stopping 和兼容原子 checkpoint；runner 输出历史、PNG/PDF 曲线和 val 开环报告 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
 | 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图 |
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
-| 实验指标 | `metrics/` | `EpisodeResult`（单回合 8 项指标）与 `summarize`（多回合聚合：成功率/碰撞率/均值±标准差） |
+| 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较 |
 | 可视化 | `viz/` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图（动画与实验图后续里程碑） |
 | 批量实验 | `experiments/` | 配置驱动 runner（JSON 配置 → 引擎批量回合 → 指标汇总 → 结果落盘），配置与结果归档 `configs/`、`results/` |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
@@ -43,6 +43,11 @@ Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → Traini
   TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本车辆模型/机动/可行性证据）；无版本 NPZ 按 v1 读取
   固定批次 → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 原子检查点
   同身份检查点（seed/计划/车辆模型/重试参数/批大小）→ 补齐合并 → 正式 NPZ/manifest
+训练 YAML → SafeLoader/严格 schema → 注册表模型 + train/val NPZ → `Trainer`
+  → 每 epoch 控制台进度 + 原子 history/best/last → best checkpoint val 开环评估
+  → report.json + training_curve PNG/PDF
+同一 val NPZ + 一个或多个 Trainer checkpoint → `eval_openloop.py`
+  → ADE/FDE/航向 MAE report.json + openloop_comparison PNG/PDF
   NPZ → 长度/方向/可行性/分层统计 + occupancy/target/中心点/中间车身验收图
 BEVTensor + VehicleState + GoalPose → 模型注册表（net-v0/v1/v2）→ Trajectory
   （训练：全局专家轨迹/目标 → 起始局部系 → Trainer → 掩码轨迹/终止损失 → 原子 checkpoint）

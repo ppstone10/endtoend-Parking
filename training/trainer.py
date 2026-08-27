@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import math
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import torch
 import torch.nn as nn
@@ -24,7 +24,7 @@ Batch = tuple[
 
 @dataclass(frozen=True)
 class TrainerConfig:
-    """Trainer 核心配置；文件解析由后续 P3.2 配置入口负责。"""
+    """Trainer 核心配置。"""
 
     epochs: int = 30
     learning_rate: float = 1e-3
@@ -34,6 +34,7 @@ class TrainerConfig:
     checkpoint_dir: str = "runs/training"
     gradient_clip_norm: float | None = None
     stop_loss_weight: float = 0.2
+    seed: int = 0
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -48,6 +49,8 @@ class TrainerConfig:
             raise ValueError("gradient_clip_norm 必须为正或 None")
         if not math.isfinite(self.stop_loss_weight) or self.stop_loss_weight < 0.0:
             raise ValueError("stop_loss_weight 必须为有限非负数")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
+            raise ValueError("seed 必须为非负整数")
 
 
 @dataclass
@@ -189,6 +192,7 @@ class Trainer:
         val_batches: Iterable[Batch],
         *,
         resume_from: str | Path | None = None,
+        on_epoch_end: Callable[[int, TrainingHistory], None] | None = None,
     ) -> TrainingHistory:
         """训练并按验证损失 early stop；每 epoch 原子保存 last。"""
         train_data = tuple(train_batches)
@@ -216,6 +220,8 @@ class Trainer:
             else:
                 stale_epochs += 1
             self._save_checkpoint("last.pt", epoch, history)
+            if on_epoch_end is not None:
+                on_epoch_end(epoch, history)
             if stale_epochs >= self.config.patience:
                 history.stopped_early = True
                 break

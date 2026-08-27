@@ -81,7 +81,30 @@
 
 - 前置：训练/验证 batch 统一为 BEV、局部目标、运动状态、局部轨迹和 mask；配置给出 epochs、学习率、patience、设备和 checkpoint 目录。
 - 行为：Trainer 执行训练与验证，按 val loss 保存原子 best/last checkpoint，patience 到达后 early stopping，并返回逐 epoch 历史。
-- 恢复与迁移：checkpoint 保存模型、优化器、epoch、best val 和配置；不同模型变体或不兼容配置不得静默恢复。本轮准备层不承诺 YAML 文件解析与曲线图，它们在 P3.2 配置入口中补齐。
+- 恢复与迁移：checkpoint 保存模型、优化器、epoch、best val 和配置；不同模型变体或不兼容配置不得静默恢复。
+
+### `MODEL-CONFIG-001`：安全 YAML 训练配置
+
+- 前置：配置包含 model、data、training 和 output 映射，数据路径与输出路径允许相对 YAML 文件定位。
+- 行为：入口使用安全 YAML loader，只接受已定义字段和可序列化标量/映射；构造注册表模型与 Trainer，不把 YAML 标签解析为任意 Python 对象。
+- 异常：缺失字段、未知字段、非法类型、数据不存在或模型 horizon 小于数据有效长度时明确失败。
+- 结果：同一 YAML 可确定模型、数据、训练参数、输出目录和可选恢复 checkpoint。
+
+### `MODEL-REPORT-001`：训练证据落盘
+
+- 行为：配置化训练在输出目录原子写入历史和最终报告，保存 train/val loss 曲线 PNG+PDF；训练完成后以 best checkpoint 在 val 数据上计算开环指标。
+- 结果：报告记录模型/配置身份、epoch 历史、best 状态、ADE/FDE/航向误差和产物路径；正式训练未执行时不得宣称模型收敛或优于基线。
+
+### `MODEL-EVAL-001`：统一开环轨迹指标
+
+- 前置：预测与目标是 `(B,N,3)`，mask 是 `(B,N)` 且每条样本至少一个有效点。
+- 行为：ADE 聚合全部有效点 XY 欧氏误差；FDE 聚合每条样本最后有效点 XY 误差；航向误差对角差环绕后聚合有效点绝对误差。
+- 异常：形状不一致、非前缀 mask、非有限值或预测 horizon 短于目标有效长度时明确失败，不静默截断。
+
+### `MODEL-EVAL-002`：checkpoint 开环比较入口
+
+- 行为：独立 CLI 从 checkpoint 中恢复模型注册名与模型配置，在同一 NPZ 验证集上评估一个或多个模型，原子写入 JSON，并生成 PNG+PDF 指标对比图。
+- 兼容：仅接受 Trainer schema v1 checkpoint；不修改 checkpoint 或数据集。完整 V3 的实际闭环轨迹与误差-时间图不在本轮开环入口中伪造。
 
 ## 追溯
 
@@ -94,7 +117,11 @@
 | `MODEL-REG-001` | 名称构造 v0/v1/v2，未知名称拒绝 | `tests/test_model_registry.py` | `model/registry.py::available_models/build_model` | 三变体构造/前向与未知名称拒绝通过 | ✅ |
 | `MODEL-VAR-001` | v1 点/终止形状与 teacher forcing | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV1/_ConditionedGRUDecoder` | 点 `(B,N,3)`、终止 `(B,N)` 与变长损失通过；正式收敛待数据 | ✅ |
 | `MODEL-VAR-002` | v2 多尺度条件编码与输出契约 | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV2` | U-Net 跳连、交叉注意力及同口径输出测试通过；正式收敛待数据 | ✅ |
-| `MODEL-TRAIN-002` | val、early stopping、兼容恢复、best/last checkpoint | `tests/test_trainer.py` | `training/trainer.py::Trainer` | early stopping、原子 checkpoint、模型/超参数不兼容拒绝通过；YAML/曲线按契约后续 | ✅ |
+| `MODEL-TRAIN-002` | val、early stopping、兼容恢复、best/last checkpoint | `tests/test_trainer.py` | `training/trainer.py::Trainer` | early stopping、原子 checkpoint、模型/超参数不兼容拒绝通过 | ✅ |
+| `MODEL-CONFIG-001` | 安全 YAML、严格 schema、相对路径 | `tests/test_training_config.py` | `training/config.py::load_training_run_config` | SafeLoader、未知/非序列化字段拒绝和相对路径通过 | ✅ |
+| `MODEL-REPORT-001` | 历史/报告原子落盘与 PNG+PDF 曲线 | `tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/reporting.py`、`training/runner.py`、`scripts/train_model.py` | 1 epoch 合成训练贯通并生成全套产物；正式数据训练后置 | ✅ |
+| `MODEL-EVAL-001` | mask ADE/FDE/环绕航向、短 horizon 拒绝 | `tests/test_open_loop_metrics.py` | `metrics/open_loop.py::compute_open_loop_metrics` | 精确数值、±π 环绕、mask 与短 horizon 拒绝通过 | ✅ |
+| `MODEL-EVAL-002` | checkpoint 恢复、多模型 JSON/图 | `tests/test_eval_openloop.py`、CLI smoke | `training/checkpoint.py`、`scripts/eval_openloop.py` | checkpoint 恢复、JSON 与 PNG/PDF 图 smoke 通过；完整 V3 闭环后置 | ✅ |
 
 ## 待人工确认
 

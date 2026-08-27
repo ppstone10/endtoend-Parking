@@ -1,0 +1,21 @@
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 60
+    dt: 0.1
+    hidden_dim: 128
+data:
+  train: ../../data/task_dataset/train.npz
+  val: ../../data/task_dataset/val.npz
+  batch_size: 8
+training:
+  epochs: 30
+  learning_rate: 0.001
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  seed: 20260827
+output:
+  directory: ../../runs/training/net-v1

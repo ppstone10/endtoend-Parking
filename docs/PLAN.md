@@ -49,8 +49,8 @@
 ## M3 网络与训练（约 1.5 周）
 
 - [x] P3.1 模型注册表与变体（FR-NET-01..04）：registry.py；v1 变长（GRU+终止符）；v2 主模型（U-Net+交叉注意力）。（2026-08-27 完成结构与接口实现；v0 兼容、v1/v2 输出和注册表测试通过，正式收敛与 ADE/FDE 留待数据完成）
-- [ ] P3.2 训练体系（FR-NET-05）：`training/trainer.py` 核心已完成训练/验证、early stopping、兼容恢复和原子 checkpoint；待补 YAML 配置入口、曲线图与训练完成指标报告。
-- [ ] P3.3 开环评估：eval_openloop.py + V3 对比图。出口：v1/v2 val ADE/FDE 优于 v0。
+- [x] P3.2 训练体系（FR-NET-05）：安全 YAML 配置入口、训练/验证、逐 epoch 日志、early stopping、原子 best/last/history、PNG/PDF 曲线和 best checkpoint val 指标报告已实现并通过合成 smoke；正式数据训练后置。（2026-08-27）
+- [ ] P3.3 开环评估：`eval_openloop.py` 已实现同一 val 集多 checkpoint 的 ADE/FDE/环绕航向 MAE、JSON 与 PNG/PDF 指标图；待正式训练后确认 v1/v2 优于 v0，并在闭环阶段补齐 V3 专家/网络/实际三线与误差-时间图。
 
 ## M4 实验矩阵（约 1.5~2 周）
 

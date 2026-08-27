@@ -5,7 +5,7 @@
 ## 环境要求
 
 - 本项目的开发、测试、运行、装包一律使用 conda 虚拟环境 `endtoend-parking`（Python 3.12，位于 `D:\conda\envs\endtoend-parking`），禁止使用本地环境 `C:\Python314`。
-- numpy、PyTorch（CPU 版即可）
+- numpy、PyTorch（CPU 版即可）；配置化训练额外使用 PyYAML 与 matplotlib
 - 测试使用标准库 `unittest`，无需额外安装
 
 ## 安装
@@ -14,6 +14,7 @@
 conda activate endtoend-parking
 pip install numpy
 pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-training.txt
 ```
 
 ## 快速开始
@@ -64,6 +65,13 @@ python scripts/inspect_dataset.py data/task_dataset/train.npz --samples 0 --requ
 ```bash
 # 生成数据并训练 MineParkingNet（输出 data_training.npz 与 mineparkingnet.pt）
 python scripts/train.py --samples 40 --epochs 30
+
+# 正式 train/val 数据完成后，按 YAML 训练；每 epoch 输出进度并更新 history.json
+# 中断恢复时在 YAML 根节点设置 resume_from: ../../runs/training/net-v1/last.pt
+python scripts/train_model.py --config configs/training/net-v1.yaml
+
+# 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
+python scripts/eval_openloop.py --data data/task_dataset/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
 ```
 
 ```bash
@@ -81,7 +89,7 @@ interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹�
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
 model/         MineParkingNet v0/v1/v2、变长轨迹输出与模型注册表（PyTorch）
-training/      训练/验证、early stopping 与原子 checkpoint 核心
+training/      安全 YAML 配置、数据准备、训练/验证、early stopping、原子 checkpoint 与训练报告
 controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       履带 Hybrid A* 专家轨迹（前后弧线、原地转向、RS/履带解析终连、完整扫掠碰撞）
 dataset/       全能力校准、Task 分层/划分/重采、双门禁、专家轨迹与融合 BEV、schema v2 统计/验收图

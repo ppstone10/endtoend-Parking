@@ -1,0 +1,107 @@
+"""配置化训练运行编排。"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+
+from dataset import DatasetGenerator
+from metrics.open_loop import evaluate_open_loop
+from model import build_model
+
+from .config import TrainingRunConfig, load_training_run_config
+from .data import model_horizon, prepare_batches, validate_model_dataset
+from .reporting import atomic_write_json, save_training_artifacts
+from .trainer import Trainer, TrainingHistory
+
+
+def run_training(config: TrainingRunConfig) -> dict[str, Any]:
+    """执行一次配置化训练，并返回最终可序列化报告。"""
+    torch.manual_seed(config.trainer.seed)
+    train_data = DatasetGenerator.load(config.train_data)
+    val_data = DatasetGenerator.load(config.val_data)
+    _validate_dataset_pair(train_data, val_data)
+    model = build_model(config.model_name, config.model_config)
+    validate_model_dataset(model, train_data)
+    validate_model_dataset(model, val_data)
+    horizon = model_horizon(model)
+    train_batches = prepare_batches(
+        train_data, horizon=horizon, batch_size=config.batch_size
+    )
+    val_batches = prepare_batches(
+        val_data, horizon=horizon, batch_size=config.batch_size
+    )
+    trainer = Trainer(
+        model,
+        config.trainer,
+        model_name=config.model_name,
+        model_config=config.model_config,
+    )
+
+    def record_progress(epoch: int, history: TrainingHistory) -> None:
+        atomic_write_json(config.output_dir / "history.json", history.to_dict())
+        print(
+            f"epoch {epoch + 1}/{config.trainer.epochs} "
+            f"train={history.train_loss[-1]:.6f} "
+            f"val={history.val_loss[-1]:.6f} "
+            f"best={history.best_val_loss:.6f}",
+            flush=True,
+        )
+
+    history = trainer.fit(
+        train_batches,
+        val_batches,
+        resume_from=config.resume_from,
+        on_epoch_end=record_progress,
+    )
+    best_checkpoint = config.output_dir / "best.pt"
+    if not best_checkpoint.is_file():
+        raise RuntimeError("训练结束但 best checkpoint 不存在")
+    trainer.load_checkpoint(best_checkpoint)
+    metrics = evaluate_open_loop(
+        trainer.model, val_batches, device=config.trainer.device
+    )
+    report = {
+        "schema_version": 1,
+        "status": "completed",
+        "config": str(config.source),
+        "model_name": config.model_name,
+        "model_config": config.model_config,
+        "trainer_config": asdict(config.trainer),
+        "data": {
+            "train": str(config.train_data),
+            "val": str(config.val_data),
+            "train_samples": int(train_data["bevs"].shape[0]),
+            "val_samples": int(val_data["bevs"].shape[0]),
+        },
+        "history": history.to_dict(),
+        "metrics": metrics.to_dict(),
+        "checkpoints": {
+            "best": str(best_checkpoint),
+            "last": str(config.output_dir / "last.pt"),
+        },
+        "artifacts": {
+            "history": str(config.output_dir / "history.json"),
+            "curve_png": str(config.output_dir / "training_curve.png"),
+            "curve_pdf": str(config.output_dir / "training_curve.pdf"),
+        },
+    }
+    save_training_artifacts(history, report, config.output_dir)
+    return report
+
+
+def run_training_from_yaml(path: str | Path) -> dict[str, Any]:
+    return run_training(load_training_run_config(path))
+
+
+def _validate_dataset_pair(train_data: dict, val_data: dict) -> None:
+    if train_data["bevs"].shape[1:] != val_data["bevs"].shape[1:]:
+        raise ValueError("train/val 的 BEV shape 不一致")
+    train_dt = float(np.asarray(train_data["dt"]).reshape(-1)[0])
+    val_dt = float(np.asarray(val_data["dt"]).reshape(-1)[0])
+    if not np.isclose(train_dt, val_dt):
+        raise ValueError("train/val 的轨迹 dt 不一致")
