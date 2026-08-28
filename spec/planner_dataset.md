@@ -103,7 +103,7 @@
 ### `EXPTRAJ-DATA-006`：配额构建与失败重采
 
 - 前置：总量为正，能力矩阵含可支持单元，单元重试上限为正。
-- 行为：在任务几何能力矩阵上叠加当前专家可生成能力，排除持续不可达单元并约束单向可达单元；按其余场景×任务类型单元分配配额，循环 noise/可表达的 maneuver 与相邻占用难度；规划失败只在原单元增加 sample index 重采，并累计失败原因。正式构建按固定批量输出完成数、耗时、失败数和预计剩余量，并把每个已通过双门禁的批次原子写入独立检查点。
+- 行为：在任务几何能力矩阵上叠加当前专家可生成能力，排除经完整校准证明持续不可达的单元，并对只有单向成功证据的单元只生成该机动方向；按其余场景×任务类型单元分配配额，循环 noise/准入 maneuver 与相邻占用难度；规划失败只在原单元增加 sample index 重采，并累计失败原因。正式构建按固定批量输出完成数、耗时、失败数和预计剩余量，并把每个已通过双门禁的批次原子写入独立检查点。
 - 结果：成功时各 split 达到计划数量，合并检查点写出 schema v2 NPZ 与 JSON manifest；`--dry-run` 只输出计划，不生成 BEV/轨迹文件。相同 seed、车辆模型版本和任务计划可跳过已验证检查点继续构建。
 - 异常与恢复：单次规划超时作为稳定失败原因参与重采；某单元超过重试上限时终止并报告单元、成功数和失败原因；替代任务必须避开所有原计划及已用 task ID，禁止跨 split 泄漏；配置、计划或检查点审计不匹配时拒绝恢复，已完成文件不被伪装为完整数据集。
 
@@ -111,7 +111,7 @@
 
 - 前置：每单元样本数为正，车辆配置合法，任务几何能力与专家可生成能力可读取。
 - 行为：校准计划直接枚举全部“几何支持且专家可生成”的场景×任务类型单元，不经过 train/val/test 比例或 `val_count`；每单元按稳定 seed 生成相同数量的 case，并循环可表达的机动方向、噪声和相邻占用难度。
-- 结果：默认车辆配置下计划覆盖 30 个普通单元和 5 个 S9 单元；每个 case 都产生成功、失败或预算超时的终态记录。
+- 结果：当前 `tracked_pivot_v4` 专家准入下，计划覆盖 28 个普通单元和 4 个 S9 单元；每个 case 都产生成功、失败或预算超时的终态记录。
 - 异常：单个 case 失败不得终止其他单元校准；任务采样本身失败也必须成为可汇总记录。
 
 ### `EXPTRAJ-CAL-002`：硬预算与中断恢复
@@ -177,6 +177,14 @@
 - 兼容与迁移：旧模型版本和可行性状态按原元数据如实保存，不伪装成当前 v4 正式数据。后续 v4 数据必须写入新目录；需要旧全量数据时按原 seed、配置与历史版本代码重建，不能将参考归档扩充或复制为训练集。
 - 安全与隐私：仅处理项目生成的仿真数组和图片，不含个人数据或外部上传；删除前记录精确清单、大小和授权边界。删除是不可逆操作，归档只能恢复保留样本，不能恢复其余旧数据。
 
+### `EXPTRAJ-DATA-014`：`tracked_pivot_v4` 校准后专家准入
+
+- 前置与证据：决策来源必须是与当前车辆模型身份一致、全部 case 有终态且非 partial 的校准报告。当前基线为 `tracked_pivot_v4`、seed `20260824`、每单元 3 case、每 case 最多 3 次尝试的 105/105 完整报告。
+- 单元准入：`S7_fuel_station/T1`、`S9_mine_complex/T3` 因为 0/3 成功不进入正式计划；`S5_crusher/T2` 因为仅 1/3 成功、唯一成功耗时贴近 8 秒上限且同 task 复现超时，同样暂不准入。`S5_crusher/T1/T5` 只准入倒车；`S9_mine_complex/T1/T5` 只准入前进。既有 `S3_maintenance` 全任务倒车限制和 `S8_weigh_station/T5` 前进限制保持不变；其他准入单元仍循环可表达方向。
+- 可观察结果：3000 条 dry-run 不得出现上述两个排除单元或受限单元的反方向任务；总量仍为 train/val/test `2400/300/300`，test 仍只含 S9。已准入但偶发失败的单元继续在原单元和原难度重采，不跨单元隐藏失败。
+- 迁移与恢复：专家准入变更会改变任务计划身份，不得恢复或混用变更前的正式构建检查点。当规划器、车辆模型版本或任务几何改变时，必须重新完成全准入校准才能放宽或改写这些规则。
+- 回退、安全与隐私：回退只允许恢复到上一个有完整校准证据的准入矩阵，不能通过提高重试次数伪装不可达单元。本变更仅影响仿真任务采样，不涉及个人数据、外部通信或实车安全承诺。
+
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
 - 前置：起终位姿自由，最小转弯半径和采样步长为正数。
@@ -224,7 +232,7 @@
 | `EXPTRAJ-DATA-003` | 无版本 v1 安全加载 | `tests/test_dataset.py::TestDatasetGenerator.test_v1_archive_still_loads` | `dataset/generator.py::DatasetGenerator.load` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-004` | 单目标/T4 Task→样本、元数据与失败定位 | `tests/test_dataset.py::TestTaskDrivenDataset` | `dataset/generator.py::DatasetGenerator`; `dataset/pipeline.py::SensorBEVPipeline.set_target_goals` | 全仓 169 项通过；真实 S1/T1 目标通道与 3000 条 Task 生产通过 | ✅ |
 | `EXPTRAJ-DATA-005` | 8:1:1 目标、S9 隔离、seed 复现与无重叠 | `tests/test_splits.py` | `dataset/splits.py::split_tasks`; `DatasetSplits` | 正式归档为 2400/300/300；跨 split 重叠 0、唯一 task ID 3000、test 仅 S9 | ✅ |
-| `EXPTRAJ-DATA-006` | 配额、方向感知重采、批量进度、可恢复检查点与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py`; 中断恢复烟测 | 待补 | 待验证 | ⏳ |
+| `EXPTRAJ-DATA-006` | 配额、方向感知重采、批量进度、可恢复检查点与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py`; 中断恢复烟测 | `dataset/build.py::build_task_plan/expert_maneuvers/generate_with_retries`; `scripts/build_dataset.py` | 准入配额和原单元重采回归通过；批次原子检查点的正式长任务验收等待新 v4 构建 | ⚠️ |
 | `EXPTRAJ-DATA-007` | 长度/倒车/分布统计与 BEV 叠加图 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py` | `dataset/inspection.py::summarize_dataset/render_sample_overlay` | 三份统计 JSON 与 12 张 PNG 写出；全仓 169 项通过 | ✅ |
 | `EXPTRAJ-DATA-008` | 起终矿卡位姿、行驶方向、换向与到位误差可视；代表样本优先覆盖任务类型 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::render_sample_overlay/select_representative_indices` | 5 项定向测试与全仓 172 项通过；三 split 共 15 张增强图写出，S9/T1–T5 人工图审通过 | ✅ |
 | `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |
@@ -232,7 +240,8 @@
 | `EXPTRAJ-DATA-011` | 运动学独立复算、生成期扫掠碰撞、模型版本与 partial 严格门禁 | `tests/test_trajectory_feasibility.py`; `tests/test_dataset.py`; `tests/test_dataset_build.py`; `scripts/build_dataset.py` | `dataset/feasibility.py`; `DatasetGenerator._audit_feasibility`; `require_trajectory_feasibility` | 定向审计/归档门禁通过；真实 10 条 train/val/test 构建可行率 100%；全仓 191 项通过 | ✅ |
 | `EXPTRAJ-DATA-012` | 正 `Left` 显示在画面左侧；旋转箭头从旋转前航向沿真实有符号角绘制；车头/车尾与 body LEFT/RIGHT 一致 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::_orient_left_positive_axis/_pivot_arrow_points/_draw_pivot_event` | 镜像坐标和“右转 180° 后车体左转 3°”屏幕方向回归通过；真实样本 PNG 人工图审通过；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-013` | 真实代表样本归档含来源、哈希、版本、统计和 PNG；验证成功后仅删除边界内冗余旧数据 | `tests/test_archive_visual_references.py`; 归档 manifest；`DatasetGenerator.load`; 删除前后清单；人工 PNG 检查 | `scripts/archive_visual_references.py::create_visual_reference_archive`; `data/task_dataset/visual_reference_archive_v3` | 7 条 schema v2 真实样本覆盖 T1–T5/前进/倒车，7 张 PNG 和全部 SHA-256 复核通过；912 文件/27,855,463 字节→12 文件/1,758,656 字节；全仓 228 项通过 | ✅ |
-| `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 105 case 覆盖 30 普通+5 S9 单元；失败继续回归通过 | ✅ |
+| `EXPTRAJ-DATA-014` | 零成功/不稳定单元不进入计划；受限单元只生成校准成功方向；3000 条仍为 2400/300/300 | `tests/test_dataset_build.py`; `tests/test_dataset_calibration.py`; `scripts/build_dataset.py --dry-run`; 定向真实烟测 | `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES/expert_maneuvers`; `dataset/calibration.py::build_calibration_cases` | 32 单元计划无 3 个排除单元和受限反方向；4 个保留弱组合真实轨迹双门禁 PASS；17 项定向与全仓 228 项通过 | ✅ |
+| `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 原始 v4 证据 105 case 完整终态；准入后计划为 96 case（28 普通+4 S9），失败继续回归通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |
 | `EXPTRAJ-MARGIN-001` | 膨胀裕度语义与净空保持 | `tests/test_planner.py`（margin 两项测试） | `HybridAStarPlanner._pose_free`/`_splice_valid` | unittest 通过；200 回合地基基线碰撞率 11%→1.5% | ✅ |

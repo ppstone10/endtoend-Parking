@@ -23,18 +23,30 @@ from .splits import DatasetSplits, split_tasks
 
 
 _EXPERT_UNREACHABLE_CELLS = {
+    ("S5_crusher", TaskType.T2_MEDIUM),
     ("S5_crusher", TaskType.T3_LONG),
+    ("S7_fuel_station", TaskType.T1_NEAR),
     ("S7_fuel_station", TaskType.T3_LONG),
     ("S7_fuel_station", TaskType.T5_DYNAMIC),
     ("S8_weigh_station", TaskType.T2_MEDIUM),
     ("S8_weigh_station", TaskType.T3_LONG),
+    ("S9_mine_complex", TaskType.T3_LONG),
 }
 _EXPERT_MANEUVER_OVERRIDES = {
     **{
         ("S3_maintenance", task_type): (Maneuver.REVERSE,)
         for task_type in TaskType
     },
+    **{
+        ("S5_crusher", task_type): (Maneuver.REVERSE,)
+        for task_type in (
+            TaskType.T1_NEAR,
+            TaskType.T5_DYNAMIC,
+        )
+    },
     ("S8_weigh_station", TaskType.T5_DYNAMIC): (Maneuver.FORWARD,),
+    ("S9_mine_complex", TaskType.T1_NEAR): (Maneuver.FORWARD,),
+    ("S9_mine_complex", TaskType.T5_DYNAMIC): (Maneuver.FORWARD,),
 }
 
 

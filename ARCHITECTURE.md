@@ -85,7 +85,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `_pose_free` 检查完整定向矩形与圆/矩形/多边形障碍相交，不再只验四角；任一运动基元、解析候选和数据可行性审计都复用相同外廓与 `collision_margin`。
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。
-- `dataset/build.py` 拥有专家可生成能力：不改变任务几何矩阵，单独排除当前 Hybrid A* 持续不可达的监督单元并限制单向可达单元；偶发规划失败仍保持原单元难度重采。
+- `dataset/build.py::expert_maneuvers` 拥有专家可生成能力：不改变任务几何矩阵，根据与车辆模型身份绑定的完整校准证据排除持续不可达/不稳定监督单元并限制单向可达单元；正式构建与后续校准共享该入口，偶发规划失败仍保持原单元难度重采。
 - `dataset/calibration.py` 的 case 计划直接枚举全部专家可生成单元，不复用 8:1:1 数据集配额；身份绑定 seed、车辆模型、case 计划、重试和预算。只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
 - `model/registry.py` 是模型名称到实现的唯一构造入口；`MineParkingNet` 保持 `net-v0` 兼容，v1/v2 的终止 logits 不改变闭环最终消费的 `Trajectory` 契约。
 - `training/Trainer` 的 checkpoint 必须核对模型名称、模型配置和影响恢复语义的训练超参数；允许改变总 epochs、设备和输出目录，但不得静默加载不兼容状态。

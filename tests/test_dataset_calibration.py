@@ -43,9 +43,23 @@ class TestCalibrationPlan(unittest.TestCase):
         cells = {(case.scene_name, case.task_type) for case in cases}
         regular = {cell for cell in cells if cell[0] != "S9_mine_complex"}
         heldout = {cell for cell in cells if cell[0] == "S9_mine_complex"}
-        self.assertEqual(len(cases), 105)
-        self.assertEqual(len(regular), 30)
-        self.assertEqual(len(heldout), 5)
+        self.assertEqual(len(cases), 96)
+        self.assertEqual(len(regular), 28)
+        self.assertEqual(len(heldout), 4)
+        self.assertNotIn(("S7_fuel_station", "T1"), cells)
+        self.assertNotIn(("S9_mine_complex", "T3"), cells)
+        self.assertNotIn(("S5_crusher", "T2"), cells)
+        for case in cases:
+            if case.scene_name == "S5_crusher" and case.task_type in {
+                "T1",
+                "T5",
+            }:
+                self.assertEqual(case.maneuver, "reverse")
+            if case.scene_name == "S9_mine_complex" and case.task_type in {
+                "T1",
+                "T5",
+            }:
+                self.assertEqual(case.maneuver, "forward")
         for scene_name, task_type in cells:
             self.assertEqual(
                 sum(

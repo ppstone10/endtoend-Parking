@@ -319,3 +319,14 @@ foreach ($split in 'train', 'val', 'test') {
 ```
 
 本轮需要保留的数据证据为：校准目录中的 `report.json`、`cells.csv`、`run_state.json`；正式目录中的 `manifest.json`、`.checkpoints/` 批次报告和三个 NPZ；每个 inspection 目录中的 `summary.json` 与抽检 PNG。`manifest.json`/任务元数据记录 v4 车辆模型和代价配置，`summary.json.in_place_rotation` 记录旋转事件数、含旋转样本数、累计绝对角、最大单次角和事件角分布。
+
+### 9.9 v4 校准后准入决策
+
+2026-08-27 完成的原始 v4 校准为 105/105 case 终态，88 成功、17 失败、0 个 case 硬预算超时。正式构建不直接复制任务几何矩阵，而使用以下 `tracked_pivot_v4` 专家准入：
+
+- 排除 `S5_crusher/T2`、`S7_fuel_station/T1`、`S9_mine_complex/T3`；
+- `S5_crusher/T1/T5` 只生成倒车任务；
+- `S9_mine_complex/T1/T5` 只生成前进任务；
+- 保留既有 `S3_maintenance` 全任务倒车限制和 `S8_weigh_station/T5` 前进限制。
+
+`S5/T2` 在校准中仅 1/3 成功，唯一成功耗时 7.93 秒；同 task 的定向复现已越过 8 秒规划上限，因此不用更多重试将其伪装成稳定能力。准入后的 3000 条计划仍为 `2400/300/300`，覆盖 28 个普通单元和 4 个 S9 单元。准入变更会改变计划身份，不得复用变更前的正式构建检查点。

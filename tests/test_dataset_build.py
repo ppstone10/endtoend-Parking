@@ -52,6 +52,30 @@ class TestTaskPlan(unittest.TestCase):
             expert_maneuvers("S5_crusher", TaskType.T3_LONG), ()
         )
         self.assertEqual(
+            expert_maneuvers("S7_fuel_station", TaskType.T1_NEAR), ()
+        )
+        self.assertEqual(
+            expert_maneuvers("S9_mine_complex", TaskType.T3_LONG), ()
+        )
+        self.assertEqual(
+            expert_maneuvers("S5_crusher", TaskType.T2_MEDIUM), ()
+        )
+        for task_type in (
+            TaskType.T1_NEAR,
+            TaskType.T5_DYNAMIC,
+        ):
+            with self.subTest(scene="S5_crusher", task_type=task_type):
+                self.assertEqual(
+                    expert_maneuvers("S5_crusher", task_type),
+                    (Maneuver.REVERSE,),
+                )
+        for task_type in (TaskType.T1_NEAR, TaskType.T5_DYNAMIC):
+            with self.subTest(scene="S9_mine_complex", task_type=task_type):
+                self.assertEqual(
+                    expert_maneuvers("S9_mine_complex", task_type),
+                    (Maneuver.FORWARD,),
+                )
+        self.assertEqual(
             expert_maneuvers("S8_weigh_station", TaskType.T5_DYNAMIC),
             (Maneuver.FORWARD,),
         )
@@ -71,6 +95,19 @@ class TestTaskPlan(unittest.TestCase):
         self.assertTrue(
             all(task.difficulty.maneuver == Maneuver.FORWARD for task in s8_t5)
         )
+
+        all_tasks = (*plan.train, *plan.val, *plan.test)
+        excluded = {
+            ("S7_fuel_station", TaskType.T1_NEAR),
+            ("S9_mine_complex", TaskType.T3_LONG),
+            ("S5_crusher", TaskType.T2_MEDIUM),
+        }
+        self.assertFalse(
+            any((task.scene_name, task.task_type) in excluded for task in all_tasks)
+        )
+        for task in all_tasks:
+            allowed = expert_maneuvers(task.scene_name, task.task_type)
+            self.assertIn(task.difficulty.maneuver, allowed)
 
     def test_real_components_write_selected_goal_to_target_channel(self):
         task = TaskSampler(seed=321).sample(
