@@ -336,3 +336,9 @@ foreach ($split in 'train', 'val', 'test') {
 2026-08-28 的 S4/T3 长尾复现表明，主要故障不是 6×3m 车体或 0.5m 搜索栅格，而是旧卸载目标按裸车体只留 0.3m，未额外容纳 0.2m `collision_margin`。新几何保持车辆和规划预算不变，将 S4/S9 的车尾物理净空改为 `collision_margin + 0.3m`，卸载位中心距改为 3 倍车宽，并统一为 `-90°` 车头航向、车尾朝挡墙。主路仍满足至少 3.5 倍车宽。
 
 旧 `runs/dataset-calibration/tracked_pivot_v4*` 和 `data/task_dataset/tracked_pivot_v4_3000` 只作旧几何证据保留。新规划版本为 `tracked_pivot_v5`：除场景修正外，将解析接管范围从 12m 扩至 T3 上限 30m，避免 28–30m 开放场地退回昂贵离散搜索。先以 `--probe-full-capability` 写入 `runs/dataset-calibration/tracked_pivot_v5_full`，由 Agent 根据完整报告更新准入后，再生成 `data/task_dataset/tracked_pivot_v5_3000`。场景 `geometry_profile` 与 v5 规划参数都进入计划身份，脚本会拒绝把新任务续入旧检查点。
+
+### 9.11 v5 完整校准后准入决策
+
+v5 全能力报告完成 117/117 case，86 成功、29 失败、2 个 case 达到 30 秒硬预算。正式准入按方向证据保守收缩：S3/T3、S8/T2/T3/T5、S9/T5 仅前进；S3 其余任务与 S5/T1/T5 仅倒车；排除 S5/T2、S7/T1/T3/T5、S9/T1/T3。S4/T1–T5 全部保留前进/倒车。
+
+其中 S8/T2、T3 的前进各 2/2 且无需重采，因此从 v4 排除状态恢复；S9/T1 和 T3 的前进均只有 1/2 case 成功，S5/T2 唯一倒车 case 也经历一次超时重采，因此不以偶发成功放宽。3000 条计划保持 `2400/300/300`，普通场景覆盖 30 个单元，S9 test 仅含 T2/T4/T5 各 100 条。

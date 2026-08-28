@@ -195,6 +195,15 @@
 - 迁移与恢复：专家准入变更会改变任务计划身份，不得恢复或混用变更前的正式构建检查点。当规划器、车辆模型版本或任务几何改变时，必须重新完成全准入校准才能放宽或改写这些规则。
 - 回退、安全与隐私：回退只允许恢复到上一个有完整校准证据的准入矩阵，不能通过提高重试次数伪装不可达单元。本变更仅影响仿真任务采样，不涉及个人数据、外部通信或实车安全承诺。
 
+### `EXPTRAJ-DATA-016`：`tracked_pivot_v5` 完整校准后专家准入
+
+- 前置与证据：只接受模型身份为 `tracked_pivot_v5`、`probe_full_capability=true`、117/117 case 全部终态且非 partial 的报告；方向稳定性按每个 case 的最终状态和内部重采证据共同判断，单次偶发成功不能单独放宽准入。
+- 单元准入：S3/T3 仅前进；S8/T2、T3、T5 仅前进；S3 其余任务与 S5/T1、T5 仅倒车；S9/T5 仅前进。S5/T2、S7/T1/T3/T5、S9/T1/T3 不进入正式计划；其他几何支持单元保留前进/倒车轮换。
+- 可观察结果：3000 条 dry-run 仍为 train/val/test `2400/300/300`，普通场景覆盖 30 个准入单元，S9 test 覆盖 T2/T4/T5 三个单元；受限单元不得出现相反方向，排除单元不得出现。S4/T1–T5 保留双向监督。
+- 异常与恢复：报告身份、完整性或 case 计划不匹配时拒绝据此改写准入；已准入任务的偶发失败仍在原场景×类型×难度内重采并持久化游标，不能跨单元替代。
+- 迁移与回退：v5 准入改变任务计划指纹，只能写入新的 `tracked_pivot_v5_3000`；回退必须同时恢复 v4 配置、v4 准入和 v4 数据目录，禁止混合检查点或样本。
+- 安全与隐私：本准入仅声明当前仿真专家生成稳定性，不声明真实车辆可达性；不涉及个人数据、外部通信或实车控制授权。
+
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
 - 前置：起终位姿自由，最小转弯半径和采样步长为正数。
@@ -242,7 +251,7 @@
 | `EXPTRAJ-DATA-003` | 无版本 v1 安全加载 | `tests/test_dataset.py::TestDatasetGenerator.test_v1_archive_still_loads` | `dataset/generator.py::DatasetGenerator.load` | 定向 unittest 通过 | ✅ |
 | `EXPTRAJ-DATA-004` | 单目标/T4 Task→样本、元数据与失败定位 | `tests/test_dataset.py::TestTaskDrivenDataset` | `dataset/generator.py::DatasetGenerator`; `dataset/pipeline.py::SensorBEVPipeline.set_target_goals` | 全仓 169 项通过；真实 S1/T1 目标通道与 3000 条 Task 生产通过 | ✅ |
 | `EXPTRAJ-DATA-005` | 8:1:1 目标、S9 隔离、seed 复现与无重叠 | `tests/test_splits.py` | `dataset/splits.py::split_tasks`; `DatasetSplits` | 正式归档为 2400/300/300；跨 split 重叠 0、唯一 task ID 3000、test 仅 S9 | ✅ |
-| `EXPTRAJ-DATA-006` | 配额、方向感知重采、批量进度、可恢复检查点与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py`; 中断恢复烟测 | `dataset/build.py::build_task_plan/expert_maneuvers/generate_with_retries`; `scripts/build_dataset.py` | 准入配额和原单元重采回归通过；批次原子检查点的正式长任务验收等待新 v4 构建 | ⚠️ |
+| `EXPTRAJ-DATA-006` | 配额、方向感知重采、批量进度、可恢复检查点与 manifest | `tests/test_dataset_build.py`; `scripts/build_dataset.py`; 中断恢复烟测 | `dataset/build.py::build_task_plan/expert_maneuvers/generate_with_retries`; `scripts/build_dataset.py` | 准入配额和原单元重采回归通过；批次原子检查点的正式长任务验收等待 v5 构建 | ⚠️ |
 | `EXPTRAJ-DATA-007` | 长度/倒车/分布统计与 BEV 叠加图 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py` | `dataset/inspection.py::summarize_dataset/render_sample_overlay` | 三份统计 JSON 与 12 张 PNG 写出；全仓 169 项通过 | ✅ |
 | `EXPTRAJ-DATA-008` | 起终矿卡位姿、行驶方向、换向与到位误差可视；代表样本优先覆盖任务类型 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::render_sample_overlay/select_representative_indices` | 5 项定向测试与全仓 172 项通过；三 split 共 15 张增强图写出，S9/T1–T5 人工图审通过 | ✅ |
 | `EXPTRAJ-DATA-009` | 方向距离、请求占比、换向与分层不一致统计 | `tests/test_maneuver_audit.py`; `tests/test_dataset_inspection.py` | `dataset/maneuver.py::audit_maneuver_consistency/summarize_maneuver_consistency`; `dataset/inspection.py::summarize_dataset` | 定向 11 项与全仓 182 项通过；既有 3000 条审计出 708 条不一致、0 无效、0 缺失 | ✅ |
@@ -252,6 +261,7 @@
 | `EXPTRAJ-DATA-013` | 真实代表样本归档含来源、哈希、版本、统计和 PNG；验证成功后仅删除边界内冗余旧数据 | `tests/test_archive_visual_references.py`; 归档 manifest；`DatasetGenerator.load`; 删除前后清单；人工 PNG 检查 | `scripts/archive_visual_references.py::create_visual_reference_archive`; `data/task_dataset/visual_reference_archive_v3` | 7 条 schema v2 真实样本覆盖 T1–T5/前进/倒车，7 张 PNG 和全部 SHA-256 复核通过；912 文件/27,855,463 字节→12 文件/1,758,656 字节；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-014` | 零成功/不稳定单元不进入计划；受限单元只生成校准成功方向；3000 条仍为 2400/300/300 | `tests/test_dataset_build.py`; `tests/test_dataset_calibration.py`; `scripts/build_dataset.py --dry-run`; 定向真实烟测 | `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES/expert_maneuvers`; `dataset/calibration.py::build_calibration_cases` | 32 单元计划无 3 个排除单元和受限反方向；4 个保留弱组合真实轨迹双门禁 PASS；17 项定向与全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-015` | 未完成批次持久化失败游标，原命令续建不重放已排除 ID | `tests/test_dataset_build.py::TestBatchRetryState`; 现有 v4 第 294 批恢复探针 | `dataset/build.py::generate_with_retries`; `scripts/build_dataset.py::_load_retry_state_or_default/_record_retry_failure/_build_split_in_batches` | 两次进程轮次的失败 ID 集互斥；retry 身份错配拒绝；现有 1465 条检查点未改，第 294 批首个恢复任务为 sample index 124；全仓 232 项与 Spec 检查通过 | ✅ |
+| `EXPTRAJ-DATA-016` | v5 报告驱动排除/方向限制，3000 条保持 split 且不含不稳定单元 | `tests/test_dataset_build.py`; v5 `report.json/cells.csv`; `scripts/build_dataset.py --dry-run` | `dataset/build.py::expert_maneuvers` | 117/117 报告完整；30 普通+3 S9 单元；2400/300/300；4 个关键方向真实双门禁通过；全仓 237 项通过 | ✅ |
 | `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | v4 准入计划 96 case 保持；v5 全能力模式覆盖 39 单元/117 case 并轮换双向；全仓 237 项通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |

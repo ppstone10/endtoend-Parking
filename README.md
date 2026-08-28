@@ -39,15 +39,15 @@ python scripts/generate_dataset.py 5
 # 预览 3000 条任务分层计划（不生成 BEV/轨迹）
 python scripts/build_dataset.py --count 3000 --dry-run
 
-# 旧 v4 校准和未完成数据保留作旧几何证据；v5 重新探测全部 39 个几何支持单元，
-# 不沿用 v4 准入结论。完成后先让 Agent 检查 report.json，再执行下面的正式构建命令
+# 旧 v4 校准和未完成数据保留作旧几何证据；v5 全能力校准已完成 117/117 case，
+# 当前准入为 30 个普通单元 + S9 的 T2/T4/T5，完整证据保留在下列目录
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --probe-full-capability --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration/tracked_pivot_v5_full
 
 # 校准中断后使用完全相同的命令和输出目录恢复；已完成 case 会按 identity 校验后跳过
 # report.json、cells.csv 和 run_state.json 可用于一次性判断成功率、超时与剩余量
 
-# tracked_pivot_v5：保留 2:1 方向/旋转代价，将开放场地解析接管范围扩至 T3 上限 30m；
-# 只有 Agent 根据上述完整校准更新专家准入后，才执行正式构建
+# tracked_pivot_v5：S3/T3、S8/T2/T3/T5、S9/T5 仅前进；S3 其余任务与 S5/T1/T5 仅倒车；
+# 排除 S5/T2、S7/T1/T3/T5、S9/T1/T3；现在可以执行正式构建
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v5_3000 --batch-size 5 --max-retries 10
 
 # 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过

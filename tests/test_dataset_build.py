@@ -89,6 +89,9 @@ class TestTaskPlan(unittest.TestCase):
             expert_maneuvers("S9_mine_complex", TaskType.T3_LONG), ()
         )
         self.assertEqual(
+            expert_maneuvers("S9_mine_complex", TaskType.T1_NEAR), ()
+        )
+        self.assertEqual(
             expert_maneuvers("S5_crusher", TaskType.T2_MEDIUM), ()
         )
         for task_type in (
@@ -100,21 +103,29 @@ class TestTaskPlan(unittest.TestCase):
                     expert_maneuvers("S5_crusher", task_type),
                     (Maneuver.REVERSE,),
                 )
-        for task_type in (TaskType.T1_NEAR, TaskType.T5_DYNAMIC):
-            with self.subTest(scene="S9_mine_complex", task_type=task_type):
-                self.assertEqual(
-                    expert_maneuvers("S9_mine_complex", task_type),
-                    (Maneuver.FORWARD,),
-                )
         self.assertEqual(
-            expert_maneuvers("S8_weigh_station", TaskType.T5_DYNAMIC),
+            expert_maneuvers("S9_mine_complex", TaskType.T5_DYNAMIC),
             (Maneuver.FORWARD,),
         )
+        for task_type in (
+            TaskType.T2_MEDIUM,
+            TaskType.T3_LONG,
+            TaskType.T5_DYNAMIC,
+        ):
+            with self.subTest(scene="S8_weigh_station", task_type=task_type):
+                self.assertEqual(
+                    expert_maneuvers("S8_weigh_station", task_type),
+                    (Maneuver.FORWARD,),
+                )
         for task_type in TaskType:
             with self.subTest(scene="S3_maintenance", task_type=task_type):
                 self.assertEqual(
                     expert_maneuvers("S3_maintenance", task_type),
-                    (Maneuver.REVERSE,),
+                    (
+                        (Maneuver.FORWARD,)
+                        if task_type == TaskType.T3_LONG
+                        else (Maneuver.REVERSE,)
+                    ),
                 )
         plan = build_task_plan(total_count=3000, seed=123)
         s8_t5 = [
@@ -131,6 +142,7 @@ class TestTaskPlan(unittest.TestCase):
         excluded = {
             ("S7_fuel_station", TaskType.T1_NEAR),
             ("S9_mine_complex", TaskType.T3_LONG),
+            ("S9_mine_complex", TaskType.T1_NEAR),
             ("S5_crusher", TaskType.T2_MEDIUM),
         }
         self.assertFalse(

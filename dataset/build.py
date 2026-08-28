@@ -28,8 +28,7 @@ _EXPERT_UNREACHABLE_CELLS = {
     ("S7_fuel_station", TaskType.T1_NEAR),
     ("S7_fuel_station", TaskType.T3_LONG),
     ("S7_fuel_station", TaskType.T5_DYNAMIC),
-    ("S8_weigh_station", TaskType.T2_MEDIUM),
-    ("S8_weigh_station", TaskType.T3_LONG),
+    ("S9_mine_complex", TaskType.T1_NEAR),
     ("S9_mine_complex", TaskType.T3_LONG),
 }
 _EXPERT_MANEUVER_OVERRIDES = {
@@ -44,8 +43,15 @@ _EXPERT_MANEUVER_OVERRIDES = {
             TaskType.T5_DYNAMIC,
         )
     },
-    ("S8_weigh_station", TaskType.T5_DYNAMIC): (Maneuver.FORWARD,),
-    ("S9_mine_complex", TaskType.T1_NEAR): (Maneuver.FORWARD,),
+    ("S3_maintenance", TaskType.T3_LONG): (Maneuver.FORWARD,),
+    **{
+        ("S8_weigh_station", task_type): (Maneuver.FORWARD,)
+        for task_type in (
+            TaskType.T2_MEDIUM,
+            TaskType.T3_LONG,
+            TaskType.T5_DYNAMIC,
+        )
+    },
     ("S9_mine_complex", TaskType.T5_DYNAMIC): (Maneuver.FORWARD,),
 }
 
