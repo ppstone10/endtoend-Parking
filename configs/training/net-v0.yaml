@@ -2,12 +2,12 @@ model:
   name: net-v0
   config:
     bev_channels: 5
-    horizon: 60
-    dt: 0.1
+    horizon: 320
+    dt: 0.2
     hidden_dim: 256
 data:
-  train: ../../data/task_dataset/tracked_pivot_v5_3000/train.npz
-  val: ../../data/task_dataset/tracked_pivot_v5_3000/val.npz
+  train: ../../data/task_dataset/tracked_pivot_v7_3000/train.npz
+  val: ../../data/task_dataset/tracked_pivot_v7_3000/val.npz
   batch_size: 8
 training:
   epochs: 30
@@ -17,4 +17,4 @@ training:
   device: cpu
   seed: 20260827
 output:
-  directory: ../../runs/training/net-v0
+  directory: ../../runs/training/v7/net-v0

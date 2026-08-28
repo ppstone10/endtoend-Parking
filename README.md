@@ -61,16 +61,19 @@ foreach ($split in 'train', 'val', 'test') {
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py data/task_dataset/visual_reference_archive_v3/reference_samples.npz --output runs/visual-reference-v3-review
 ```
 
-```bash
+```powershell
 # 生成数据并训练 MineParkingNet（输出 data_training.npz 与 mineparkingnet.pt）
-python scripts/train.py --samples 40 --epochs 30
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/train.py --samples 40 --epochs 30
 
-# 正式 train/val 数据完成后，按 YAML 训练；每 epoch 输出进度并更新 history.json
-# 中断恢复时在 YAML 根节点设置 resume_from: ../../runs/training/net-v1/last.pt
-python scripts/train_model.py --config configs/training/net-v1.yaml
+# v7 正式训练前 smoke（全量数据、1 epoch，输出到 runs/training/v7/net-v1-smoke）
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1-smoke.yaml
+
+# smoke 通过后正式训练 net-v1；每 epoch 输出进度并更新 history.json
+# 中断恢复时在 YAML 根节点设置 resume_from: ../../runs/training/v7/net-v1/last.pt
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1.yaml
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
-python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/v7/net-v0/best.pt --checkpoint v1=runs/training/v7/net-v1/best.pt --checkpoint v2=runs/training/v7/net-v2/best.pt --output runs/openloop-eval/v7
 ```
 
 ```bash
