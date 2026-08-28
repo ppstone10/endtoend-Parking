@@ -41,8 +41,8 @@ Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → Traini
   轨迹可行性审计：起终位姿、线/角速度、横向残差、完整矩形扫掠、模型版本全部通过
   T4 按稳定候选顺序解析首个可规划且机动一致目标；显式关闭门禁时保留旧策略
   TrainingSample[] → NPZ schema v2（数组 + bev_meta + 逐样本车辆模型/机动/可行性证据）；无版本 NPZ 按 v1 读取
-  固定批次 → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 原子检查点
-  同身份检查点（seed/计划/车辆模型/重试参数/批大小）→ 补齐合并 → 正式 NPZ/manifest
+  固定批次 → 失败前原子 retry 游标 → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 原子成功检查点
+  同身份检查点（seed/计划/车辆模型/重试参数/批大小）+ 未完成批次游标 → 不重放已排除 task ID 地补齐合并 → 正式 NPZ/manifest
 训练 YAML → SafeLoader/严格 schema → 注册表模型 + train/val NPZ → `Trainer`
   → 每 epoch 控制台进度 + 原子 history/best/last → best checkpoint val 开环评估
   → report.json + training_curve PNG/PDF
@@ -94,7 +94,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - 传感器噪声只改变观测帧，不改变环境真值；默认 `clean` 与原输出兼容，非干净 profile 使用各传感器私有 seed/RNG，不读写 NumPy 全局随机状态。
 - BEV 以车辆为中心生成；默认 40×40m@0.25m，场景可覆盖范围/分辨率但同一融合管道两路必须共用配置；S9 用 80×80m@0.5m，并与默认配置保持 160×160 栅格。
 - 数据集 schema v2 将 `BEVTensor.to_metadata()` 与逐样本任务元数据编码为 Unicode JSON 数组，加载始终禁用 pickle；同一归档不允许混合 BEV 元数据或轨迹 `dt`，无版本旧归档识别为 v1。
-- 默认数据构建按 8:1:1 输出 train/val/test，S9 全部且仅进入 test；构建失败只在同一场景×任务类型×难度重采，替代任务避开全计划与已用 task ID；未完成 split 保持 `.partial.npz`，三个 split 完成后才写 manifest。
+- 默认数据构建按 8:1:1 输出 train/val/test，S9 全部且仅进入 test；构建失败只在同一场景×任务类型×难度重采，替代任务避开全计划、已用与 retry 状态排除的 task ID；未完成批次每次失败前原子持久化下一重采游标，成功 NPZ 与批次报告都落盘后才清除；未完成 split 保持 `.partial.npz`，三个 split 完成后才写 manifest。
 - `dataset/maneuver.py` 是轨迹实际方向距离的唯一判定所有者；Task 请求方向默认必须占总行驶距离至少 50%，允许短距离反向调整。Task 生成先门禁候选，构建脚本再独立审计 partial；任一不一致、无效或缺失声明样本都不得晋升为正式数据集。
 - `dataset/feasibility.py` 是归档运动学与模型版本审计所有者；生成期用规划器环境复核完整扫掠，partial 晋升前从数组独立复算并核对碰撞证据。旧 NPZ 或配置版本不匹配样本不得通过严格门禁。
 

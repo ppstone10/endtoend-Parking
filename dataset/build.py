@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 import math
 import re
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from sim.tasks import (
     Maneuver,
@@ -122,6 +122,8 @@ def generate_with_retries(
     seed: int,
     max_retries: int = 20,
     reserved_task_ids: Iterable[str] = (),
+    excluded_task_ids: Iterable[str] = (),
+    minimum_sample_indices: Mapping[tuple[str, Any], int] | None = None,
     task_sampler: TaskSampler | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> BuildReport:
@@ -129,8 +131,10 @@ def generate_with_retries(
     if max_retries <= 0:
         raise ValueError("max_retries 必须为正")
     task_list = tuple(tasks)
+    excluded_ids = set(excluded_task_ids)
     reserved_ids = set(reserved_task_ids)
     reserved_ids.update(task.task_id for task in task_list)
+    reserved_ids.update(excluded_ids)
     sampler = TaskSampler(seed=seed) if task_sampler is None else task_sampler
     if sampler.seed != int(seed):
         raise ValueError("task_sampler.seed 必须与 seed 一致")
@@ -145,13 +149,32 @@ def generate_with_retries(
         scene_name, task_type, sample_index = coordinates
         key = (scene_name, task_type)
         next_indices[key] = max(next_indices.get(key, 0), sample_index + 1)
+    for raw_key, raw_index in (minimum_sample_indices or {}).items():
+        scene_name, raw_task_type = raw_key
+        task_type = (
+            raw_task_type
+            if isinstance(raw_task_type, TaskType)
+            else TaskType(raw_task_type)
+        )
+        sample_index = int(raw_index)
+        if sample_index < 0:
+            raise ValueError("minimum_sample_indices 不能包含负数")
+        key = (str(scene_name), task_type)
+        next_indices[key] = max(next_indices.get(key, 0), sample_index)
 
     samples: list[Any] = []
     replacements: list[Task] = []
     reasons: Counter[str] = Counter()
     failure_count = 0
     for original in task_list:
-        current = original
+        if original.task_id in excluded_ids:
+            current = _replacement_task(
+                sampler, original, next_indices, reserved_ids
+            )
+            reserved_ids.add(current.task_id)
+            replacements.append(current)
+        else:
+            current = original
         for retry in range(max_retries + 1):
             try:
                 samples.extend(generator.generate([current]))
@@ -164,9 +187,14 @@ def generate_with_retries(
                         {
                             "original_task_id": original.task_id,
                             "current_task_id": current.task_id,
+                            "scene_name": original.scene_name,
+                            "task_type": original.task_type.value,
                             "retry": retry + 1,
                             "max_attempts": max_retries + 1,
                             "failure_code": exc.code,
+                            "next_sample_index": next_indices[
+                                (original.scene_name, original.task_type)
+                            ],
                         }
                     )
                 if retry == max_retries:

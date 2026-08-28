@@ -34,8 +34,12 @@ from sim import (
     MINING_DRILL_RIG,
     VehicleConfig,
     TaskSampler,
+    TaskType,
     load_vehicle_config,
 )
+
+
+_RETRY_STATE_SCHEMA_VERSION = 1
 
 
 def build_components(task, vehicle_config: VehicleConfig = MINING_DRILL_RIG):
@@ -85,6 +89,101 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _load_retry_state_or_default(
+    path: Path,
+    *,
+    split_name: str,
+    batch_index: int,
+    original_task_ids: tuple[str, ...],
+) -> dict[str, Any]:
+    """读取未完成批次的持久重采游标，不猜测损坏状态。"""
+    expected_identity = {
+        "schema_version": _RETRY_STATE_SCHEMA_VERSION,
+        "split_name": split_name,
+        "batch_index": batch_index,
+        "original_task_ids": list(original_task_ids),
+    }
+    if not path.exists():
+        return {
+            **expected_identity,
+            "failure_count": 0,
+            "failure_reasons": {},
+            "excluded_task_ids": [],
+            "next_sample_indices": {},
+        }
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"retry 状态无法读取：{path}") from exc
+    actual_identity = {
+        key: state.get(key)
+        for key in expected_identity
+    }
+    if actual_identity != expected_identity:
+        raise RuntimeError(f"retry 状态与当前批次不一致：{path}")
+    try:
+        failure_count = int(state["failure_count"])
+        failure_reasons = state["failure_reasons"]
+        excluded_task_ids = state["excluded_task_ids"]
+        next_sample_indices = state["next_sample_indices"]
+        if failure_count < 0:
+            raise ValueError
+        if not isinstance(failure_reasons, dict) or any(
+            not isinstance(key, str) or int(value) < 0
+            for key, value in failure_reasons.items()
+        ):
+            raise TypeError
+        if not isinstance(excluded_task_ids, list) or any(
+            not isinstance(task_id, str) or not task_id
+            for task_id in excluded_task_ids
+        ):
+            raise TypeError
+        if not isinstance(next_sample_indices, dict):
+            raise TypeError
+        if any(int(value) < 0 for value in next_sample_indices.values()):
+            raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"retry 状态内容损坏：{path}") from exc
+    return state
+
+
+def _record_retry_failure(
+    path: Path,
+    state: dict[str, Any],
+    event: dict[str, Any],
+) -> None:
+    """在继续规划前原子记录失败 ID 和下一重采位置。"""
+    state["failure_count"] = int(state["failure_count"]) + 1
+    reason = str(event["failure_code"])
+    reasons = state["failure_reasons"]
+    reasons[reason] = int(reasons.get(reason, 0)) + 1
+    current_task_id = str(event["current_task_id"])
+    if current_task_id not in state["excluded_task_ids"]:
+        state["excluded_task_ids"].append(current_task_id)
+    cell_key = f"{event['scene_name']}/{event['task_type']}"
+    next_index = int(event["next_sample_index"])
+    state["next_sample_indices"][cell_key] = max(
+        int(state["next_sample_indices"].get(cell_key, 0)),
+        next_index,
+    )
+    _write_json_atomic(path, state)
+
+
+def _retry_minimum_sample_indices(
+    state: dict[str, Any],
+) -> dict[tuple[str, TaskType], int]:
+    result: dict[tuple[str, TaskType], int] = {}
+    for cell_key, sample_index in state["next_sample_indices"].items():
+        try:
+            scene_name, task_type = str(cell_key).rsplit("/", 1)
+            result[(scene_name, TaskType(task_type))] = int(sample_index)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                f"retry 状态单元游标无效：{cell_key!r}"
+            ) from exc
+    return result
 
 
 def _strict_inspection(path: Path, vehicle_config: VehicleConfig) -> dict[str, Any]:
@@ -140,19 +239,33 @@ def _build_split_in_batches(
         batch = tasks[offset : offset + batch_size]
         part = split_root / f"part-{batch_index:05d}.npz"
         report_path = split_root / f"part-{batch_index:05d}.json"
+        retry_path = split_root / f"part-{batch_index:05d}.retry.json"
         resumed = part.exists() and report_path.exists()
         if resumed:
             inspection = _strict_inspection(part, vehicle_config)
             report_data = json.loads(report_path.read_text(encoding="utf-8"))
             if int(report_data.get("count", -1)) != len(batch):
                 raise RuntimeError(f"检查点样本数不匹配：{part}")
+            retry_path.unlink(missing_ok=True)
         else:
             print(
                 f"{split_name} 批次 {batch_index + 1}/{batch_count} 开始："
                 f"任务 {offset + 1}-{offset + len(batch)}",
                 flush=True,
             )
+            retry_state = _load_retry_state_or_default(
+                retry_path,
+                split_name=split_name,
+                batch_index=batch_index,
+                original_task_ids=tuple(task.task_id for task in batch),
+            )
+            excluded_task_ids = tuple(
+                str(task_id) for task_id in retry_state["excluded_task_ids"]
+            )
+            reserved_task_ids.update(excluded_task_ids)
+
             def report_retry(event: dict[str, Any]) -> None:
+                _record_retry_failure(retry_path, retry_state, event)
                 retry = int(event["retry"])
                 if retry == 1 or retry % 5 == 0:
                     print(
@@ -163,29 +276,47 @@ def _build_split_in_batches(
                         flush=True,
                     )
 
-            report = generate_with_retries(
-                batch,
-                generator=generator,
-                seed=seed,
-                max_retries=max_retries,
-                reserved_task_ids=reserved_task_ids,
-                task_sampler=task_sampler,
-                progress_callback=report_retry,
-            )
+            try:
+                report = generate_with_retries(
+                    batch,
+                    generator=generator,
+                    seed=seed,
+                    max_retries=max_retries,
+                    reserved_task_ids=reserved_task_ids,
+                    excluded_task_ids=excluded_task_ids,
+                    minimum_sample_indices=_retry_minimum_sample_indices(
+                        retry_state
+                    ),
+                    task_sampler=task_sampler,
+                    progress_callback=report_retry,
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"{exc}；未完成批次的失败游标已保存至 "
+                    f"{retry_path}，请使用原命令续建"
+                ) from exc
             reserved_task_ids.update(task.task_id for task in report.replacements)
             temporary = part.with_name(f"{part.stem}.tmp.npz")
             generator.save(list(report.samples), temporary)
             inspection = _strict_inspection(temporary, vehicle_config)
             temporary.replace(part)
+            original_ids = {task.task_id for task in batch}
+            replacement_ids = [
+                task_id
+                for task_id in retry_state["excluded_task_ids"]
+                if task_id not in original_ids
+            ]
+            replacement_ids.extend(task.task_id for task in report.replacements)
+            replacement_ids = list(dict.fromkeys(replacement_ids))
             report_data = {
                 "count": len(report.samples),
-                "failure_count": report.failure_count,
-                "failure_reasons": report.failure_reasons,
-                "replacement_task_ids": [
-                    task.task_id for task in report.replacements
-                ],
+                "failure_count": int(retry_state["failure_count"]),
+                "failure_reasons": dict(retry_state["failure_reasons"]),
+                "replacement_task_ids": replacement_ids,
+                "excluded_task_ids": list(retry_state["excluded_task_ids"]),
             }
             _write_json_atomic(report_path, report_data)
+            retry_path.unlink(missing_ok=True)
             generated_this_run += len(batch)
 
         replacement_ids = report_data.get("replacement_task_ids", [])

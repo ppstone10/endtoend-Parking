@@ -1,12 +1,21 @@
 """任务配额计划与失败重采测试。"""
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
 
 from dataset.build import build_task_plan, expert_maneuvers, generate_with_retries
 from dataset.generator import DatasetGenerator, TaskGenerationError
-from scripts.build_dataset import build_components
+from scripts.build_dataset import (
+    _build_split_in_batches,
+    _load_retry_state_or_default,
+    _record_retry_failure,
+    build_components,
+)
+from sim import MINING_DRILL_RIG
 from sim.tasks import Maneuver, TaskSampler, TaskType
 
 
@@ -151,6 +160,16 @@ class _FailConsistencyOnceGenerator(_FailOnceGenerator):
         return [task.task_id]
 
 
+class _AlwaysFailGenerator:
+    def __init__(self):
+        self.attempted_task_ids = []
+
+    def generate(self, tasks):
+        task = list(tasks)[0]
+        self.attempted_task_ids.append(task.task_id)
+        raise TaskGenerationError(task.task_id, "持续测试失败")
+
+
 class TestBuildRetries(unittest.TestCase):
     def test_retry_progress_callback_exposes_stable_failure_event(self):
         original = build_task_plan(total_count=20, seed=7).train[0]
@@ -167,6 +186,9 @@ class TestBuildRetries(unittest.TestCase):
         self.assertEqual(events[0]["original_task_id"], original.task_id)
         self.assertEqual(events[0]["retry"], 1)
         self.assertEqual(events[0]["failure_code"], "测试失败")
+        self.assertEqual(events[0]["scene_name"], original.scene_name)
+        self.assertEqual(events[0]["task_type"], original.task_type.value)
+        self.assertGreater(events[0]["next_sample_index"], 0)
 
     def test_failure_is_resampled_in_same_cell(self):
         plan = build_task_plan(total_count=20, seed=7)
@@ -235,6 +257,136 @@ class TestBuildRetries(unittest.TestCase):
             report.replacements[0].difficulty.maneuver,
             original.difficulty.maneuver,
         )
+
+    def test_resume_skips_a_previously_failed_original_task(self):
+        original = build_task_plan(total_count=20, seed=7).train[0]
+        report = generate_with_retries(
+            [original],
+            generator=_FailOnceGenerator(),
+            seed=7,
+            max_retries=2,
+            excluded_task_ids={original.task_id},
+            minimum_sample_indices={
+                (original.scene_name, original.task_type): 121,
+            },
+        )
+
+        first_attempt_id = report.replacements[0].task_id
+        first_attempt_index = int(first_attempt_id.rsplit("-", 2)[1])
+        self.assertNotEqual(first_attempt_id, original.task_id)
+        self.assertGreaterEqual(first_attempt_index, 121)
+
+
+class TestBatchRetryState(unittest.TestCase):
+    def test_restarting_an_incomplete_batch_does_not_repeat_failed_ids(self):
+        task = build_task_plan(total_count=20, seed=7).train[0]
+        generator = _AlwaysFailGenerator()
+        config = MINING_DRILL_RIG
+        sampler = TaskSampler(
+            seed=7,
+            vehicle_length=config.length,
+            vehicle_width=config.width,
+            collision_margin=config.collision_margin,
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp, "dataset")
+            checkpoint_root = output / ".checkpoints"
+            checkpoint_root.mkdir(parents=True)
+            arguments = {
+                "split_name": "train",
+                "tasks": (task,),
+                "generator": generator,
+                "vehicle_config": config,
+                "checkpoint_root": checkpoint_root,
+                "output": output,
+                "seed": 7,
+                "max_retries": 1,
+                "batch_size": 1,
+                "reserved_task_ids": {task.task_id},
+                "task_sampler": sampler,
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "请使用原命令续建"):
+                _build_split_in_batches(**arguments)
+            first_run_ids = tuple(generator.attempted_task_ids)
+            with self.assertRaisesRegex(RuntimeError, "请使用原命令续建"):
+                _build_split_in_batches(**arguments)
+            second_run_ids = tuple(generator.attempted_task_ids[len(first_run_ids):])
+
+            self.assertEqual(len(first_run_ids), 2)
+            self.assertEqual(len(second_run_ids), 2)
+            self.assertTrue(set(first_run_ids).isdisjoint(second_run_ids))
+            retry_path = checkpoint_root / "train" / "part-00000.retry.json"
+            state = json.loads(retry_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["failure_count"], 4)
+            self.assertEqual(state["excluded_task_ids"], [*first_run_ids, *second_run_ids])
+
+    def test_failure_state_is_atomic_and_resumable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "part-00003.retry.json")
+            state = _load_retry_state_or_default(
+                path,
+                split_name="train",
+                batch_index=3,
+                original_task_ids=("S4_dump_area-T3-0004-deadbeef",),
+            )
+            event = {
+                "scene_name": "S4_dump_area",
+                "task_type": "T3",
+                "original_task_id": "S4_dump_area-T3-0004-deadbeef",
+                "current_task_id": "S4_dump_area-T3-0123-feedface",
+                "failure_code": "planner_timeout",
+                "next_sample_index": 124,
+                "retry": 11,
+                "max_attempts": 11,
+            }
+
+            _record_retry_failure(path, state, event)
+            restored = _load_retry_state_or_default(
+                path,
+                split_name="train",
+                batch_index=3,
+                original_task_ids=("S4_dump_area-T3-0004-deadbeef",),
+            )
+
+            self.assertEqual(restored["failure_count"], 1)
+            self.assertEqual(restored["failure_reasons"], {"planner_timeout": 1})
+            self.assertEqual(
+                restored["excluded_task_ids"],
+                ["S4_dump_area-T3-0123-feedface"],
+            )
+            self.assertEqual(
+                restored["next_sample_indices"],
+                {"S4_dump_area/T3": 124},
+            )
+            self.assertFalse(path.with_name(f"{path.name}.tmp").exists())
+
+    def test_retry_state_rejects_a_different_batch_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "part-00003.retry.json")
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "split_name": "train",
+                        "batch_index": 3,
+                        "original_task_ids": ["old-task"],
+                        "failure_count": 0,
+                        "failure_reasons": {},
+                        "excluded_task_ids": [],
+                        "next_sample_indices": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "retry 状态与当前批次不一致"):
+                _load_retry_state_or_default(
+                    path,
+                    split_name="train",
+                    batch_index=3,
+                    original_task_ids=("new-task",),
+                )
 
 
 if __name__ == "__main__":

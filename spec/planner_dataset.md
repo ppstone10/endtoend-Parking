@@ -107,6 +107,16 @@
 - 结果：成功时各 split 达到计划数量，合并检查点写出 schema v2 NPZ 与 JSON manifest；`--dry-run` 只输出计划，不生成 BEV/轨迹文件。相同 seed、车辆模型版本和任务计划可跳过已验证检查点继续构建。
 - 异常与恢复：单次规划超时作为稳定失败原因参与重采；某单元超过重试上限时终止并报告单元、成功数和失败原因；替代任务必须避开所有原计划及已用 task ID，禁止跨 split 泄漏；配置、计划或检查点审计不匹配时拒绝恢复，已完成文件不被伪装为完整数据集。
 
+### `EXPTRAJ-DATA-015`：未完成批次的持久失败游标
+
+- 前置：正式构建已通过身份校验，当前固定批次尚未形成同时存在的 NPZ 和批次报告。
+- 行为：每个专家生成失败在继续重采前，原子写入与 split、批次索引和原任务 ID 列表绑定的 retry JSON；状态保存各场景×任务类型的下一 sample index、累计失败计数/原因和不得再试的排除 ID。
+- 结果：相同身份重启时，重采从已持久化游标继续，不再尝试已排除 ID；批次成功报告合并跨进程失败证据，只有 NPZ 和报告都已原子落盘后才删除 retry JSON。旧失败无持久证据时，可保守排除未完成批次的原任务并保持同难度重采，不伪造具体失败结论。
+- 异常与恢复：retry JSON 损坏、schema 未知或批次身份不符时明确拒绝恢复，不猜测游标；达到本次命令的重试上限仍保持受控终止，但错误明确指示使用原命令续建。
+- 数据与状态：retry JSON 是未完成批次的临时构建状态，不进入正式 NPZ/manifest；完成批次 JSON 仍是该批次的最终审计证据。
+- 兼容、迁移与回退：新状态文件不改已有 identity schema 与成功检查点；无 retry JSON 的旧目录按空状态开始。回退代码前可保留 retry JSON 作为证据，旧代码会忽略它但不会破坏已完成批次。
+- 安全与隐私：只记录确定性仿真任务标识与失败分类，不含个人数据或外部通信。
+
 ### `EXPTRAJ-CAL-001`：全专家能力单元校准
 
 - 前置：每单元样本数为正，车辆配置合法，任务几何能力与专家可生成能力可读取。
@@ -241,6 +251,7 @@
 | `EXPTRAJ-DATA-012` | 正 `Left` 显示在画面左侧；旋转箭头从旋转前航向沿真实有符号角绘制；车头/车尾与 body LEFT/RIGHT 一致 | `tests/test_dataset_inspection.py`; `scripts/inspect_dataset.py`; 抽检 PNG 人工查看 | `dataset/inspection.py::_orient_left_positive_axis/_pivot_arrow_points/_draw_pivot_event` | 镜像坐标和“右转 180° 后车体左转 3°”屏幕方向回归通过；真实样本 PNG 人工图审通过；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-013` | 真实代表样本归档含来源、哈希、版本、统计和 PNG；验证成功后仅删除边界内冗余旧数据 | `tests/test_archive_visual_references.py`; 归档 manifest；`DatasetGenerator.load`; 删除前后清单；人工 PNG 检查 | `scripts/archive_visual_references.py::create_visual_reference_archive`; `data/task_dataset/visual_reference_archive_v3` | 7 条 schema v2 真实样本覆盖 T1–T5/前进/倒车，7 张 PNG 和全部 SHA-256 复核通过；912 文件/27,855,463 字节→12 文件/1,758,656 字节；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-014` | 零成功/不稳定单元不进入计划；受限单元只生成校准成功方向；3000 条仍为 2400/300/300 | `tests/test_dataset_build.py`; `tests/test_dataset_calibration.py`; `scripts/build_dataset.py --dry-run`; 定向真实烟测 | `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES/expert_maneuvers`; `dataset/calibration.py::build_calibration_cases` | 32 单元计划无 3 个排除单元和受限反方向；4 个保留弱组合真实轨迹双门禁 PASS；17 项定向与全仓 228 项通过 | ✅ |
+| `EXPTRAJ-DATA-015` | 未完成批次持久化失败游标，原命令续建不重放已排除 ID | `tests/test_dataset_build.py::TestBatchRetryState`; 现有 v4 第 294 批恢复探针 | `dataset/build.py::generate_with_retries`; `scripts/build_dataset.py::_load_retry_state_or_default/_record_retry_failure/_build_split_in_batches` | 两次进程轮次的失败 ID 集互斥；retry 身份错配拒绝；现有 1465 条检查点未改，第 294 批首个恢复任务为 sample index 124；全仓 232 项与 Spec 检查通过 | ✅ |
 | `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 原始 v4 证据 105 case 完整终态；准入后计划为 96 case（28 普通+4 S9），失败继续回归通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |
