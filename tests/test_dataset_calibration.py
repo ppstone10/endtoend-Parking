@@ -43,27 +43,29 @@ class TestCalibrationPlan(unittest.TestCase):
         cells = {(case.scene_name, case.task_type) for case in cases}
         regular = {cell for cell in cells if cell[0] != "S9_mine_complex"}
         heldout = {cell for cell in cells if cell[0] == "S9_mine_complex"}
-        self.assertEqual(len(cases), 99)
-        self.assertEqual(len(regular), 30)
+        self.assertEqual(len(cases), 102)
+        self.assertEqual(len(regular), 31)
         self.assertEqual(len(heldout), 3)
         self.assertNotIn(("S7_fuel_station", "T1"), cells)
         self.assertNotIn(("S9_mine_complex", "T3"), cells)
         self.assertNotIn(("S9_mine_complex", "T1"), cells)
-        self.assertNotIn(("S5_crusher", "T2"), cells)
+        self.assertIn(("S5_crusher", "T2"), cells)
         self.assertIn(("S8_weigh_station", "T2"), cells)
         self.assertIn(("S8_weigh_station", "T3"), cells)
         for case in cases:
             if case.scene_name == "S5_crusher" and case.task_type in {
                 "T1",
+                "T2",
                 "T5",
             }:
                 self.assertEqual(case.maneuver, "reverse")
             if case.scene_name == "S9_mine_complex" and case.task_type in {
+                "T2",
                 "T5",
             }:
-                self.assertEqual(case.maneuver, "forward")
-            if case.scene_name == "S3_maintenance" and case.task_type == "T3":
-                self.assertEqual(case.maneuver, "forward")
+                self.assertEqual(case.maneuver, "reverse")
+            if case.scene_name == "S3_maintenance":
+                self.assertEqual(case.maneuver, "reverse")
             if case.scene_name == "S8_weigh_station" and case.task_type in {
                 "T2",
                 "T3",

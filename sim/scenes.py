@@ -226,24 +226,38 @@ def s2_diagonal_lot(
 
 
 # ---------------------------------------------------------------------------
-# S3 维修保养区：三面墙 + 立柱
+# S3 维修保养区：三面墙 bay + 前方维修作业道
 # ---------------------------------------------------------------------------
+
+MAINT_GEOMETRY_PROFILE = "vehicle_relative_v1"
+MAINT_SIDE_CLEARANCE = 0.6
+
 
 @register_scene("S3_maintenance")
 def s3_maintenance(
     bay_count: int = 3,
     seed: int = 0,
+    vehicle_length: float = 6.0,
+    vehicle_width: float = 3.0,
+    collision_margin: float = 0.2,
 ) -> SceneBundle:
-    """维修保养区：车位三面墙体围合、立柱在车位角、净空紧（单侧 0.6m）。
+    """维修保养区：紧净空 bay（三面墙+入口立柱）+ 前方维修作业道。
 
-    bay 内净宽 4.2m（车 3m + 两侧余量 0.6m），由两侧隔墙形成。
+    真实矿区语义：维修车间前的硬化作业道，卡车沿作业道对齐 bay 轴线后
+    倒车入位（yaw -90° 车头朝外）。作业道深度按 3.5 倍车长保证
+    T3(15–30m) 远距接近可落地；bay 单侧净空 0.6m（需求 0.5~0.8m）。
     """
-    bay_w = 4.2
+    _validate_vehicle_scale(vehicle_length, vehicle_width, collision_margin)
+    clearance = MAINT_SIDE_CLEARANCE
+    bay_w = vehicle_width + 2 * clearance
     row_len = bay_count * bay_w
-    half = max(18.0, row_len / 2 + 6.0)
-    world = 2 * (half + 5.0)
     wall_t = 0.4
-    bay_depth = 9.0
+    bay_depth = vehicle_length + 2.0
+    goal_y = bay_depth - (vehicle_length / 2.0 + 1.0)
+    apron_depth = max(18.0, 3.5 * vehicle_length)
+    half_x = max(row_len / 2 + 8.0, 15.0)
+    half_y = apron_depth + 2.0
+    world = 2 * (max(half_x, half_y) + wall_t + 3.0)
 
     obstacles: list[Obstacle] = []
     spots: list[ParkingSpot] = []
@@ -253,24 +267,26 @@ def s3_maintenance(
         obstacles.append(RectangleObstacle(wx, wx + wall_t, 0.0, bay_depth, kind=KIND_WALL))
     # 后墙。
     obstacles.append(RectangleObstacle(-row_len / 2 - wall_t, row_len / 2 + wall_t, bay_depth, bay_depth + wall_t, kind=KIND_WALL))
-    # 车位中心：倒车入位，车位朝向 -y（车头朝外）。
+    # 车位：倒车入位，车位朝向 -y（车头朝外）。
     for i in range(bay_count):
         cx = -row_len / 2 + (i + 0.5) * bay_w
         spots.append(
             ParkingSpot(
-                id=f"M{i}", pose=GoalPose(cx, bay_depth - 3.5, -np.pi / 2),
-                size=(7.0, 4.2), tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+                id=f"M{i}", pose=GoalPose(cx, goal_y, -np.pi / 2),
+                size=(vehicle_length + 1.0, bay_w),
+                tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+                kind="maintenance_bay",
             )
         )
-    # 立柱：bay 入口两角（小圆障碍）。
+    # 立柱：bay 入口两角（小圆障碍，分隔墙线上）。
     for i in range(1, bay_count):
         px = -row_len / 2 + i * bay_w
         obstacles.append(CircleObstacle(x=px, y=-0.6, radius=0.3, kind=KIND_EQUIPMENT))
-    # 外围墙。
+    # 作业道外围墙（南墙远离 bay，保证远距起点有旋转空间）。
     obstacles += [
-        RectangleObstacle(-half - wall_t, half + wall_t, -12.0, -11.5, kind=KIND_WALL),
-        RectangleObstacle(-half - wall_t, -half, -11.5, bay_depth + wall_t, kind=KIND_WALL),
-        RectangleObstacle(half, half + wall_t, -11.5, bay_depth + wall_t, kind=KIND_WALL),
+        RectangleObstacle(-half_x - wall_t, half_x + wall_t, -apron_depth - wall_t, -apron_depth, kind=KIND_WALL),
+        RectangleObstacle(-half_x - wall_t, -half_x, -apron_depth, bay_depth + wall_t, kind=KIND_WALL),
+        RectangleObstacle(half_x, half_x + wall_t, -apron_depth, bay_depth + wall_t, kind=KIND_WALL),
     ]
     from sim.environment import ParkingEnvironment
 
@@ -279,10 +295,17 @@ def s3_maintenance(
         name="S3_maintenance",
         env=env,
         spots=spots,
-        spawn_zones=[(-row_len / 2 - 1, row_len / 2 + 1, -10.0, -2.0)],
-        difficulty_knobs={"bay_count": bay_count, "clearance": 0.6},
-        description="维修保养区：三面墙 + 立柱，单侧余量 0.6m 的紧净空倒车入位",
-        title_en="Maintenance bay: tight clearance reversing with pillars"
+        spawn_zones=[(-half_x + 4.0, half_x - 4.0, -apron_depth + 4.0, -3.0)],
+        difficulty_knobs={
+            "bay_count": bay_count,
+            "clearance": clearance,
+            "geometry_profile": MAINT_GEOMETRY_PROFILE,
+            "vehicle_length": vehicle_length,
+            "vehicle_width": vehicle_width,
+            "collision_margin": collision_margin,
+        },
+        description="维修保养区：紧净空倒车入位 + 前方维修作业道，入口立柱",
+        title_en="Maintenance bays: tight reversing off a service apron",
     )
 
 
@@ -463,10 +486,14 @@ def s6_loading_face(
             kind="loading_point",
         )
     ]
-    # 不规则矿堆（随机凸多边形，西南象限）。
+    # 不规则矿堆（随机凸多边形，放在装载区东西两侧空地，
+    # 避开南侧起点采样区与 L0 前进对位走廊，保证 T3 远距接近不被堵死）。
     for i in range(rock_count):
-        cx = rng.uniform(-14.0, -4.0)
-        cy = rng.uniform(-8.0, 0.0)
+        if rng.random() < 0.5:
+            cx = rng.uniform(-30.0, -18.0)
+        else:
+            cx = rng.uniform(16.0, 30.0)
+        cy = rng.uniform(-8.0, 6.0)
         r = rng.uniform(1.0, 2.2)
         n = 6
         angles = np.sort(rng.uniform(0.0, 2 * np.pi, n))
@@ -497,11 +524,14 @@ def s7_fuel_station(
     bay_count: int = 2,
     occupied_pattern: list[int] | None = None,
     seed: int = 0,
+    vehicle_length: float = 6.0,
+    vehicle_width: float = 3.0,
+    collision_margin: float = 0.2,
 ) -> SceneBundle:
     """加油/加水站：中央加油岛，两侧平行停靠位，后侧挡墙。
 
     平行泊位：车位长 8m（车 6m + 前后余量 1m）、岛宽 2.4m；
-    目标位姿平行于岛，与岛间距 0.3m 容差。
+    目标位姿平行于岛，与岛间距保持 0.3m 物理余量并计入碰撞裕量。
     """
     island_w = 2.4
     bay_len = 8.0
@@ -520,10 +550,10 @@ def s7_fuel_station(
         RectangleObstacle(half, half + wall_t, -6.5, 6.5, kind=KIND_WALL),
     ]
     spots: list[ParkingSpot] = []
-    # 北侧平行位（岛与挡墙之间，车头朝 +x）。
+    # 北侧平行位（岛与挡墙之间，车头朝 +x；靠岛侧计入碰撞裕量，保证实际净空 ≥0.3m）。
     for i in range(bay_count):
         cx = -row_len / 2 + pitch / 2 + i * pitch
-        cy = island_w / 2 + 0.3 + 3.0 / 2.0  # 车侧距岛 0.3m
+        cy = island_w / 2 + 0.3 + collision_margin + vehicle_width / 2.0
         spots.append(
             ParkingSpot(
                 id=f"F{i}", pose=GoalPose(cx, cy, 0.0),
@@ -534,7 +564,7 @@ def s7_fuel_station(
         )
     for s in spots:
         if s.occupied:
-            obstacles.append(s.occupant_obstacle(6.0, 3.0))
+            obstacles.append(s.occupant_obstacle(vehicle_length, vehicle_width))
     from sim.environment import ParkingEnvironment
 
     env = ParkingEnvironment(world_size=world, obstacles=obstacles)
@@ -543,7 +573,13 @@ def s7_fuel_station(
         env=env,
         spots=spots,
         spawn_zones=[(-half + 2, half - 2, -5.0, -2.0)],
-        difficulty_knobs={"bay_count": bay_count, "occupied": len(occupied_pattern or [])},
+        difficulty_knobs={
+            "bay_count": bay_count,
+            "occupied": len(occupied_pattern or []),
+            "vehicle_length": vehicle_length,
+            "vehicle_width": vehicle_width,
+            "collision_margin": collision_margin,
+        },
         description="加油/加水站：中央加油岛两侧平行停靠，后侧挡墙",
         title_en="Fuel station: parallel parking beside central island"
     )
@@ -690,7 +726,7 @@ def s9_mine_complex(
     ]
     spots.append(
         ParkingSpot(
-            id="CS0", pose=GoalPose(sx, sy0 + 5.0 - 0.5, np.pi / 2),
+            id="CS0", pose=GoalPose(sx, sy0 + 5.0 - 0.5, -np.pi / 2),
             size=(6.5, 4.0), tol_pos=0.2, tol_yaw=np.deg2rad(5.0),
             kind="crusher_slot",
         )

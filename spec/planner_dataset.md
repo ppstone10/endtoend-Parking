@@ -204,6 +204,16 @@
 - 迁移与回退：v5 准入改变任务计划指纹，只能写入新的 `tracked_pivot_v5_3000`；回退必须同时恢复 v4 配置、v4 准入和 v4 数据目录，禁止混合检查点或样本。
 - 安全与隐私：本准入仅声明当前仿真专家生成稳定性，不声明真实车辆可达性；不涉及个人数据、外部通信或实车控制授权。
 
+### `EXPTRAJ-DATA-017`：紧 bay 轴线对齐起点采样与可行驶几何准入
+
+- 前置与证据：S3/T3 在 v5 正式构建反复耗尽重试；诊断显示远距离（15–30m）起点若与目标 bay 横向偏移 ≥4m 或带随机大转角，Hybrid A* 的 Reeds-Shepp/履带解析候选会在紧 bay 口全部碰撞、离散搜索难以收敛（25s/10 万节点仍失败）；起点与 bay 轴线平行、偏移 ≤1.5m 时倒车 8/8 秒级成功。S6/T3 根因是西南岩石挡住接近走廊（去岩石后 12/12 秒过）；S7/T2 根因是平行靠岛位未计入 `collision_margin`（实际净空仅 0.1m）；S9/T2 根因是破碎槽朝向与 S5/规格不一致（前进入槽）。
+- 行为：`TaskSampler._sample_axial_start` 对紧 bay 车位（`maintenance_bay`/`crusher_slot`/`fuel_bay`）的 T2/T3/T4/T5 起点沿 bay 轴线对齐采样：yaw 恒等于车位目标 yaw，按机动方向从轴线鼻前侧（倒车）或鼻后侧（前进）`d ∈ 距离档` 米外接近，横向偏移受限；机动方向与 bay 几何不一致时回退常规采样。S3 作业道按 3.5 倍车长加深、spawn 与外墙保持不小于原地旋转扫掠半径；S7 靠岛净空计为 `0.3m + collision_margin`；S9 破碎槽统一倒车入槽。
+- 准入结果：S3 全部单元恢复倒车监督（含 T3）；S5/T2 从排除恢复为仅倒车；S9/T2、T5 仅倒车；S8/T2/T3/T5 仅前进。3000 条 dry-run 保持 `2400/300/300`、S9 test 隔离（T2/T4/T5 各 100）。
+- 可观察结果：S3/T2–T5、S5/T2、S6/T3、S7/T2、S9/T2 在 8s 预算下成功率 ≥5/6（多数 6/6、毫秒级）；100 条端到端构建烟测仅 3 次失败重采。
+- 异常与恢复：对齐采样找不到自由起点时回退常规采样，失败仍按原单元重采；准入方向必须与 bay 几何一致，否则该单元退回旧失败模式。
+- 迁移与回退：几何与采样变更改变任务计划指纹，正式数据只写新目录（如 `tracked_pivot_v6_3000`）；旧 v5 检查点、校准证据与归档保持不变。回退需成套恢复旧代码、旧准入与旧目录。
+- 安全与隐私：本约束仅声明仿真专家生成稳定性；不涉及个人数据、外部通信或实车控制授权。
+
 ### `EXPTRAJ-RS-001`：Reeds–Shepp 解析扩展
 
 - 前置：起终位姿自由，最小转弯半径和采样步长为正数。
@@ -262,6 +272,7 @@
 | `EXPTRAJ-DATA-014` | 零成功/不稳定单元不进入计划；受限单元只生成校准成功方向；3000 条仍为 2400/300/300 | `tests/test_dataset_build.py`; `tests/test_dataset_calibration.py`; `scripts/build_dataset.py --dry-run`; 定向真实烟测 | `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES/expert_maneuvers`; `dataset/calibration.py::build_calibration_cases` | 32 单元计划无 3 个排除单元和受限反方向；4 个保留弱组合真实轨迹双门禁 PASS；17 项定向与全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-015` | 未完成批次持久化失败游标，原命令续建不重放已排除 ID | `tests/test_dataset_build.py::TestBatchRetryState`; 现有 v4 第 294 批恢复探针 | `dataset/build.py::generate_with_retries`; `scripts/build_dataset.py::_load_retry_state_or_default/_record_retry_failure/_build_split_in_batches` | 两次进程轮次的失败 ID 集互斥；retry 身份错配拒绝；现有 1465 条检查点未改，第 294 批首个恢复任务为 sample index 124；全仓 232 项与 Spec 检查通过 | ✅ |
 | `EXPTRAJ-DATA-016` | v5 报告驱动排除/方向限制，3000 条保持 split 且不含不稳定单元 | `tests/test_dataset_build.py`; v5 `report.json/cells.csv`; `scripts/build_dataset.py --dry-run` | `dataset/build.py::expert_maneuvers` | 117/117 报告完整；30 普通+3 S9 单元；2400/300/300；4 个关键方向真实双门禁通过；全仓 237 项通过 | ✅ |
+| `EXPTRAJ-DATA-017` | 紧 bay 对齐起点采样、S3/S7/S9 可行驶几何、准入方向与几何一致 | `tests/test_tasks.py::TestTaskPlannerIntegration.test_axial_bay_long_distance_start_is_aligned_and_plannable`; `tests/test_scenes.py::TestMineScaleContract.test_s3_maintenance_bays_are_vehicle_relative/test_s7_fuel_bay_keeps_margin_aware_island_clearance`; `scripts/build_dataset.py --dry-run` | `sim/tasks.py::TaskSampler._sample_axial_start`; `sim/scenes.py::s3_maintenance/s7_fuel_station/s9_mine_complex`; `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES` | S3/T3 由反复超时变为 6/6（0.016s）；S5/T2、S6/T3、S7/T2、S9/T2 八秒扫描 ≥5/6；100 条端到端烟测 3 次重采；全仓 239 项通过 | ✅ |
 | `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | v4 准入计划 96 case 保持；v5 全能力模式覆盖 39 单元/117 case 并轮换双向；全仓 237 项通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |

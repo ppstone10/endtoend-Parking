@@ -1,5 +1,6 @@
 """场景库测试：S1–S9 构造、自检与关键语义。"""
 
+import math
 import unittest
 
 import numpy as np
@@ -164,7 +165,44 @@ class TestMineScaleContract(unittest.TestCase):
         )
         self.assertGreater(len(trajectory.points), 2)
 
-    def test_long_cross_row_s4_t3_uses_bounded_analytic_connection(self):
+    def test_s3_maintenance_bays_are_vehicle_relative(self):
+        bundle = self._dump_scene("S3_maintenance")
+        self.assertEqual(
+            bundle.difficulty_knobs["geometry_profile"], "vehicle_relative_v1"
+        )
+        self.assertEqual(bundle.difficulty_knobs["clearance"], 0.6)
+        self.assertGreaterEqual(len(bundle.spots), 3)
+        for spot in bundle.spots:
+            self.assertEqual(spot.kind, "maintenance_bay")
+            self.assertAlmostEqual(spot.pose.yaw, -np.pi / 2)
+            # bay 宽度 = 车宽 + 2×单侧净空。
+            self.assertAlmostEqual(
+                spot.size[1], MINING_DRILL_RIG.width + 2 * 0.6
+            )
+        # 作业道深度需支撑 T3(15–30m) 起点：spawn 区下缘与 bay 的距离上限 ≥ 20m。
+        spawn = bundle.spawn_zones[0]
+        farthest = max(
+            math.hypot(s.pose.x - x, s.pose.y - y)
+            for s in bundle.spots
+            for x in (spawn[0], spawn[1])
+            for y in (spawn[2], spawn[3])
+        )
+        self.assertGreaterEqual(farthest, 20.0)
+
+    def test_s7_fuel_bay_keeps_margin_aware_island_clearance(self):
+        bundle = build_scene(
+            "S7_fuel_station",
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        island_top = 2.4 / 2.0
+        for spot in bundle.spots:
+            # 车体近岛侧边缘与岛面保持 ≥0.3m 物理净空（计入碰撞裕量）。
+            near_edge = spot.pose.y - (
+                MINING_DRILL_RIG.width / 2.0 + MINING_DRILL_RIG.collision_margin
+            )
+            self.assertGreaterEqual(near_edge - island_top, 0.3 - 1e-9)
         sampler = TaskSampler(
             seed=20260824,
             vehicle_length=MINING_DRILL_RIG.length,

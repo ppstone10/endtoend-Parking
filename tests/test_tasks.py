@@ -13,7 +13,7 @@ from sim.tasks import (
     UnsupportedTaskError,
 )
 from planner.hybrid_astar import HybridAStarPlanner
-from sim import ParkingEnvironment, RectangleObstacle
+from sim import MINING_DRILL_RIG, ParkingEnvironment, RectangleObstacle
 
 
 class TestTaskModel(unittest.TestCase):
@@ -208,6 +208,46 @@ class TestTaskPlannerIntegration(unittest.TestCase):
                 )
                 trajectory = planner.plan(task.start, target.as_goal_pose())
                 self.assertGreater(trajectory.horizon, 1)
+
+    def test_axial_bay_long_distance_start_is_aligned_and_plannable(self):
+        """紧 bay 长距起点必须与 bay 轴线对齐（yaw==gyaw）且可规划。"""
+        sampler = TaskSampler(
+            seed=20260824,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        cases = [
+            ("S3_maintenance", TaskType.T3_LONG, Maneuver.REVERSE, (15.0, 30.0)),
+            ("S5_crusher", TaskType.T2_MEDIUM, Maneuver.REVERSE, (8.0, 15.0)),
+            ("S7_fuel_station", TaskType.T2_MEDIUM, Maneuver.FORWARD, (8.0, 15.0)),
+        ]
+        for scene_name, task_type, maneuver, bounds in cases:
+            for sample_index in range(3):
+                with self.subTest(
+                    scene=scene_name, task_type=task_type,
+                    maneuver=maneuver, sample_index=sample_index,
+                ):
+                    task = sampler.sample(
+                        scene_name, task_type, sample_index=sample_index,
+                        maneuver=maneuver, adjacent_occupancy=0,
+                        noise_level=NoiseLevel.CLEAN,
+                    )
+                    goal = task.goal.as_goal_pose()
+                    dist = math.hypot(goal.x - task.start.x, goal.y - task.start.y)
+                    self.assertGreaterEqual(dist, bounds[0])
+                    self.assertLessEqual(dist, bounds[1])
+                    self.assertAlmostEqual(
+                        math.sin(task.start.yaw - goal.yaw), 0.0, places=6
+                    )
+                    planner = HybridAStarPlanner(
+                        task.scene.env, **MINING_DRILL_RIG.planner_kwargs()
+                    )
+                    pdir = 1 if maneuver == Maneuver.FORWARD else -1
+                    trajectory = planner.plan(
+                        task.start, goal, preferred_direction=pdir
+                    )
+                    self.assertGreater(trajectory.horizon, 1)
 
 
 if __name__ == "__main__":

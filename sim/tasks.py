@@ -83,7 +83,11 @@ _OCCUPANCY_SCENES = {
     "S9_mine_complex",
 }
 
-_VEHICLE_SCALED_SCENES = {"S4_dump_area", "S9_mine_complex"}
+_VEHICLE_SCALED_SCENES = {"S3_maintenance", "S4_dump_area", "S7_fuel_station", "S9_mine_complex"}
+
+# 必须沿车位轴线对齐进入的紧 bay 车位类型：远距起点若随机大转角，
+# 紧 bay 口会把解析候选全部碰撞拒绝，离散搜索难以收敛。
+_AXIAL_BAY_KINDS = {"crusher_slot", "maintenance_bay", "fuel_bay"}
 
 
 @dataclass(frozen=True)
@@ -623,6 +627,19 @@ class TaskSampler:
         task_type: TaskType,
         rng: np.random.Generator,
     ) -> VehicleState:
+        if (
+            task_type
+            in (
+                TaskType.T2_MEDIUM,
+                TaskType.T3_LONG,
+                TaskType.T4_MULTI_SPOT,
+                TaskType.T5_DYNAMIC,
+            )
+            and reference_spot.kind in _AXIAL_BAY_KINDS
+        ):
+            axial = self._sample_axial_start(scene, reference_spot, tier, maneuver, rng)
+            if axial is not None:
+                return axial
         lower, upper = tier.bounds
         for _ in range(self.max_attempts):
             zone = scene.spawn_zones[int(rng.integers(0, len(scene.spawn_zones)))]
@@ -664,6 +681,50 @@ class TaskSampler:
         raise UnsupportedTaskError(
             f"{scene.name}/{task_type.value}: {self.max_attempts} 次内未找到满足距离与 footprint 的起点"
         )
+
+    def _sample_axial_start(
+        self,
+        scene: SceneBundle,
+        spot: ParkingSpot,
+        tier: DistanceTier,
+        maneuver: Maneuver,
+        rng: np.random.Generator,
+    ) -> VehicleState | None:
+        """沿紧 bay 轴线对齐的起点：车辆与 bay 轴线平行（yaw=gyaw），
+        按机动方向从轴线对应一侧 d 米外接近。
+
+        真实矿区中卡车在维修 bay/破碎槽/加油位前先对齐再直线入位；远距离下
+        随机大转角会导致解析候选在紧 bay 口全部碰撞、离散搜索难以收敛。
+        倒车入位从鼻前侧（G+nose*d）接近、前进入位从鼻后侧（G-nose*d）接近；
+        机动方向与 bay 几何不一致时返回 None 回退常规采样。
+        """
+        gx, gy, gyaw = spot.pose.x, spot.pose.y, spot.pose.yaw
+        nx, ny = math.cos(gyaw), math.sin(gyaw)
+        perp_x, perp_y = -ny, nx
+        probe = 4.0
+        plus_free = self.pose_is_free(scene.env, gx + nx * probe, gy + ny * probe, gyaw)
+        minus_free = self.pose_is_free(scene.env, gx - nx * probe, gy - ny * probe, gyaw)
+        if maneuver == Maneuver.FORWARD:
+            if not minus_free:
+                return None
+            side = -1.0
+        else:
+            if not plus_free:
+                return None
+            side = 1.0
+        band = max(
+            0.5,
+            min(2.0, spot.size[1] / 2.0 - self.vehicle_width / 2.0 - 0.5),
+        )
+        lower, upper = tier.bounds
+        for _ in range(self.max_attempts):
+            distance = float(rng.uniform(lower, upper))
+            lateral = float(rng.uniform(-band, band))
+            x = gx + side * nx * distance + lateral * perp_x
+            y = gy + side * ny * distance + lateral * perp_y
+            if self.pose_is_free(scene.env, x, y, gyaw):
+                return VehicleState(x=x, y=y, yaw=gyaw)
+        return None
 
     @staticmethod
     def _candidate_spots(

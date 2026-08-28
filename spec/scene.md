@@ -64,6 +64,15 @@
 - 迁移与回退：现有 `tracked_pivot_v4_3000` 保持原样；新几何与长距解析范围归入 `tracked_pivot_v5`，必须先完成全能力校准并写入新输出目录。回退只能恢复旧代码与旧目录成对使用，不能把两种几何的样本合并为同一正式数据集。
 - 安全与隐私：本约束只用于仿真专家数据，不替代现场坡度、挡墙强度、制动距离和设备制造商要求；不涉及个人数据或外部通信。
 
+### `SCENE-SCALE-002`：维修/加油区车辆相对可行驶几何
+
+- 前置：车辆物理尺寸、非负规划碰撞裕量已知；紧 bay（维修 bay/破碎槽/加油位）任务语义为沿轴线对齐后直线入位。
+- 行为：S3 维修区按车辆相对尺度构建：作业道深度不小于 3.5 倍车长（支撑 T3 15–30m 远距起点）、bay 单侧净空 0.6m、入口立柱与三面墙围合保持不变，spawn 区与外墙保持不小于一个原地旋转扫掠半径的距离；S7 加油位靠岛侧物理净空计为 `0.3m 停车余量 + collision_margin`；S9 破碎槽与 S5 一致为倒车入槽（车头朝向入口）。
+- 结果：S3/T2–T5、S5/T2、S7/T2、S9/T2 在 8s 预算内可稳定生成专家轨迹；起点采样层沿 bay 轴线对齐（见 `EXPTRAJ-DATA-017`）。
+- 异常与恢复：作业道过浅或 spawn 贴墙导致起点被"困死"（原地旋转扫掠半径大于离墙距）时视为不可采样单元；车辆尺度或几何版本变化会改变任务计划身份，旧正式检查点只保留归档，不得续入新几何数据。
+- 迁移与回退：S3/S7 几何版本化后只写入新数据目录；回退必须恢复旧代码与旧目录成对使用。
+- 安全与隐私：本约束只用于仿真专家数据，不涉及个人数据、外部通信或实车控制。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -73,6 +82,7 @@
 | `SCENE-SEM-001` | 语义断言 | `tests/test_scenes.py::TestSceneSemantics` | 场景构造器 | unittest 通过 | ✅ |
 | `SCENE-VIZ-001` | V1 图渲染 | `scripts/render_scenes.py` | `viz/world_render.py` | 20 文件、校验 10/10 OK | ✅ |
 | `SCENE-SCALE-001` | 车辆相对道路/卸载位尺度、车尾朝墙与 margin 后操作净空 | `tests/test_scenes.py`; S4/T3 超时样本回归 | `sim/scenes.py`; `sim/tasks.py::TaskSampler` | 已知失败样本及 294–303 连续 10 样本均成功（0.007–0.021s）；全仓 237 项通过 | ✅ |
+| `SCENE-SCALE-002` | S3 作业道深度/紧 bay 净空、S7 靠岛净空计入 margin、S9 破碎槽倒车入槽 | `tests/test_scenes.py::TestMineScaleContract.test_s3_maintenance_bays_are_vehicle_relative/test_s7_fuel_bay_keeps_margin_aware_island_clearance` | `sim/scenes.py::s3_maintenance/s7_fuel_station/s9_mine_complex` | S3/S5/T2、S6/T3、S7/T2、S9/T2 八秒扫描 ≥5/6 且毫秒级；全仓 239 项通过 | ✅ |
 
 ## 待人工确认
 

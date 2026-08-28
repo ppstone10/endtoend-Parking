@@ -91,11 +91,9 @@ class TestTaskPlan(unittest.TestCase):
         self.assertEqual(
             expert_maneuvers("S9_mine_complex", TaskType.T1_NEAR), ()
         )
-        self.assertEqual(
-            expert_maneuvers("S5_crusher", TaskType.T2_MEDIUM), ()
-        )
         for task_type in (
             TaskType.T1_NEAR,
+            TaskType.T2_MEDIUM,
             TaskType.T5_DYNAMIC,
         ):
             with self.subTest(scene="S5_crusher", task_type=task_type):
@@ -105,7 +103,11 @@ class TestTaskPlan(unittest.TestCase):
                 )
         self.assertEqual(
             expert_maneuvers("S9_mine_complex", TaskType.T5_DYNAMIC),
-            (Maneuver.FORWARD,),
+            (Maneuver.REVERSE,),
+        )
+        self.assertEqual(
+            expert_maneuvers("S9_mine_complex", TaskType.T2_MEDIUM),
+            (Maneuver.REVERSE,),
         )
         for task_type in (
             TaskType.T2_MEDIUM,
@@ -121,11 +123,7 @@ class TestTaskPlan(unittest.TestCase):
             with self.subTest(scene="S3_maintenance", task_type=task_type):
                 self.assertEqual(
                     expert_maneuvers("S3_maintenance", task_type),
-                    (
-                        (Maneuver.FORWARD,)
-                        if task_type == TaskType.T3_LONG
-                        else (Maneuver.REVERSE,)
-                    ),
+                    (Maneuver.REVERSE,),
                 )
         plan = build_task_plan(total_count=3000, seed=123)
         s8_t5 = [
@@ -143,7 +141,6 @@ class TestTaskPlan(unittest.TestCase):
             ("S7_fuel_station", TaskType.T1_NEAR),
             ("S9_mine_complex", TaskType.T3_LONG),
             ("S9_mine_complex", TaskType.T1_NEAR),
-            ("S5_crusher", TaskType.T2_MEDIUM),
         }
         self.assertFalse(
             any((task.scene_name, task.task_type) in excluded for task in all_tasks)
