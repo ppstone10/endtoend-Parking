@@ -14,6 +14,7 @@ from scripts.build_dataset import (
     _load_retry_state_or_default,
     _record_retry_failure,
     build_components,
+    plan_fingerprint,
 )
 from sim import MINING_DRILL_RIG
 from sim.tasks import Maneuver, TaskSampler, TaskType
@@ -36,6 +37,27 @@ class TestTaskPlan(unittest.TestCase):
         left = build_task_plan(total_count=100, seed=321)
         right = build_task_plan(total_count=100, seed=321)
         self.assertEqual(left.task_ids(), right.task_ids())
+
+    def test_dump_geometry_change_invalidates_plan_fingerprint(self):
+        baseline = build_task_plan(
+            total_count=100,
+            seed=321,
+            vehicle_length=6.0,
+            vehicle_width=3.0,
+            collision_margin=0.2,
+        )
+        changed_margin = build_task_plan(
+            total_count=100,
+            seed=321,
+            vehicle_length=6.0,
+            vehicle_width=3.0,
+            collision_margin=0.1,
+        )
+        self.assertEqual(baseline.task_ids(), changed_margin.task_ids())
+        self.assertNotEqual(
+            plan_fingerprint(baseline),
+            plan_fingerprint(changed_margin),
+        )
 
     def test_invalid_ratios_are_rejected_explicitly(self):
         with self.assertRaises(ValueError):
@@ -131,7 +153,7 @@ class TestTaskPlan(unittest.TestCase):
         self.assertTrue(sample.task_meta["dataset"]["feasibility_audit"]["feasible"])
         self.assertEqual(
             sample.task_meta["dataset"]["vehicle_model"]["model_version"],
-            "tracked_pivot_v4",
+            "tracked_pivot_v5",
         )
 
 

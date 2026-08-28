@@ -6,8 +6,8 @@ model:
     dt: 0.1
     hidden_dim: 128
 data:
-  train: ../../data/task_dataset/tracked_pivot_v4_3000/train.npz
-  val: ../../data/task_dataset/tracked_pivot_v4_3000/val.npz
+  train: ../../data/task_dataset/tracked_pivot_v5_3000/train.npz
+  val: ../../data/task_dataset/tracked_pivot_v5_3000/val.npz
   batch_size: 8
 training:
   epochs: 30

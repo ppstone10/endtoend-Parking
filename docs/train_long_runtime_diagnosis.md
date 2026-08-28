@@ -330,3 +330,9 @@ foreach ($split in 'train', 'val', 'test') {
 - 保留既有 `S3_maintenance` 全任务倒车限制和 `S8_weigh_station/T5` 前进限制。
 
 `S5/T2` 在校准中仅 1/3 成功，唯一成功耗时 7.93 秒；同 task 的定向复现已越过 8 秒规划上限，因此不用更多重试将其伪装成稳定能力。准入后的 3000 条计划仍为 `2400/300/300`，覆盖 28 个普通单元和 4 个 S9 单元。准入变更会改变计划身份，不得复用变更前的正式构建检查点。
+
+### 9.10 vehicle_relative_v1 卸载区几何迁移
+
+2026-08-28 的 S4/T3 长尾复现表明，主要故障不是 6×3m 车体或 0.5m 搜索栅格，而是旧卸载目标按裸车体只留 0.3m，未额外容纳 0.2m `collision_margin`。新几何保持车辆和规划预算不变，将 S4/S9 的车尾物理净空改为 `collision_margin + 0.3m`，卸载位中心距改为 3 倍车宽，并统一为 `-90°` 车头航向、车尾朝挡墙。主路仍满足至少 3.5 倍车宽。
+
+旧 `runs/dataset-calibration/tracked_pivot_v4*` 和 `data/task_dataset/tracked_pivot_v4_3000` 只作旧几何证据保留。新规划版本为 `tracked_pivot_v5`：除场景修正外，将解析接管范围从 12m 扩至 T3 上限 30m，避免 28–30m 开放场地退回昂贵离散搜索。先以 `--probe-full-capability` 写入 `runs/dataset-calibration/tracked_pivot_v5_full`，由 Agent 根据完整报告更新准入后，再生成 `data/task_dataset/tracked_pivot_v5_3000`。场景 `geometry_profile` 与 v5 规划参数都进入计划身份，脚本会拒绝把新任务续入旧检查点。

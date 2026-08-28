@@ -45,7 +45,7 @@
 
 ### `EXPTRAJ-TRACK-001`：可配置履带钻机模型
 
-- 前置：配置包含有限正数的长、宽、速度/角速度上限、规划分辨率、单次规划墙钟上限、至少为 1 的反方向代价系数和非负安全余量；规划速度/角速度不超过底盘执行上限。
+- 前置：配置包含有限正数的长、宽、速度/角速度上限、规划分辨率、单次规划墙钟上限、至少为 1 的反方向代价系数、非负安全余量和可选的非负解析接管范围；规划速度/角速度不超过底盘执行上限。
 - 行为：默认从 `configs/vehicles/tracked_drill_rig.json` 加载居中 6×3 m 理论车型；同一配置向 Hybrid A*、差分运动模型、MPC、碰撞和 inspection 提供参数，并输出稳定模型元数据。影响轨迹标签的搜索限制和方向代价变化必须更新模型版本。
 - 结果：只修改配置即可改变外廓、控制上限与 Hybrid A* 搜索参数，无需修改算法源码；默认配置明确标识为理论模型而非实车标定。
 - 异常与恢复：缺字段、未知字段、非法数值或规划上限高于执行上限时拒绝加载；可显式传入其他配置文件回退或适配实车。
@@ -60,7 +60,7 @@
 ### `EXPTRAJ-PLAN-001`：专家轨迹生成
 
 - 前置：起始 `VehicleState` 与目标 `GoalPose` 均无碰撞。
-- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径；默认或前进请求下，倒车/反方向平移相对前进/请求方向按 `2:1` 时间代价计；明确的倒车监督任务仍以倒车为请求方向，从而保留所需能力样本，但不鼓励额外换向。原地旋转相对同持续时间的直行或小范围弧线转向同样按 `2:1` 计，正常平移弧线不附加旋转惩罚。
+- 行为：`HybridAStarPlanner.plan` 在状态离散空间搜索履带低速运动学可行路径；默认或前进请求下，倒车/反方向平移相对前进/请求方向按 `2:1` 时间代价计；明确的倒车监督任务仍以倒车为请求方向，从而保留所需能力样本，但不鼓励额外换向。原地旋转相对同持续时间的直行或小范围弧线转向同样按 `2:1` 计，正常平移弧线不附加旋转惩罚。`tracked_pivot_v5` 在不超过 T3 上限 30m 的目标距离内先尝试加密碰撞检查的解析连接，失败后仍回退离散 Hybrid A*。
 - 结果：返回 `Trajectory`，终点与目标位姿偏差 ≤ 0.6m；轨迹各点均位于自由空间。
 - 异常与恢复：起始/目标碰撞抛 `ValueError`；搜索发散、节点数超限或超过配置的单次规划墙钟上限时抛 `RuntimeError`，由调用方在原任务单元重采。
 
@@ -121,7 +121,7 @@
 
 - 前置：每单元样本数为正，车辆配置合法，任务几何能力与专家可生成能力可读取。
 - 行为：校准计划直接枚举全部“几何支持且专家可生成”的场景×任务类型单元，不经过 train/val/test 比例或 `val_count`；每单元按稳定 seed 生成相同数量的 case，并循环可表达的机动方向、噪声和相邻占用难度。
-- 结果：当前 `tracked_pivot_v4` 专家准入下，计划覆盖 28 个普通单元和 4 个 S9 单元；每个 case 都产生成功、失败或预算超时的终态记录。
+- 结果：默认按当前专家准入构造校准计划；显式全能力探测时忽略历史准入结论，覆盖全部 39 个几何支持单元并轮换前进/倒车，用于新车辆/场景/规划版本重新决策准入。每个 case 都产生成功、失败或预算超时的终态记录。
 - 异常：单个 case 失败不得终止其他单元校准；任务采样本身失败也必须成为可汇总记录。
 
 ### `EXPTRAJ-CAL-002`：硬预算与中断恢复
@@ -252,7 +252,7 @@
 | `EXPTRAJ-DATA-013` | 真实代表样本归档含来源、哈希、版本、统计和 PNG；验证成功后仅删除边界内冗余旧数据 | `tests/test_archive_visual_references.py`; 归档 manifest；`DatasetGenerator.load`; 删除前后清单；人工 PNG 检查 | `scripts/archive_visual_references.py::create_visual_reference_archive`; `data/task_dataset/visual_reference_archive_v3` | 7 条 schema v2 真实样本覆盖 T1–T5/前进/倒车，7 张 PNG 和全部 SHA-256 复核通过；912 文件/27,855,463 字节→12 文件/1,758,656 字节；全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-014` | 零成功/不稳定单元不进入计划；受限单元只生成校准成功方向；3000 条仍为 2400/300/300 | `tests/test_dataset_build.py`; `tests/test_dataset_calibration.py`; `scripts/build_dataset.py --dry-run`; 定向真实烟测 | `dataset/build.py::_EXPERT_UNREACHABLE_CELLS/_EXPERT_MANEUVER_OVERRIDES/expert_maneuvers`; `dataset/calibration.py::build_calibration_cases` | 32 单元计划无 3 个排除单元和受限反方向；4 个保留弱组合真实轨迹双门禁 PASS；17 项定向与全仓 228 项通过 | ✅ |
 | `EXPTRAJ-DATA-015` | 未完成批次持久化失败游标，原命令续建不重放已排除 ID | `tests/test_dataset_build.py::TestBatchRetryState`; 现有 v4 第 294 批恢复探针 | `dataset/build.py::generate_with_retries`; `scripts/build_dataset.py::_load_retry_state_or_default/_record_retry_failure/_build_split_in_batches` | 两次进程轮次的失败 ID 集互斥；retry 身份错配拒绝；现有 1465 条检查点未改，第 294 批首个恢复任务为 sample index 124；全仓 232 项与 Spec 检查通过 | ✅ |
-| `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | 原始 v4 证据 105 case 完整终态；准入后计划为 96 case（28 普通+4 S9），失败继续回归通过 | ✅ |
+| `EXPTRAJ-CAL-001` | 全部专家能力单元等额校准且失败不中断 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::build_calibration_cases/run_calibration` | v4 准入计划 96 case 保持；v5 全能力模式覆盖 39 单元/117 case 并轮换双向；全仓 237 项通过 | ✅ |
 | `EXPTRAJ-CAL-002` | case 硬预算、原子状态、身份校验与中断续跑 | `tests/test_dataset_calibration.py`; `scripts/calibrate_dataset.py` | `dataset/calibration.py::run_case_with_budget/run_calibration` | 中断后跳过已完成项、身份拒绝、0.01s 硬超时及真实 S1 worker 成功路径通过 | ✅ |
 | `EXPTRAJ-CAL-003` | case 与单元级 JSON/CSV 能力报告 | `tests/test_dataset_calibration.py` | `dataset/calibration.py::_aggregate_report/_write_csv_atomic` | partial/completed、单元完成率/成功率与 CSV 回归通过 | ✅ |
 | `EXPTRAJ-MARGIN-001` | 膨胀裕度语义与净空保持 | `tests/test_planner.py`（margin 两项测试） | `HybridAStarPlanner._pose_free`/`_splice_valid` | unittest 通过；200 回合地基基线碰撞率 11%→1.5% | ✅ |

@@ -22,6 +22,11 @@ def main() -> int:
     parser.add_argument("--task-budget-s", type=float, default=30.0)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--vehicle-config", type=Path, default=None)
+    parser.add_argument(
+        "--probe-full-capability",
+        action="store_true",
+        help="忽略现有专家准入限制，重新探测全部几何支持单元及双向机动",
+    )
     args = parser.parse_args()
     vehicle_config = (
         MINING_DRILL_RIG
@@ -36,6 +41,7 @@ def main() -> int:
                 seed=args.seed,
                 max_retries=args.max_retries,
                 task_budget_s=args.task_budget_s,
+                probe_full_capability=args.probe_full_capability,
             ),
             vehicle_config,
         )

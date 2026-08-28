@@ -54,8 +54,9 @@ class TestVehicleConfig(unittest.TestCase):
         self.assertEqual(
             planner_kwargs["max_planning_time_s"], cfg.max_planning_time_s
         )
+        self.assertEqual(planner_kwargs["analytic_expansion_distance"], 30.0)
         self.assertTrue(planner_kwargs["enable_pivot"])
-        self.assertEqual(cfg.model_version, "tracked_pivot_v4")
+        self.assertEqual(cfg.model_version, "tracked_pivot_v5")
         self.assertEqual(cfg.mpc_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.vehicle_model_kwargs(), {"max_v": 2.0, "max_omega": 1.0})
         self.assertEqual(cfg.collision_kwargs(), {"vehicle_length": 6.0, "vehicle_width": 3.0})
@@ -88,6 +89,15 @@ class TestVehicleConfig(unittest.TestCase):
                 1.0,
                 1.0,
                 direction_mismatch_penalty=0.9,
+            )
+        with self.assertRaises(ValueError):
+            VehicleConfig(
+                "invalid_analytic_range",
+                6.0,
+                3.0,
+                1.0,
+                1.0,
+                analytic_expansion_distance=-1.0,
             )
 
     def test_frozen(self):

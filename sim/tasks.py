@@ -83,6 +83,8 @@ _OCCUPANCY_SCENES = {
     "S9_mine_complex",
 }
 
+_VEHICLE_SCALED_SCENES = {"S4_dump_area", "S9_mine_complex"}
+
 
 @dataclass(frozen=True)
 class TaskGoal:
@@ -274,6 +276,16 @@ class TaskSampler:
         self.collision_margin = float(collision_margin)
         self.max_attempts = int(max_attempts)
 
+    def _build_scene(self, scene_name: str, **kwargs) -> SceneBundle:
+        """给依赖车体比例的场景注入与规划器一致的几何参数。"""
+        if scene_name in _VEHICLE_SCALED_SCENES:
+            kwargs.update(
+                vehicle_length=self.vehicle_length,
+                vehicle_width=self.vehicle_width,
+                collision_margin=self.collision_margin,
+            )
+        return build_scene(scene_name, **kwargs)
+
     @staticmethod
     def supports_adjacent_occupancy(scene_name: str) -> bool:
         """返回场景构造器是否支持相邻占用难度轴。"""
@@ -290,7 +302,7 @@ class TaskSampler:
             raise ValueError(f"未知场景 {scene_name}")
         if scene_name not in _OCCUPANCY_SCENES:
             return (0,)
-        scene = build_scene(scene_name, seed=0)
+        scene = self._build_scene(scene_name, seed=0)
         eligible = self._eligible_spot_indices(scene, _TASK_DISTANCE[kind])
         levels = [0]
         for count in (1, 2):
@@ -316,7 +328,7 @@ class TaskSampler:
         kinds = self._normalize_task_types(task_types)
         cells: list[TaskCapability] = []
         for scene_name in scenes:
-            bundle = build_scene(scene_name, seed=0)
+            bundle = self._build_scene(scene_name, seed=0)
             for task_type in kinds:
                 reason = self._unsupported_reason(bundle, task_type)
                 cells.append(TaskCapability(scene_name, task_type, not reason, reason))
@@ -373,7 +385,7 @@ class TaskSampler:
         selected_noise = NoiseLevel(noise_level)
         task_seed, scene_seed, rng = self._random_stream(scene_name, kind, sample_index)
 
-        scene = build_scene(scene_name, seed=scene_seed)
+        scene = self._build_scene(scene_name, seed=scene_seed)
         reason = self._unsupported_reason(scene, kind)
         if reason:
             raise UnsupportedTaskError(f"{scene_name}/{kind.value}: {reason}")
@@ -569,7 +581,7 @@ class TaskSampler:
             neighbors = self._side_neighbors(scene, index, occupiable, count)
             if len(neighbors) != count:
                 continue
-            rebuilt = build_scene(
+            rebuilt = self._build_scene(
                 scene_name, seed=scene_seed, occupied_pattern=neighbors
             )
             goal = rebuilt.spots[index].pose

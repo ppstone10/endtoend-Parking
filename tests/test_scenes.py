@@ -4,6 +4,9 @@ import unittest
 
 import numpy as np
 
+from interfaces import VehicleState
+from planner import HybridAStarPlanner
+from sim import Maneuver, MINING_DRILL_RIG, NoiseLevel, TaskSampler, TaskType
 from sim.scenes import SCENE_REGISTRY, build_scene
 from sim.scenes_validate import validate_scene
 from sim.spots import ParkingSpot
@@ -111,6 +114,83 @@ class TestSceneSemantics(unittest.TestCase):
             if obs.kind == "equipment":
                 x0, x1, y0, y1 = obs.bbox
                 self.assertLessEqual(max(x1 - x0, y1 - y0), 8.0)
+
+
+class TestMineScaleContract(unittest.TestCase):
+    def _dump_scene(self, name):
+        return build_scene(
+            name,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+
+    def test_dump_bays_keep_vehicle_relative_spacing_and_clearance(self):
+        required_rear_clearance = MINING_DRILL_RIG.collision_margin + 0.3
+        for name, prefix, berm_y in (
+            ("S4_dump_area", "B", 6.0),
+            ("S9_mine_complex", "DB", 2.0),
+        ):
+            with self.subTest(scene=name):
+                bundle = self._dump_scene(name)
+                spots = [spot for spot in bundle.spots if spot.id.startswith(prefix)]
+                self.assertGreaterEqual(len(spots), 2)
+                self.assertGreaterEqual(
+                    spots[1].pose.x - spots[0].pose.x,
+                    3.0 * MINING_DRILL_RIG.width,
+                )
+                for spot in spots:
+                    self.assertAlmostEqual(spot.pose.yaw, -np.pi / 2)
+                    rear_y = spot.pose.y - (
+                        MINING_DRILL_RIG.length / 2.0 * np.sin(spot.pose.yaw)
+                    )
+                    self.assertGreaterEqual(
+                        berm_y - rear_y,
+                        required_rear_clearance - 1e-9,
+                    )
+                self.assertEqual(
+                    bundle.difficulty_knobs["geometry_profile"],
+                    "vehicle_relative_v1",
+                )
+
+    def test_known_s4_t3_timeout_pose_plans_with_safety_margin(self):
+        bundle = self._dump_scene("S4_dump_area")
+        goal = next(spot.pose for spot in bundle.spots if spot.id == "B2")
+        planner = HybridAStarPlanner(bundle.env, **MINING_DRILL_RIG.planner_kwargs())
+        trajectory = planner.plan(
+            VehicleState(-10.584733, -4.703514, 1.195006, 0.0, 0.0),
+            goal,
+            preferred_direction=1,
+        )
+        self.assertGreater(len(trajectory.points), 2)
+
+    def test_long_cross_row_s4_t3_uses_bounded_analytic_connection(self):
+        sampler = TaskSampler(
+            seed=20260824,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        for sample_index in (296, 300):
+            with self.subTest(sample_index=sample_index):
+                task = sampler.sample(
+                    "S4_dump_area",
+                    TaskType.T3_LONG,
+                    sample_index=sample_index,
+                    maneuver=Maneuver.FORWARD,
+                    adjacent_occupancy=0,
+                    noise_level=NoiseLevel.CLEAN,
+                )
+                planner = HybridAStarPlanner(
+                    task.scene.env,
+                    **MINING_DRILL_RIG.planner_kwargs(),
+                )
+                trajectory = planner.plan(
+                    task.start,
+                    task.goal.as_goal_pose(),
+                    preferred_direction=1,
+                )
+                self.assertGreater(len(trajectory.points), 2)
 
 
 class TestParkingSpot(unittest.TestCase):

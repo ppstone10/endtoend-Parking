@@ -39,21 +39,21 @@ python scripts/generate_dataset.py 5
 # 预览 3000 条任务分层计划（不生成 BEV/轨迹）
 python scripts/build_dataset.py --count 3000 --dry-run
 
-# tracked_pivot_v4 的原始 35 单元校准证据保留在 runs/dataset-calibration/tracked_pivot_v4
-# 当前准入矩阵为 32 单元；如需重新校准当前矩阵，必须使用新输出目录
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration/tracked_pivot_v4_admitted
+# 旧 v4 校准和未完成数据保留作旧几何证据；v5 重新探测全部 39 个几何支持单元，
+# 不沿用 v4 准入结论。完成后先让 Agent 检查 report.json，再执行下面的正式构建命令
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/calibrate_dataset.py --samples-per-cell 3 --max-retries 2 --task-budget-s 30 --probe-full-capability --vehicle-config configs/vehicles/tracked_drill_rig.json --output runs/dataset-calibration/tracked_pivot_v5_full
 
 # 校准中断后使用完全相同的命令和输出目录恢复；已完成 case 会按 identity 校验后跳过
 # report.json、cells.csv 和 run_state.json 可用于一次性判断成功率、超时与剩余量
 
-# tracked_pivot_v4：倒车/反方向与原地旋转采用约 2:1 代价；必须使用新输出目录，不能混用旧 v3 检查点
-# v4 准入排除 S5/T2、S7/T1、S9/T3；S5/T1/T5 只倒车，S9/T1/T5 只前进
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v4_3000 --batch-size 5 --max-retries 10
+# tracked_pivot_v5：保留 2:1 方向/旋转代价，将开放场地解析接管范围扩至 T3 上限 30m；
+# 只有 Agent 根据上述完整校准更新专家准入后，才执行正式构建
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v5_3000 --batch-size 5 --max-retries 10
 
 # 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过
 # 新验收图以“前方 x、车体左方 y”为局部坐标，正 Left 显示在画面左侧；原地旋转标注 body LEFT/RIGHT 与真实有符号旋转弧
 foreach ($split in 'train', 'val', 'test') {
-  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py "data/task_dataset/tracked_pivot_v4_3000/$split.npz" --output "data/task_dataset/tracked_pivot_v4_3000/inspection/$split" --require-maneuver-consistency --require-trajectory-feasibility
+  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py "data/task_dataset/tracked_pivot_v5_3000/$split.npz" --output "data/task_dataset/tracked_pivot_v5_3000/inspection/$split" --require-maneuver-consistency --require-trajectory-feasibility
 }
 
 # 旧全量数据已清理；仅保留 7 条 tracked_pivot_v3 真实样本用于历史可视化参考，不得用于训练或当作全量备份
@@ -69,7 +69,7 @@ python scripts/train.py --samples 40 --epochs 30
 python scripts/train_model.py --config configs/training/net-v1.yaml
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
-python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v4_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
+python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v5_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
 ```
 
 ```bash

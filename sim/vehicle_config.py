@@ -35,6 +35,7 @@ class VehicleConfig:
     yaw_resolution_deg: float = 30.0
     motion_resolution: float = 0.1
     collision_check_resolution: float = 0.1
+    analytic_expansion_distance: float | None = None
     enable_pivot: bool = False
     pivot_omega: float = 0.35
     rotation_penalty: float = 2.0
@@ -67,6 +68,14 @@ class VehicleConfig:
             raise ValueError(f"车辆配置必须为有限正数：{', '.join(invalid)}")
         if not math.isfinite(self.collision_margin) or self.collision_margin < 0.0:
             raise ValueError("collision_margin 必须为有限非负数")
+        if (
+            self.analytic_expansion_distance is not None
+            and (
+                not math.isfinite(self.analytic_expansion_distance)
+                or self.analytic_expansion_distance < 0.0
+            )
+        ):
+            raise ValueError("analytic_expansion_distance 必须为有限非负数或 None")
         if self.plan_v > self.max_v:
             raise ValueError("plan_v 不能高于底盘 max_v")
         if self.plan_max_omega > self.max_omega:
@@ -90,6 +99,7 @@ class VehicleConfig:
             "yaw_resolution": math.radians(self.yaw_resolution_deg),
             "motion_resolution": self.motion_resolution,
             "collision_check_resolution": self.collision_check_resolution,
+            "analytic_expansion_distance": self.analytic_expansion_distance,
             "enable_pivot": self.enable_pivot,
             "pivot_omega": self.pivot_omega,
             "rotation_penalty": self.rotation_penalty,

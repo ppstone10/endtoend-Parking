@@ -136,7 +136,7 @@ class TestHybridAStarPlanner(unittest.TestCase):
                     self.assertTrue(planner._pose_free(float(px), float(py), float(pyaw)))
 
     def test_vehicle_scaled_analytic_neighborhood_handles_turning_approaches(self):
-        """默认两车长解析邻域覆盖 S3/S5 非直线入位，不依赖调用方调参。"""
+        """v5 的 T3 距离解析邻域也覆盖 S3/S5 非直线入位。"""
         cases = [
             ("S3_maintenance", VehicleState(0.0, -8.0, np.pi / 2.0)),
             ("S5_crusher", VehicleState(-1.0, -5.0, 0.0)),
@@ -150,7 +150,7 @@ class TestHybridAStarPlanner(unittest.TestCase):
                     max_expansions=5000,
                     **MINING_DRILL_RIG.planner_kwargs(),
                 )
-                self.assertEqual(planner.analytic_expansion_distance, 12.0)
+                self.assertEqual(planner.analytic_expansion_distance, 30.0)
                 traj = planner.plan(start, goal)
                 np.testing.assert_allclose(traj.points[-1], [goal.x, goal.y, goal.yaw], atol=1e-6)
 

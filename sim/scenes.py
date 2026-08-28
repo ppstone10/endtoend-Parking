@@ -30,6 +30,34 @@ from sim.spots import ParkingSpot, make_spot_row
 __all__ = ["SceneBundle", "SCENE_REGISTRY", "build_scene", "register_scene"]
 
 
+DUMP_GEOMETRY_PROFILE = "vehicle_relative_v1"
+DUMP_STOP_CLEARANCE = 0.3
+DUMP_BAY_CENTER_SPACING_WIDTHS = 3.0
+TWO_WAY_HAUL_ROAD_WIDTHS = 3.5
+
+
+def _validate_vehicle_scale(
+    vehicle_length: float,
+    vehicle_width: float,
+    collision_margin: float,
+) -> None:
+    if vehicle_length <= 0.0 or vehicle_width <= 0.0:
+        raise ValueError("车辆尺寸必须为正")
+    if collision_margin < 0.0:
+        raise ValueError("collision_margin 不能为负")
+
+
+def _dump_goal_y(
+    berm_y: float,
+    vehicle_length: float,
+    collision_margin: float,
+) -> float:
+    """车尾朝 +y 时的中心 y；安全膨胀后仍保留卸载停车余量。"""
+    return berm_y - (
+        vehicle_length / 2.0 + collision_margin + DUMP_STOP_CLEARANCE
+    )
+
+
 @dataclass
 class SceneBundle:
     """场景实例包：环境 + 车位 + 元数据 + 任务采样区。
@@ -267,13 +295,17 @@ def s4_dump_area(
     bay_count: int = 4,
     occupied_pattern: list[int] | None = None,
     seed: int = 0,
+    vehicle_length: float = 6.0,
+    vehicle_width: float = 3.0,
+    collision_margin: float = 0.2,
 ) -> SceneBundle:
     """排土场卸载区：沿卸载边缘的挡墙条带，墙外悬崖禁区。
 
-    任务语义：倒车至尾部贴挡墙停稳（目标位姿在挡墙前 0.3m 处、航向
-    垂直于挡墙、车尾朝墙）。相邻位被占时由 waiting 卡车占用。
+    任务语义：倒车至挡墙前停稳；航向指向车头，因此 -90° 表示车尾朝
+    +y 挡墙。目标同时保留规划碰撞裕量和 0.3m 停车余量。
     """
-    pitch = 6.0
+    _validate_vehicle_scale(vehicle_length, vehicle_width, collision_margin)
+    pitch = DUMP_BAY_CENTER_SPACING_WIDTHS * vehicle_width
     row_len = bay_count * pitch
     half = max(22.0, row_len / 2 + 8.0)
     world = 2 * (half + 8.0)
@@ -293,19 +325,20 @@ def s4_dump_area(
     spots: list[ParkingSpot] = []
     for i in range(bay_count):
         cx = -row_len / 2 + pitch / 2 + i * pitch
-        # 车尾朝墙（+y），车头朝 -y；车位中心在墙前 0.3 + 车长/2。
-        cy = berm_y - (0.3 + 6.0 / 2.0)
+        # 车尾朝墙（+y），车头朝 -y。
+        cy = _dump_goal_y(berm_y, vehicle_length, collision_margin)
         spots.append(
             ParkingSpot(
                 id=f"B{i}", pose=GoalPose(cx, cy, -np.pi / 2),
-                size=(6.5, 4.0), tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+                size=(vehicle_length + 1.0, vehicle_width + 1.0),
+                tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
                 kind="berm_bay",
                 occupied=(i in (occupied_pattern or [])),
             )
         )
     for s in spots:
         if s.occupied:
-            obstacles.append(s.occupant_obstacle(6.0, 3.0))
+            obstacles.append(s.occupant_obstacle(vehicle_length, vehicle_width))
     # 场地侧墙。
     obstacles += [
         RectangleObstacle(-half - wall_t, -half + wall_t, -14.0, berm_y, kind=KIND_WALL),
@@ -320,8 +353,17 @@ def s4_dump_area(
         env=env,
         spots=spots,
         spawn_zones=[(-row_len / 2, row_len / 2, -12.0, -4.0)],
-        difficulty_knobs={"bay_count": bay_count, "occupied": len(occupied_pattern or [])},
-        description="排土场卸载区：倒车贴挡墙停稳，挡墙外悬崖禁入",
+        difficulty_knobs={
+            "bay_count": bay_count,
+            "occupied": len(occupied_pattern or []),
+            "geometry_profile": DUMP_GEOMETRY_PROFILE,
+            "vehicle_length": vehicle_length,
+            "vehicle_width": vehicle_width,
+            "collision_margin": collision_margin,
+            "dump_stop_clearance": DUMP_STOP_CLEARANCE,
+            "dump_bay_pitch": pitch,
+        },
+        description="排土场卸载区：倒车至挡墙前安全停稳，挡墙外悬崖禁入",
         title_en="Dump area: reverse parking against berm, cliff beyond"
     )
 
@@ -556,27 +598,33 @@ def s9_mine_complex(
     rock_count: int = 6,
     occupied_pattern: list[int] | None = None,
     seed: int = 0,
+    vehicle_length: float = 6.0,
+    vehicle_width: float = 3.0,
+    collision_margin: float = 0.2,
 ) -> SceneBundle:
     """综合矿场：100×60m，运矿道路（12m 宽、弯道）串联 S1 停车场、
     S4 卸载区、S5 破碎站三功能区，路侧散布岩石。"""
+    _validate_vehicle_scale(vehicle_length, vehicle_width, collision_margin)
     rng = np.random.default_rng(seed)
     obstacles: list[Obstacle] = []
     spots: list[ParkingSpot] = []
 
     # 布局：道路沿 L 形（西边南北向 → 北部东西向），三区挂靠。
     # 道路挡墙：西道（x∈[-50,-38]，y∈[-30,10]）与北道（x∈[-50,50]，y∈[8,20]）。
-    road_w = 12.0
+    road_w = max(12.0, TWO_WAY_HAUL_ROAD_WIDTHS * vehicle_width)
+    west_road_inner_x = -50.0 + road_w
+    north_road_top_y = 8.0 + road_w
     obstacles += [
         RectangleObstacle(-52.0, -50.0, -30.0, 10.0, kind=KIND_WALL),   # 西道西墙
-        RectangleObstacle(-38.0 - 0.5, -38.0, -30.0, 10.0, kind=KIND_WALL),  # 西道东墙
-        RectangleObstacle(-50.0, 50.0, 20.0, 22.0, kind=KIND_WALL),     # 北道北墙
+        RectangleObstacle(west_road_inner_x - 0.5, west_road_inner_x, -30.0, 10.0, kind=KIND_WALL),  # 西道东墙
+        RectangleObstacle(-50.0, 50.0, north_road_top_y, north_road_top_y + 2.0, kind=KIND_WALL),     # 北道北墙
         RectangleObstacle(-50.0, 50.0, 8.0 - 0.5, 8.0, kind=KIND_WALL),  # 北道南墙（东段）
     ]
     # 弯道开口（去掉西北角内角墙的重叠区已由矩形布置自然形成）。
 
     # S1 停车场（东南角）：单排垂直车位，朝 +y（车头朝北），面向南部通道。
     lot_x0, lot_y = 18.0, -18.0
-    pitch = 3.5
+    pitch = max(3.5, vehicle_width + 0.5)
     n_lot = 5
     for i in range(n_lot):
         px = lot_x0 + i * pitch
@@ -587,7 +635,7 @@ def s9_mine_complex(
         )
         spots.append(spot)
         if occ:
-            obstacles.append(spot.occupant_obstacle(6.0, 3.0))
+            obstacles.append(spot.occupant_obstacle(vehicle_length, vehicle_width))
     # 停车场围挡。
     obstacles += [
         RectangleObstacle(lot_x0 - 1.5, lot_x0 + n_lot * pitch + 1.5, lot_y - 4.5, lot_y - 4.0, kind=KIND_WALL),
@@ -602,14 +650,16 @@ def s9_mine_complex(
 
     # S4 卸载区（北部东端）：挡墙沿 y=2（北道南侧），车尾朝北贴墙。
     berm_y = 2.0
-    berm_pitch = 6.0
+    berm_pitch = DUMP_BAY_CENTER_SPACING_WIDTHS * vehicle_width
     n_berm = 3
     bx0 = 22.0
-    obstacles.append(RectangleObstacle(bx0 - 1.0, bx0 + (n_berm - 1) * berm_pitch + 1.0, berm_y, berm_y + 0.6, kind=KIND_BERM))
+    berm_x_min = bx0 - vehicle_width / 2.0
+    berm_x_max = bx0 + (n_berm - 1) * berm_pitch + vehicle_width / 2.0
+    obstacles.append(RectangleObstacle(berm_x_min, berm_x_max, berm_y, berm_y + 0.6, kind=KIND_BERM))
     obstacles.append(
         PolygonObstacle(
-            vertices=[(bx0 - 1.0, berm_y + 0.6), (bx0 + (n_berm - 1) * berm_pitch + 1.0, berm_y + 0.6),
-                      (bx0 + (n_berm - 1) * berm_pitch + 1.0, 8.0), (bx0 - 1.0, 8.0)],
+            vertices=[(berm_x_min, berm_y + 0.6), (berm_x_max, berm_y + 0.6),
+                      (berm_x_max, 8.0), (berm_x_min, 8.0)],
             kind=KIND_CLIFF, emits_points=False, forbidden=True,
         )
     )
@@ -617,8 +667,14 @@ def s9_mine_complex(
         cx = bx0 + i * berm_pitch
         spots.append(
             ParkingSpot(
-                id=f"DB{i}", pose=GoalPose(cx, berm_y - 3.3, np.pi / 2),
-                size=(6.5, 4.0), tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+                id=f"DB{i}",
+                pose=GoalPose(
+                    cx,
+                    _dump_goal_y(berm_y, vehicle_length, collision_margin),
+                    -np.pi / 2,
+                ),
+                size=(vehicle_length + 1.0, vehicle_width + 1.0),
+                tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
                 kind="berm_bay",
             )
         )
@@ -666,7 +722,17 @@ def s9_mine_complex(
         env=env,
         spots=spots,
         spawn_zones=[(-48.0, -40.0, -26.0, 6.0), (-40.0, 40.0, -26.0, 6.0)],
-        difficulty_knobs={"rock_count": rock_count, "occupied": len(occupied_pattern or [])},
+        difficulty_knobs={
+            "rock_count": rock_count,
+            "occupied": len(occupied_pattern or []),
+            "geometry_profile": DUMP_GEOMETRY_PROFILE,
+            "vehicle_length": vehicle_length,
+            "vehicle_width": vehicle_width,
+            "collision_margin": collision_margin,
+            "dump_stop_clearance": DUMP_STOP_CLEARANCE,
+            "dump_bay_pitch": berm_pitch,
+            "haul_road_width": road_w,
+        },
         description="综合矿场：道路串联停车场/卸载区/破碎站，路侧岩石，跨区远距任务",
         title_en="Mine complex: road-linked lot, dump area and crusher",
         bev_config=BEVConfig(resolution=0.5, extent=(40.0, 40.0, 40.0, 40.0)),

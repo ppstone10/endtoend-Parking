@@ -36,6 +36,7 @@ class CalibrationSettings:
     seed: int = 20260824
     max_retries: int = 2
     task_budget_s: float = 30.0
+    probe_full_capability: bool = False
 
     def __post_init__(self) -> None:
         if self.samples_per_cell <= 0:
@@ -46,6 +47,8 @@ class CalibrationSettings:
             raise ValueError("max_retries 不能为负")
         if not math.isfinite(self.task_budget_s) or self.task_budget_s <= 0.0:
             raise ValueError("task_budget_s 必须为有限正数")
+        if not isinstance(self.probe_full_capability, bool):
+            raise ValueError("probe_full_capability 必须为布尔值")
 
 
 @dataclass(frozen=True)
@@ -96,15 +99,22 @@ class CalibrationResult:
 
 
 def build_calibration_cases(
-    sampler: TaskSampler, samples_per_cell: int
+    sampler: TaskSampler,
+    samples_per_cell: int,
+    *,
+    probe_full_capability: bool = False,
 ) -> tuple[CalibrationCase, ...]:
-    """构造与 train/val/test 配额无关的完整专家能力校准计划。"""
+    """构造与数据配额无关的已准入或原始几何能力校准计划。"""
     if samples_per_cell <= 0:
         raise ValueError("samples_per_cell 必须为正")
     cases: list[CalibrationCase] = []
     noises = tuple(NoiseLevel)
     for cell in sampler.capability_matrix():
-        maneuvers = expert_maneuvers(cell.scene_name, cell.task_type)
+        maneuvers = (
+            (Maneuver.FORWARD, Maneuver.REVERSE)
+            if probe_full_capability
+            else expert_maneuvers(cell.scene_name, cell.task_type)
+        )
         if not cell.supported or not maneuvers:
             continue
         occupancies = sampler.adjacent_occupancy_levels(
@@ -415,6 +425,7 @@ def run_calibration(
             collision_margin=vehicle_config.collision_margin,
         ),
         settings.samples_per_cell,
+        probe_full_capability=settings.probe_full_capability,
     )
     if not resolved_cases:
         raise ValueError("校准计划不能为空")

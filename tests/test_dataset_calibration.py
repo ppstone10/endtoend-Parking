@@ -68,6 +68,30 @@ class TestCalibrationPlan(unittest.TestCase):
                 3,
             )
 
+    def test_full_capability_probe_ignores_previous_admission_decisions(self):
+        sampler = TaskSampler(
+            seed=7,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        cases = build_calibration_cases(
+            sampler,
+            samples_per_cell=3,
+            probe_full_capability=True,
+        )
+        cells = {(case.scene_name, case.task_type) for case in cases}
+        self.assertEqual(len(cases), 117)
+        self.assertEqual(len(cells), 39)
+        self.assertIn(("S5_crusher", "T2"), cells)
+        self.assertIn(("S7_fuel_station", "T1"), cells)
+        self.assertIn(("S9_mine_complex", "T3"), cells)
+        s9_t3 = [case for case in cases if case.cell_id == "S9_mine_complex/T3"]
+        self.assertEqual(
+            [case.maneuver for case in s9_t3],
+            ["forward", "reverse", "forward"],
+        )
+
 
 class TestCalibrationRecovery(unittest.TestCase):
     def setUp(self):

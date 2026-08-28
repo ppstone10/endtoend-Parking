@@ -27,6 +27,7 @@ LiDARFrame/CameraFrame → sensor2bev(BEVConfig) → BEVTensor
   LiDARFrame → LiDAR2BEV → [occupancy, height, density]
   CameraFrame → Camera2BEV → [target]
   BEVFusion 拼接两路并追加 [vehicle] → 统一 BEVTensor
+VehicleConfig 尺寸/margin → TaskSampler → 车辆相对 S4/S9 SceneBundle
 SceneBundle + (TaskType, difficulty axes, seed, sample index) → TaskSampler → Task
   Task = scene + start + single/candidate goals + stable metadata + optional T5 event
 VehicleConfig JSON → HybridAStarPlanner/MPC/车辆模型/碰撞/inspection
@@ -78,7 +79,8 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `sim/`、`sensor2bev/`、`model/`、`controller/` 依赖 `interfaces/` 与各自必要的 `numpy`/`torch` 数值运行时，模块间不互相耦合；`training/` 依赖 `model/` 与 PyTorch，不反向进入模型或数据层。
 - `runtime/` 依赖 `interfaces/`、`metrics/` 与注入的轨迹源/MPC/车辆模型（依赖注入，不直接 import sim/model）；`metrics/` 无内部依赖。
 - 闭环执行统一经 `runtime/ClosedLoopEngine`，轨迹源策略可替换（Expert/Network/后续基线），指标口径唯一。
-- 默认理论车型由 `configs/vehicles/tracked_drill_rig.json` 定义为以两履带几何中心居中的 6×3 m 矩形；`VehicleConfig` 将外廓、执行上限、规划速度/角速度、安全余量与搜索分辨率统一注入规划器/MPC/车辆模型/碰撞/inspection。
+- 默认理论车型由 `configs/vehicles/tracked_drill_rig.json` 定义为以两履带几何中心居中的 6×3 m 矩形；`VehicleConfig` 将外廓、执行上限、规划速度/角速度、安全余量、搜索分辨率与解析接管范围统一注入规划器/MPC/车辆模型/碰撞/inspection。`tracked_pivot_v5` 的解析接管范围为 T3 距离上限 30m。
+- S4/S9 卸载区由 `TaskSampler` 将同一 `VehicleConfig` 的长、宽和 `collision_margin` 注入场景：双向主路至少 3.5 倍车宽、卸载位中心距至少 3 倍车宽，车尾到挡墙的物理净空为 `collision_margin + 0.3m`；`geometry_profile` 进入任务元数据和计划指纹，旧几何检查点不得续入。
 - 批量实验统一经 `experiments/run_experiment.py`（JSON 配置驱动，结果落盘 `experiments/results/`），可视化统一经 `viz/`（PNG+PDF 双格式输出）。
 - 低速泊车采用理想履带差速运动学，控制量为线速度 v 与角速度 omega；允许 `v=0, omega≠0`，原地旋转中心固定为两履带几何中心。履带滑移、沉陷、质量和惯量不属于当前理论模型。
 - 平移弧线的 Reeds–Shepp 半径由 `|plan_v / plan_max_omega|` 推导，但它不代表履带全部可达集合；Hybrid A* 另有原地旋转基元和履带解析候选。默认/前进请求下倒车或反方向平移、以及原地旋转相对常规前进/小转向按 2:1 时间代价计；显式倒车监督任务仍以倒车为请求方向。原地旋转对矩形最远角点扫掠按配置分辨率加密。
@@ -86,7 +88,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。
 - `dataset/build.py::expert_maneuvers` 拥有专家可生成能力：不改变任务几何矩阵，根据与车辆模型身份绑定的完整校准证据排除持续不可达/不稳定监督单元并限制单向可达单元；正式构建与后续校准共享该入口，偶发规划失败仍保持原单元难度重采。
-- `dataset/calibration.py` 的 case 计划直接枚举全部专家可生成单元，不复用 8:1:1 数据集配额；身份绑定 seed、车辆模型、case 计划、重试和预算。只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
+- `dataset/calibration.py` 的 case 计划不复用 8:1:1 数据集配额：默认枚举当前专家准入单元，新版本重校准可显式探测全部几何支持单元及双向机动。身份绑定 seed、车辆模型、探测模式、case 计划、重试和预算；只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
 - `model/registry.py` 是模型名称到实现的唯一构造入口；`MineParkingNet` 保持 `net-v0` 兼容，v1/v2 的终止 logits 不改变闭环最终消费的 `Trajectory` 契约。
 - `training/Trainer` 的 checkpoint 必须核对模型名称、模型配置和影响恢复语义的训练超参数；允许改变总 epochs、设备和输出目录，但不得静默加载不兼容状态。
 - 相邻占用能力按场景×任务类型枚举实际可表达的 0/1/2 等级；T4 在占用后仍必须保留至少 3 个空闲候选位。
