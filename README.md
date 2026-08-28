@@ -46,15 +46,15 @@ python scripts/build_dataset.py --count 3000 --dry-run
 # 校准中断后使用完全相同的命令和输出目录恢复；已完成 case 会按 identity 校验后跳过
 # report.json、cells.csv 和 run_state.json 可用于一次性判断成功率、超时与剩余量
 
-# tracked_pivot_v6：S3/S7 几何按车辆相对尺度复原、S6 岩石移出接近走廊、S9 破碎槽统一倒车入槽；
-# 紧 bay 任务（维修 bay/破碎槽/加油位）起点沿 bay 轴线对齐采样；S3 全单元与 S5/T1/T2/T5、S9/T2/T5 仅倒车，
-# S8/T2/T3/T5 仅前进；排除 S7/T1/T3/T5、S9/T1/T3；现在可以执行正式构建（新目录）
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v6_3000 --batch-size 5 --max-retries 10
+# tracked_pivot_v7：继承 v6 场景复原，并让普通垂直/斜列车位的目标航向随前进/倒车入位翻转；
+# 结构化入口检查整段车辆外廓走廊，相邻占用只选择入口未被堵住的目标，T4 先规划起点参考目标。
+# 408 例全准入复核（34 单元×12、关闭重采）为 408/408；v6 检查点不得续入 v7。
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_dataset.py --count 3000 --seed 20260824 --vehicle-config configs/vehicles/tracked_drill_rig.json --output data/task_dataset/tracked_pivot_v7_3000 --batch-size 5 --max-retries 10
 
 # 构建中断后使用完全相同的参数重启；已完成检查点会复核后跳过
 # 新验收图以“前方 x、车体左方 y”为局部坐标，正 Left 显示在画面左侧；原地旋转标注 body LEFT/RIGHT 与真实有符号旋转弧
 foreach ($split in 'train', 'val', 'test') {
-  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py "data/task_dataset/tracked_pivot_v6_3000/$split.npz" --output "data/task_dataset/tracked_pivot_v6_3000/inspection/$split" --require-maneuver-consistency --require-trajectory-feasibility
+  & 'D:\conda\envs\endtoend-parking\python.exe' scripts/inspect_dataset.py "data/task_dataset/tracked_pivot_v7_3000/$split.npz" --output "data/task_dataset/tracked_pivot_v7_3000/inspection/$split" --require-maneuver-consistency --require-trajectory-feasibility
 }
 
 # 旧全量数据已清理；仅保留 7 条 tracked_pivot_v3 真实样本用于历史可视化参考，不得用于训练或当作全量备份
@@ -70,7 +70,7 @@ python scripts/train.py --samples 40 --epochs 30
 python scripts/train_model.py --config configs/training/net-v1.yaml
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
-python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v6_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
+python scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/net-v0/best.pt --checkpoint v1=runs/training/net-v1/best.pt --checkpoint v2=runs/training/net-v2/best.pt --output runs/openloop-eval
 ```
 
 ```bash

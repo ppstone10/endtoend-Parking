@@ -89,7 +89,7 @@ class TestSceneSemantics(unittest.TestCase):
     def test_s9_has_all_three_zones(self):
         bundle = build_scene("S9_mine_complex")
         kinds = {s.kind for s in bundle.spots}
-        self.assertIn("spot", kinds)          # 停车场
+        self.assertIn("perpendicular_bay", kinds)  # 停车场
         self.assertIn("berm_bay", kinds)      # 卸载区
         self.assertIn("crusher_slot", kinds)  # 破碎站
         self.assertGreaterEqual(len(bundle.spawn_zones), 2)

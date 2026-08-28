@@ -249,6 +249,112 @@ class TestTaskPlannerIntegration(unittest.TestCase):
                     )
                     self.assertGreater(trajectory.horizon, 1)
 
+    def test_bidirectional_parking_goal_heading_matches_entry_direction(self):
+        sampler = TaskSampler(
+            seed=20260824,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        forward = sampler.sample(
+            "S1_parking_lot", TaskType.T2_MEDIUM, sample_index=4,
+            maneuver=Maneuver.FORWARD,
+        )
+        reverse = sampler.sample(
+            "S1_parking_lot", TaskType.T2_MEDIUM, sample_index=4,
+            maneuver=Maneuver.REVERSE,
+        )
+        self.assertEqual(forward.goal.spot_id, reverse.goal.spot_id)
+        self.assertAlmostEqual(
+            abs(math.sin(reverse.goal.yaw - forward.goal.yaw)), 0.0, places=6
+        )
+        self.assertAlmostEqual(
+            math.cos(reverse.goal.yaw - forward.goal.yaw), -1.0, places=6
+        )
+        for task, expected_side in ((forward, -1.0), (reverse, 1.0)):
+            goal = task.goal.as_goal_pose()
+            nx, ny = math.cos(goal.yaw), math.sin(goal.yaw)
+            axial_offset = (
+                (task.start.x - goal.x) * nx + (task.start.y - goal.y) * ny
+            )
+            self.assertGreater(axial_offset * expected_side, 0.0)
+            self.assertAlmostEqual(task.start.yaw, goal.yaw, places=6)
+
+    def test_previously_failing_admitted_tasks_have_clear_plannable_approaches(self):
+        sampler = TaskSampler(
+            seed=20260824,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        cases = [
+            ("S1_parking_lot", TaskType.T1_NEAR, 8, Maneuver.FORWARD, 2),
+            ("S1_parking_lot", TaskType.T2_MEDIUM, 10, Maneuver.FORWARD, 1),
+            ("S1_parking_lot", TaskType.T5_DYNAMIC, 11, Maneuver.REVERSE, 2),
+            ("S7_fuel_station", TaskType.T2_MEDIUM, 3, Maneuver.REVERSE, 1),
+            ("S7_fuel_station", TaskType.T2_MEDIUM, 9, Maneuver.REVERSE, 1),
+            ("S7_fuel_station", TaskType.T2_MEDIUM, 11, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T2_MEDIUM, 0, Maneuver.REVERSE, 0),
+            ("S9_mine_complex", TaskType.T2_MEDIUM, 1, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T2_MEDIUM, 6, Maneuver.REVERSE, 0),
+            ("S9_mine_complex", TaskType.T2_MEDIUM, 7, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T2_MEDIUM, 8, Maneuver.REVERSE, 2),
+            ("S9_mine_complex", TaskType.T5_DYNAMIC, 1, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T5_DYNAMIC, 4, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T5_DYNAMIC, 7, Maneuver.REVERSE, 1),
+            ("S9_mine_complex", TaskType.T5_DYNAMIC, 8, Maneuver.REVERSE, 2),
+        ]
+        for scene_name, task_type, sample_index, maneuver, occupancy in cases:
+            with self.subTest(
+                scene=scene_name, task_type=task_type,
+                sample_index=sample_index, maneuver=maneuver,
+            ):
+                task = sampler.sample(
+                    scene_name, task_type, sample_index=sample_index,
+                    maneuver=maneuver, adjacent_occupancy=occupancy,
+                    noise_level=NoiseLevel.CLEAN,
+                )
+                goal = task.goal or task.candidate_goals[0]
+                planner = HybridAStarPlanner(
+                    task.scene.env, **MINING_DRILL_RIG.planner_kwargs()
+                )
+                trajectory = planner.plan(
+                    task.start,
+                    goal.as_goal_pose(),
+                    preferred_direction=(1 if maneuver == Maneuver.FORWARD else -1),
+                )
+                self.assertGreater(trajectory.horizon, 1)
+
+    def test_t4_reference_goal_is_first_and_plannable(self):
+        sampler = TaskSampler(
+            seed=20260824,
+            vehicle_length=MINING_DRILL_RIG.length,
+            vehicle_width=MINING_DRILL_RIG.width,
+            collision_margin=MINING_DRILL_RIG.collision_margin,
+        )
+        cases = [
+            ("S3_maintenance", 5, Maneuver.REVERSE, 0),
+            ("S9_mine_complex", 5, Maneuver.REVERSE, 2),
+            ("S9_mine_complex", 6, Maneuver.FORWARD, 0),
+        ]
+        for scene_name, sample_index, maneuver, occupancy in cases:
+            with self.subTest(scene=scene_name, sample_index=sample_index):
+                task = sampler.sample(
+                    scene_name, TaskType.T4_MULTI_SPOT,
+                    sample_index=sample_index, maneuver=maneuver,
+                    adjacent_occupancy=occupancy,
+                )
+                goal = task.candidate_goals[0]
+                planner = HybridAStarPlanner(
+                    task.scene.env, **MINING_DRILL_RIG.planner_kwargs()
+                )
+                trajectory = planner.plan(
+                    task.start,
+                    goal.as_goal_pose(),
+                    preferred_direction=(1 if maneuver == Maneuver.FORWARD else -1),
+                )
+                self.assertGreater(trajectory.horizon, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

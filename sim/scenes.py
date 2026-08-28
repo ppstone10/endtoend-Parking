@@ -138,11 +138,13 @@ def s1_parking_lot(
         spot_n = ParkingSpot(
             id=f"N{idx}", pose=GoalPose(px, row_y_n, np.pi / 2),
             tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+            kind="perpendicular_bay",
             occupied=_occupied(idx, 0),
         )
         spot_s = ParkingSpot(
             id=f"S{idx}", pose=GoalPose(px, row_y_s, -np.pi / 2),
             tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+            kind="perpendicular_bay",
             occupied=_occupied(idx, 1),
         )
         spots.extend([spot_n, spot_s])
@@ -199,6 +201,7 @@ def s2_diagonal_lot(
         spot = ParkingSpot(
             id=f"D{idx}", pose=GoalPose(px, 3.0, angle),
             tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+            kind="diagonal_bay",
             occupied=(idx in (occupied_pattern or [])),
         )
         spots.append(spot)
@@ -666,8 +669,11 @@ def s9_mine_complex(
         px = lot_x0 + i * pitch
         occ = i in (occupied_pattern or [])
         spot = ParkingSpot(
-            id=f"P{i}", pose=GoalPose(px, lot_y, np.pi / 2),
-            tol_pos=0.3, tol_yaw=np.deg2rad(10.0), occupied=occ,
+            # 车位南侧有围挡、入口在北侧；基准航向 -90° 表示前进入位。
+            # 倒车任务由 TaskSampler 将目标航向翻转 180°，使车头朝入口。
+            id=f"P{i}", pose=GoalPose(px, lot_y, -np.pi / 2),
+            tol_pos=0.3, tol_yaw=np.deg2rad(10.0),
+            kind="perpendicular_bay", occupied=occ,
         )
         spots.append(spot)
         if occ:

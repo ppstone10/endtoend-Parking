@@ -20,7 +20,8 @@ class ParkingSpot:
 
     pose 为车位中心目标位姿（车停稳后的位姿）；size 为车位框尺寸
     (length, width)（米）；tol_pos/tol_yaw 为到达判定容差；kind 标识
-    车位类型（spot/berm_bay/crusher_slot/loading_point/fuel_bay/weigh_pad）；
+    车位类型（perpendicular_bay/diagonal_bay/berm_bay/crusher_slot/
+    loading_point/fuel_bay/weigh_pad）；
     occupied 表示该位是否被占用（占用位不参与候选，仅作为障碍渲染）。
     """
 

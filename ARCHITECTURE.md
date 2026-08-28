@@ -30,7 +30,7 @@ LiDARFrame/CameraFrame → sensor2bev(BEVConfig) → BEVTensor
 VehicleConfig 尺寸/margin → TaskSampler → 车辆相对 S3/S4/S7/S9 SceneBundle
 SceneBundle + (TaskType, difficulty axes, seed, sample index) → TaskSampler → Task
   Task = scene + start + single/candidate goals + stable metadata + optional T5 event
-  T2/T3/T4/T5 命中紧 bay 车位（maintenance_bay/crusher_slot/fuel_bay）时，起点沿 bay 轴线对齐采样
+  结构化车位按请求机动确定目标航向与入口侧，并只从连续 footprint 自由的轴线走廊采样起点
 VehicleConfig JSON → HybridAStarPlanner/MPC/车辆模型/碰撞/inspection
 VehicleState + GoalPose → HybridAStarPlanner（前后弧线 + 原地旋转 + RS/履带解析候选）→ Trajectory（中心位姿专家轨迹）
   Trajectory → 碰撞安全三次捷径（可选）→ Trajectory
@@ -88,7 +88,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `_pose_free` 检查完整定向矩形与圆/矩形/多边形障碍相交，不再只验四角；任一运动基元、解析候选和数据可行性审计都复用相同外廓与 `collision_margin`。
 - 平滑与速度剖面位于 `planner/` 内且为可选后处理，不改变三阶段共用的 `interfaces/Trajectory(points, dt)` 契约。
 - `sim/tasks.py` 不依赖规划器：9×5 能力矩阵显式保留不支持单元，支持单元只保证任务几何契约；规划失败的重采样由后续数据/实验编排层负责。
-- `TaskSampler._sample_axial_start`：紧 bay 车位（maintenance_bay/crusher_slot/fuel_bay）的 T2/T3/T4/T5 起点沿 bay 轴线对齐采样（yaw==gyaw，按机动方向从轴线鼻前/鼻后侧 d 米外接近）。原因：远距离随机大转角起点会让紧 bay 口的解析候选全部碰撞、离散搜索难以收敛；真实卡车本就先对齐再入位。机动方向与 bay 几何不一致时回退常规采样，由准入矩阵保证方向一致。
+- `TaskSampler` 将 `perpendicular_bay`/`diagonal_bay` 的基准航向解释为前进入位航向，倒车任务翻转 180° 使车头朝入口；`_sample_axial_start` 对普通结构化车位和紧 bay（maintenance_bay/crusher_slot/fuel_bay）从与请求机动一致的入口侧采样，并用 0.1m 步长确认目标到起点的完整车辆外廓走廊连续无碰撞。相邻占用会先过滤堵住入口走廊的目标；T4 仍携带 3–6 个候选，但把用于构造起点的参考目标放在首位，避免先在不匹配候选上耗尽规划预算。
 - `dataset/build.py::expert_maneuvers` 拥有专家可生成能力：不改变任务几何矩阵，根据与车辆模型身份绑定的完整校准证据排除持续不可达/不稳定监督单元并限制单向可达单元；正式构建与后续校准共享该入口，偶发规划失败仍保持原单元难度重采。对齐采样后 S3 全单元与 S5/T1/T2/T5、S9/T2/T5 限制为倒车，S8/T2/T3/T5 限制为前进。
 - `dataset/calibration.py` 的 case 计划不复用 8:1:1 数据集配额：默认枚举当前专家准入单元，新版本重校准可显式探测全部几何支持单元及双向机动。身份绑定 seed、车辆模型、探测模式、case 计划、重试和预算；只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
 - `model/registry.py` 是模型名称到实现的唯一构造入口；`MineParkingNet` 保持 `net-v0` 兼容，v1/v2 的终止 logits 不改变闭环最终消费的 `Trajectory` 契约。

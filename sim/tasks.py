@@ -85,9 +85,16 @@ _OCCUPANCY_SCENES = {
 
 _VEHICLE_SCALED_SCENES = {"S3_maintenance", "S4_dump_area", "S7_fuel_station", "S9_mine_complex"}
 
-# 必须沿车位轴线对齐进入的紧 bay 车位类型：远距起点若随机大转角，
-# 紧 bay 口会把解析候选全部碰撞拒绝，离散搜索难以收敛。
-_AXIAL_BAY_KINDS = {"crusher_slot", "maintenance_bay", "fuel_bay"}
+# 使用连续轴线入口的车位类型。紧 bay 需要避免随机大转角；普通垂直/斜列
+# 车位也需要让请求的前进/倒车机动与车头朝向、入口侧保持一致。
+_AXIAL_BAY_KINDS = {
+    "crusher_slot",
+    "maintenance_bay",
+    "fuel_bay",
+    "perpendicular_bay",
+    "diagonal_bay",
+}
+_BIDIRECTIONAL_ENTRY_KINDS = {"perpendicular_bay", "diagonal_bay"}
 
 
 @dataclass(frozen=True)
@@ -390,17 +397,29 @@ class TaskSampler:
         task_seed, scene_seed, rng = self._random_stream(scene_name, kind, sample_index)
 
         scene = self._build_scene(scene_name, seed=scene_seed)
+        self._orient_spots_for_maneuver(scene, selected_maneuver)
         reason = self._unsupported_reason(scene, kind)
         if reason:
             raise UnsupportedTaskError(f"{scene_name}/{kind.value}: {reason}")
 
         tier = _TASK_DISTANCE[kind]
-        eligible_indices = self._eligible_spot_indices(scene, tier)
+        eligible_indices = [
+            index
+            for index in self._eligible_spot_indices(scene, tier)
+            if self._structured_approach_possible(
+                scene, scene.spots[index], tier, selected_maneuver
+            )
+        ]
+        if not eligible_indices:
+            raise UnsupportedTaskError(
+                f"{scene_name}/{kind.value}: 请求方向与距离档下无连续无碰撞入口走廊"
+            )
         target_index = int(rng.choice(eligible_indices))
         if adjacent_occupancy:
             scene, target_index = self._with_adjacent_occupancy(
                 scene_name, scene_seed, scene, eligible_indices,
-                target_index, adjacent_occupancy, kind, rng,
+                target_index, adjacent_occupancy, kind,
+                tier, selected_maneuver, rng,
             )
             if kind == TaskType.T4_MULTI_SPOT and len(scene.free_spots()) < 3:
                 raise UnsupportedTaskError(
@@ -545,6 +564,8 @@ class TaskSampler:
         target_index: int,
         count: int,
         task_type: TaskType,
+        tier: DistanceTier,
+        maneuver: Maneuver,
         rng: np.random.Generator,
     ) -> tuple[SceneBundle, int]:
         if scene_name not in _OCCUPANCY_SCENES:
@@ -552,6 +573,15 @@ class TaskSampler:
         patterns = self._valid_occupancy_patterns(
             scene_name, scene_seed, scene, eligible_indices, count
         )
+        for bundle in patterns.values():
+            self._orient_spots_for_maneuver(bundle, maneuver)
+        patterns = {
+            index: bundle
+            for index, bundle in patterns.items()
+            if self._structured_approach_possible(
+                bundle, bundle.spots[index], tier, maneuver
+            )
+        }
         if task_type == TaskType.T4_MULTI_SPOT:
             patterns = {
                 index: bundle for index, bundle in patterns.items()
@@ -627,16 +657,7 @@ class TaskSampler:
         task_type: TaskType,
         rng: np.random.Generator,
     ) -> VehicleState:
-        if (
-            task_type
-            in (
-                TaskType.T2_MEDIUM,
-                TaskType.T3_LONG,
-                TaskType.T4_MULTI_SPOT,
-                TaskType.T5_DYNAMIC,
-            )
-            and reference_spot.kind in _AXIAL_BAY_KINDS
-        ):
+        if reference_spot.kind in _AXIAL_BAY_KINDS:
             axial = self._sample_axial_start(scene, reference_spot, tier, maneuver, rng)
             if axial is not None:
                 return axial
@@ -700,31 +721,66 @@ class TaskSampler:
         """
         gx, gy, gyaw = spot.pose.x, spot.pose.y, spot.pose.yaw
         nx, ny = math.cos(gyaw), math.sin(gyaw)
-        perp_x, perp_y = -ny, nx
-        probe = 4.0
-        plus_free = self.pose_is_free(scene.env, gx + nx * probe, gy + ny * probe, gyaw)
-        minus_free = self.pose_is_free(scene.env, gx - nx * probe, gy - ny * probe, gyaw)
-        if maneuver == Maneuver.FORWARD:
-            if not minus_free:
-                return None
-            side = -1.0
-        else:
-            if not plus_free:
-                return None
-            side = 1.0
-        band = max(
-            0.5,
-            min(2.0, spot.size[1] / 2.0 - self.vehicle_width / 2.0 - 0.5),
-        )
         lower, upper = tier.bounds
-        for _ in range(self.max_attempts):
-            distance = float(rng.uniform(lower, upper))
-            lateral = float(rng.uniform(-band, band))
-            x = gx + side * nx * distance + lateral * perp_x
-            y = gy + side * ny * distance + lateral * perp_y
-            if self.pose_is_free(scene.env, x, y, gyaw):
-                return VehicleState(x=x, y=y, yaw=gyaw)
-        return None
+        clear_limit = self._axial_clearance_limit(scene, spot, maneuver, upper)
+        if clear_limit + 1e-9 < lower:
+            return None
+        distance = float(rng.uniform(lower, min(upper, clear_limit)))
+        side = -1.0 if maneuver == Maneuver.FORWARD else 1.0
+        return VehicleState(
+            x=gx + side * nx * distance,
+            y=gy + side * ny * distance,
+            yaw=gyaw,
+        )
+
+    def _structured_approach_possible(
+        self,
+        scene: SceneBundle,
+        spot: ParkingSpot,
+        tier: DistanceTier,
+        maneuver: Maneuver,
+    ) -> bool:
+        if spot.kind not in _AXIAL_BAY_KINDS:
+            return True
+        lower, upper = tier.bounds
+        return self._axial_clearance_limit(scene, spot, maneuver, upper) + 1e-9 >= lower
+
+    def _axial_clearance_limit(
+        self,
+        scene: SceneBundle,
+        spot: ParkingSpot,
+        maneuver: Maneuver,
+        upper: float,
+    ) -> float:
+        """返回从目标沿请求入口侧连续保持 footprint 自由的最大轴向距离。"""
+        gx, gy, gyaw = spot.pose.x, spot.pose.y, spot.pose.yaw
+        nx, ny = math.cos(gyaw), math.sin(gyaw)
+        side = -1.0 if maneuver == Maneuver.FORWARD else 1.0
+        step = 0.1
+        clear_limit = 0.0
+        for distance in np.linspace(0.0, upper, int(math.ceil(upper / step)) + 1):
+            if not self.pose_is_free(
+                scene.env,
+                gx + side * nx * float(distance),
+                gy + side * ny * float(distance),
+                gyaw,
+            ):
+                break
+            clear_limit = float(distance)
+        return clear_limit
+
+    @staticmethod
+    def _orient_spots_for_maneuver(scene: SceneBundle, maneuver: Maneuver) -> None:
+        """普通车位的目标航向随入位方式变化：倒车时车头朝入口。"""
+        if maneuver != Maneuver.REVERSE:
+            return
+        for spot in scene.spots:
+            if spot.kind in _BIDIRECTIONAL_ENTRY_KINDS:
+                spot.pose = GoalPose(
+                    spot.pose.x,
+                    spot.pose.y,
+                    _wrap_angle(spot.pose.yaw + math.pi),
+                )
 
     @staticmethod
     def _candidate_spots(
@@ -738,7 +794,6 @@ class TaskSampler:
         others = [spot for spot in free if spot.id != reference_spot.id]
         rng.shuffle(others)
         selected = [reference_spot, *others[: count - 1]]
-        rng.shuffle(selected)
         return selected
 
     def _dynamic_event(

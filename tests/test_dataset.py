@@ -293,13 +293,18 @@ class TestTaskDrivenDataset(unittest.TestCase):
         )
 
     def test_t4_uses_first_plannable_candidate_and_records_policy(self):
-        task = TaskSampler(seed=77).sample("S1_parking_lot", TaskType.T4_MULTI_SPOT)
+        task = TaskSampler(seed=77).sample(
+            "S1_parking_lot",
+            TaskType.T4_MULTI_SPOT,
+            maneuver=Maneuver.FORWARD,
+        )
         rejected_x = task.candidate_goals[0].x
         generator = DatasetGenerator(
             component_factory=lambda current: (
                 _TaskPlanner(rejected_x=rejected_x),
                 _TaskPipeline(current),
             ),
+            enforce_maneuver_consistency=False,
             enforce_trajectory_feasibility=False,
         )
         sample = generator.generate([task])[0]
@@ -307,7 +312,7 @@ class TestTaskDrivenDataset(unittest.TestCase):
         self.assertNotEqual(sample.goal.x, rejected_x)
         self.assertEqual(
             sample.task_meta["dataset"]["goal_policy"],
-            "first_consistent_plannable_candidate",
+            "first_plannable_candidate",
         )
         self.assertEqual(
             sample.task_meta["dataset"]["selected_goal"]["x"], sample.goal.x
