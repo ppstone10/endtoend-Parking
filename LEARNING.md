@@ -67,6 +67,6 @@
 ## 低开环误差不等于网络轨迹可以安全闭环
 
 - **触发：** deployment 的 ADE/FDE 已进入亚米级，但网络→MPC 闭环仍碰撞、振荡或无法进入车位阈值。
-- **规则：** 闭环评测必须从数据集 manifest 和任务元数据复原原始场景、占用、噪声、BEV 与 selected goal，使用车位自身容差；先比较少量相邻重规划周期，再冻结周期并按场景×任务分层评测。MPC 跟踪 RMS 很小而碰撞率高时，应优先检查网络轨迹的障碍安全约束和闭环状态分布，不能继续靠 early stopping 或总体 ADE/FDE 调参。
+- **规则：** 闭环评测必须从数据集 manifest 和任务元数据复原原始场景、占用、噪声、BEV 与 selected goal，使用车位自身容差；先比较少量相邻重规划周期，再冻结周期并按场景×任务分层评测。MPC 跟踪 RMS 很小而碰撞率高时，采用三层闭环：训练中约束完整车体连续扫掠；采集学习器实际访问的位姿/航向偏离状态并由专家重标注；运行时独立审查网络轨迹并记录专家回退干预。三层都从车辆/BEV/环境接口取几何，不能按场景编号打补丁，也不能继续靠 early stopping 或总体 ADE/FDE 调参。
 - **原因：** v7-flow-v3 net-v1 的 val/test 开环 ADE 为 0.272/0.147m，但 K=10 的 34 条 val 分层闭环仅 32.4% 成功、29.4% 碰撞，30 条 S9 仅 50.0% 成功、33.3% 碰撞；跟踪 RMS 仍只有 0.047/0.043m。K=1、5、10、20 的同批 4 条比较为 0%、25%、50%、25%，说明逐周期重置 320 点整段轨迹会放大末端振荡，但仅调整周期不能解决轨迹安全缺口。
-- **实现与契约：** `experiments/closed_loop_evaluation.py`、`scripts/run_closed_loop.py`、`runtime/sources.py::NetworkSource`，见 `LOOP-EVAL-001`；T5 当前结果只代表静态场景闭环。
+- **实现与契约：** `training/safety.py`、`dataset/recovery.py`、`runtime/safety.py`、`scripts/build_recovery_dataset.py` 和 `experiments/closed_loop_evaluation.py`，见 `SAFE-LOSS-001/SAFE-DATA-001/SAFE-SHIELD-001`；T5 当前结果只代表静态场景闭环，安全门禁也只保证当前环境模型中已知障碍。

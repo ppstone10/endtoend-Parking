@@ -2,7 +2,14 @@
 
 from .engine import ClosedLoopEngine
 from .recorder import EpisodeRecord
-from .sources import ExpertSource, NetworkSource, TrajectorySource
+from .safety import FootprintTrajectorySafetyChecker, SafetyDecision, SafetyShieldStats
+from .sources import (
+    ExpertSource,
+    NetworkSource,
+    ReplanningExpertSource,
+    SafetyShieldSource,
+    TrajectorySource,
+)
 from .termination import TerminalChecker
 
 __all__ = [
@@ -10,6 +17,11 @@ __all__ = [
     "EpisodeRecord",
     "ExpertSource",
     "NetworkSource",
+    "ReplanningExpertSource",
+    "SafetyShieldSource",
+    "FootprintTrajectorySafetyChecker",
+    "SafetyDecision",
+    "SafetyShieldStats",
     "TrajectorySource",
     "TerminalChecker",
 ]

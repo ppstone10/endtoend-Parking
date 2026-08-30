@@ -60,6 +60,7 @@ class ClosedLoopEngine:
         replan_every: int = 1,
         max_steps: int = 600,
         meta: dict | None = None,
+        collision_checker=None,
     ) -> None:
         if replan_every < 1:
             raise ValueError("replan_every 至少为 1")
@@ -73,6 +74,7 @@ class ClosedLoopEngine:
         self.replan_every = replan_every
         self.max_steps = max_steps
         self.meta = meta or {}
+        self.collision_checker = collision_checker
 
     def run(self, start: VehicleState, goal: GoalPose) -> EpisodeResult:
         """执行一次闭环泊车回合，返回完整指标。"""
@@ -89,8 +91,9 @@ class ClosedLoopEngine:
                 traj, infer_ms = self.source.next_trajectory(state)
                 inference_times.append(infer_ms)
             cmd = self.mpc.compute(traj, state)
+            previous_state = state
             state = self.vehicle_model.step(state, cmd, self.mpc.dt)
-            collision = self._check_collision(state)
+            collision = self._check_collision(previous_state, state)
             record.log(state, cmd, traj, traj, collision)
             if collision:
                 break
@@ -103,7 +106,11 @@ class ClosedLoopEngine:
     # 内部
     # ------------------------------------------------------------------
 
-    def _check_collision(self, state: VehicleState) -> bool:
+    def _check_collision(self, previous: VehicleState, state: VehicleState) -> bool:
+        if self.collision_checker is not None:
+            start = np.asarray([previous.x, previous.y, previous.yaw], dtype=np.float64)
+            end = np.asarray([state.x, state.y, state.yaw], dtype=np.float64)
+            return not bool(self.collision_checker.swept_segment_free(start, end))
         if self.env is None:
             return False
         corners = vehicle_corners(state, self.vehicle_length, self.vehicle_width)
@@ -132,6 +139,10 @@ class ClosedLoopEngine:
             failure = FAILURE_POSE_ERROR  # 接近但未达标
         else:
             failure = FAILURE_TIMEOUT
+        result_meta = dict(self.meta)
+        safety_stats = getattr(self.source, "safety_stats", None)
+        if callable(safety_stats):
+            result_meta["safety_shield"] = safety_stats()
         return EpisodeResult(
             success=success,
             failure=failure,
@@ -144,7 +155,7 @@ class ClosedLoopEngine:
             inference_ms=float(np.mean(inference_times)) if inference_times else 0.0,
             collision=collision,
             record=record,
-            meta=dict(self.meta),
+            meta=result_meta,
         )
 
     @staticmethod

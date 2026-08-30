@@ -42,6 +42,11 @@ class TrainerConfig:
     teacher_forcing_decay_epochs: int = 15
     early_stopping_start_epoch: int = 0
     stop_target_mode: str = "terminal"
+    collision_loss_weight: float = 0.0
+    safety_extra_margin_m: float = 0.1
+    safety_sample_spacing_m: float = 0.5
+    safety_max_swept_substeps: int = 16
+    safety_out_of_bounds_weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -84,6 +89,21 @@ class TrainerConfig:
             raise ValueError("early_stopping_start_epoch 必须位于 [0, epochs) 内")
         if self.stop_target_mode not in {"terminal", "cumulative"}:
             raise ValueError("stop_target_mode 必须为 terminal 或 cumulative")
+        for name, value in (
+            ("collision_loss_weight", self.collision_loss_weight),
+            ("safety_extra_margin_m", self.safety_extra_margin_m),
+            ("safety_out_of_bounds_weight", self.safety_out_of_bounds_weight),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} 必须为有限非负数")
+        if not math.isfinite(self.safety_sample_spacing_m) or self.safety_sample_spacing_m <= 0.0:
+            raise ValueError("safety_sample_spacing_m 必须为有限正数")
+        if (
+            isinstance(self.safety_max_swept_substeps, bool)
+            or not isinstance(self.safety_max_swept_substeps, int)
+            or self.safety_max_swept_substeps <= 0
+        ):
+            raise ValueError("safety_max_swept_substeps 必须为正整数")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -101,6 +121,8 @@ class TrainingHistory:
 
     train_loss: list[float] = field(default_factory=list)
     val_loss: list[float] = field(default_factory=list)
+    train_collision_loss: list[float] = field(default_factory=list)
+    val_collision_loss: list[float] = field(default_factory=list)
     teacher_forcing_ratio: list[float] = field(default_factory=list)
     train_rollout_ade_m: list[float] = field(default_factory=list)
     train_rollout_fde_m: list[float] = field(default_factory=list)
@@ -129,11 +151,15 @@ class Trainer:
         *,
         model_name: str,
         model_config: dict | None = None,
+        safety_loss: nn.Module | None = None,
     ) -> None:
         self.model = model
         self.config = config
         self.model_name = model_name
         self.model_config = {} if model_config is None else dict(model_config)
+        self.safety_loss = safety_loss
+        if config.collision_loss_weight > 0.0 and safety_loss is None:
+            raise ValueError("collision_loss_weight > 0 时必须提供 safety_loss")
         self.device = torch.device(config.device)
         self.model.to(self.device)
         self.optimizer = torch.optim.Adam(
@@ -151,7 +177,7 @@ class Trainer:
         training: bool,
         epoch: int,
         batch_index: int,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         bev, goal, state, target, mask = self._move_batch(batch)
         forward_with_stop = getattr(self.model, "forward_with_stop", None)
         if callable(forward_with_stop):
@@ -172,7 +198,7 @@ class Trainer:
                 teacher_forcing_ratio=teacher_forcing_ratio,
                 sampling_generator=sampling_generator,
             )
-            return variable_loss_fn(
+            base_loss = variable_loss_fn(
                 prediction.points,
                 prediction.stop_logits,
                 target,
@@ -181,11 +207,22 @@ class Trainer:
                 balance_stop=self.config.balance_stop_loss,
                 stop_target_mode=self.config.stop_target_mode,
             )
-        return loss_fn(self.model(bev, goal, state), target, mask)
+            points = prediction.points
+        else:
+            points = self.model(bev, goal, state)
+            base_loss = loss_fn(points, target, mask)
+        if self.safety_loss is None or self.config.collision_loss_weight == 0.0:
+            collision_loss = torch.zeros((), dtype=base_loss.dtype, device=base_loss.device)
+            return base_loss, collision_loss
+        collision_loss = self.safety_loss(bev, points, mask)
+        return (
+            base_loss + self.config.collision_loss_weight * collision_loss,
+            collision_loss,
+        )
 
     def _run_epoch(
         self, batches: tuple[Batch, ...], *, training: bool, epoch: int
-    ) -> float:
+    ) -> tuple[float, float]:
         if not batches:
             raise ValueError("训练和验证 batches 均不能为空")
         from .data import epoch_batches
@@ -198,12 +235,13 @@ class Trainer:
         )
         self.model.train(training)
         total = 0.0
+        collision_total = 0.0
         context = torch.enable_grad() if training else torch.no_grad()
         with context:
             for batch_index, batch in enumerate(active_batches):
                 if training:
                     self.optimizer.zero_grad()
-                loss = self._batch_loss(
+                loss, collision_loss = self._batch_loss(
                     batch,
                     training=training,
                     epoch=epoch,
@@ -217,7 +255,8 @@ class Trainer:
                         )
                     self.optimizer.step()
                 total += float(loss.detach().cpu())
-        return total / len(active_batches)
+                collision_total += float(collision_loss.detach().cpu())
+        return total / len(active_batches), collision_total / len(active_batches)
 
     @torch.no_grad()
     def _rollout_metrics(self, batches: tuple[Batch, ...]) -> dict[str, float | None]:
@@ -287,6 +326,11 @@ class Trainer:
             "history": history.to_dict(),
             "model_state": self.model.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
+            "safety_loss_config": (
+                None
+                if self.safety_loss is None
+                else getattr(self.safety_loss, "to_metadata")()
+            ),
         }
 
     def _save_checkpoint(
@@ -325,12 +369,24 @@ class Trainer:
             "teacher_forcing_decay_epochs",
             "early_stopping_start_epoch",
             "stop_target_mode",
+            "collision_loss_weight",
+            "safety_extra_margin_m",
+            "safety_sample_spacing_m",
+            "safety_max_swept_substeps",
+            "safety_out_of_bounds_weight",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)
             for field in compatibility_fields
         ):
             raise RuntimeError("checkpoint 训练超参数与当前 Trainer 不一致")
+        current_safety = (
+            None
+            if self.safety_loss is None
+            else getattr(self.safety_loss, "to_metadata")()
+        )
+        if payload.get("safety_loss_config") != current_safety:
+            raise RuntimeError("checkpoint 安全几何与当前 Trainer 不一致")
         self.model.load_state_dict(payload["model_state"])
         self.optimizer.load_state_dict(payload["optimizer_state"])
         history = TrainingHistory(**payload["history"])
@@ -359,12 +415,18 @@ class Trainer:
         else:
             stale_epochs = start_epoch - monitoring_start
         for epoch in range(start_epoch, self.config.epochs):
-            train_loss = self._run_epoch(train_data, training=True, epoch=epoch)
-            val_loss = self._run_epoch(val_data, training=False, epoch=epoch)
+            train_loss, train_collision_loss = self._run_epoch(
+                train_data, training=True, epoch=epoch
+            )
+            val_loss, val_collision_loss = self._run_epoch(
+                val_data, training=False, epoch=epoch
+            )
             train_rollout = self._rollout_metrics(train_data)
             val_rollout = self._rollout_metrics(val_data)
             history.train_loss.append(train_loss)
             history.val_loss.append(val_loss)
+            history.train_collision_loss.append(train_collision_loss)
+            history.val_collision_loss.append(val_collision_loss)
             history.teacher_forcing_ratio.append(
                 self.config.teacher_forcing_ratio(epoch)
             )

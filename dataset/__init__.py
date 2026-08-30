@@ -10,6 +10,11 @@ from .calibration import (
 )
 from .components import build_task_components
 from .generator import DatasetGenerator, TaskGenerationError, TrainingSample
+from .recovery import (
+    RecoveryCandidate,
+    build_recovery_sample,
+    select_recovery_candidates,
+)
 from .feasibility import (
     TrajectoryFeasibilityAudit,
     audit_trajectory_feasibility,
@@ -43,6 +48,9 @@ __all__ = [
     "DatasetGenerator",
     "TaskGenerationError",
     "TrainingSample",
+    "RecoveryCandidate",
+    "build_recovery_sample",
+    "select_recovery_candidates",
     "TrajectoryFeasibilityAudit",
     "audit_trajectory_feasibility",
     "require_trajectory_feasibility",

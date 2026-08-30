@@ -50,6 +50,14 @@ def save_training_artifacts(
     epochs = list(range(1, len(history.train_loss) + 1))
     loss_axis.plot(epochs, history.train_loss, color=COLORS["actual"], label="Train loss")
     loss_axis.plot(epochs, history.val_loss, color=COLORS["plan"], label="Validation loss")
+    if history.val_collision_loss and any(value > 0.0 for value in history.val_collision_loss):
+        loss_axis.plot(
+            epochs,
+            history.val_collision_loss,
+            color=COLORS["spot"],
+            linestyle=":",
+            label="Validation collision loss (raw)",
+        )
     if history.best_epoch >= 0:
         loss_axis.axvline(history.best_epoch + 1, color=COLORS["expert"], linestyle="--", label="Best epoch")
     loss_axis.set_xlabel("Epoch")

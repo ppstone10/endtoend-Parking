@@ -9,7 +9,7 @@ from interfaces import ControlCmd, GoalPose, Trajectory, VehicleState
 from runtime import ClosedLoopEngine, ExpertSource, TerminalChecker
 from runtime.termination import classify_oscillation
 from sim import DifferentialDriveModel, ParkingEnvironment, RectangleObstacle
-from planner import HybridAStarPlanner
+from planner import HybridAStarPlanner, RectangleFootprintCollisionChecker
 
 
 class _StraightSource:
@@ -125,6 +125,26 @@ class TestClosedLoopEngine(unittest.TestCase):
             GoalPose(5.0, 5.0, -np.pi / 4),
         )
         self.assertTrue(result.success, f"failure={result.failure} pos={result.final_pos_err:.2f} yaw={result.final_yaw_err:.2f}")
+
+    def test_injected_collision_checker_detects_swept_tunneling(self):
+        env = ParkingEnvironment(
+            world_size=20.0,
+            obstacles=[RectangleObstacle(0.95, 1.05, -1.0, 1.0)],
+        )
+        checker = RectangleFootprintCollisionChecker(
+            env,
+            vehicle_length=0.5,
+            vehicle_width=0.5,
+            collision_margin=0.0,
+            resolution=0.05,
+        )
+        engine = self._engine(_StraightSource(), collision_checker=checker)
+        self.assertTrue(
+            engine._check_collision(
+                VehicleState(0.0, 0.0, 0.0),
+                VehicleState(2.0, 0.0, 0.0),
+            )
+        )
 
 
 class TestNetworkSourcePlumbing(unittest.TestCase):

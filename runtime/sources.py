@@ -12,6 +12,7 @@ from typing import Protocol
 import numpy as np
 
 from interfaces import GoalPose, Trajectory, VehicleState
+from .safety import SafetyShieldStats, TrajectorySafetyChecker
 
 
 class TrajectorySource(Protocol):
@@ -37,6 +38,66 @@ class ExpertSource:
     def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
         assert self._traj is not None, "begin 未调用"
         return self._traj, 0.0
+
+
+class ReplanningExpertSource:
+    """可信回退源：每次从当前状态重新规划到回合目标。"""
+
+    def __init__(self, planner) -> None:
+        self.planner = planner
+        self._goal: GoalPose | None = None
+
+    def begin(self, start: VehicleState, goal: GoalPose) -> None:
+        self._goal = goal
+
+    def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
+        import time
+
+        assert self._goal is not None, "begin 未调用"
+        started = time.perf_counter()
+        trajectory = self.planner.plan(state, self._goal)
+        return trajectory, (time.perf_counter() - started) * 1000.0
+
+
+class SafetyShieldSource:
+    """审查主轨迹，不安全时从当前状态切换到可信回退源。"""
+
+    def __init__(self, primary, fallback, checker: TrajectorySafetyChecker) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.checker = checker
+        self.stats = SafetyShieldStats()
+
+    def begin(self, start: VehicleState, goal: GoalPose) -> None:
+        self.stats = SafetyShieldStats()
+        self.primary.begin(start, goal)
+        self.fallback.begin(start, goal)
+
+    def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
+        primary, primary_ms = self.primary.next_trajectory(state)
+        self.stats.checks += 1
+        decision = self.checker.check(state, primary)
+        if decision.safe:
+            return primary, primary_ms
+        self.stats.record_intervention(decision.reason)
+        try:
+            fallback, fallback_ms = self.fallback.next_trajectory(state)
+        except (RuntimeError, ValueError) as exc:
+            self.stats.fallback_failures += 1
+            raise RuntimeError(
+                f"安全门禁拒绝主轨迹（{decision.reason}），可信回退规划失败：{exc}"
+            ) from exc
+        fallback_decision = self.checker.check(state, fallback)
+        if not fallback_decision.safe:
+            self.stats.fallback_failures += 1
+            raise RuntimeError(
+                "安全门禁拒绝主轨迹且回退轨迹仍不安全："
+                f"{fallback_decision.reason}"
+            )
+        return fallback, primary_ms + fallback_ms
+
+    def safety_stats(self) -> dict:
+        return self.stats.to_dict()
 
 
 class NetworkSource:

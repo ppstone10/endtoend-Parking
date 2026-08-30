@@ -73,6 +73,12 @@ foreach ($split in 'train', 'val', 'test') {
 # resume_from: ../../runs/training/v7-flow-v3/net-v1/last.pt
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1.yaml
 
+# 下一阶段：从当前策略闭环访问状态采集专家恢复标签；按源任务原子检查点，可直接重复原命令续建
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_recovery_dataset.py --data data/task_dataset/tracked_pivot_v7_3000/train.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --output data/task_dataset/tracked_pivot_v8_recovery --samples 240
+
+# 使用“原专家 + 闭环恢复”合并集训练；启用完整车体连续扫掠碰撞损失，输出写入新目录
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1-safe.yaml
+
 # 中断恢复优先使用 last.pt；部署和开环分析使用自动校准后的 deployment.pt
 # 完整参数含义、验收门槛和人工单变量调优方法见 docs/training_guide.md
 
@@ -93,6 +99,10 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 
 # 全量评测使用 --samples 0；T5 当前只按静态场景闭环，不代表动态障碍验证
 python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/test.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 0 --output runs/closed-loop/v7-flow-v3/net-v1/test-full-k10/report.json
+
+# 安全训练完成后分别保留纯网络和安全门禁两种口径；后者审查完整矩形扫掠并在不安全时专家重规划
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v8-safety-v1/net-v1/deployment.pt --samples 34 --safety-mode none --output runs/closed-loop/v8-safety-v1/net-v1/val-pure/report.json
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v8-safety-v1/net-v1/deployment.pt --samples 34 --safety-mode expert_fallback --output runs/closed-loop/v8-safety-v1/net-v1/val-shield/report.json
 ```
 
 ## 目录结构
@@ -102,12 +112,12 @@ interfaces/    统一接口定义（传感器帧、BEV、车辆状态、轨迹�
 sensor2bev/    Sensor2BEV 环境表示模块（LiDAR/Camera → BEV）
 sim/           Python 仿真环境（二维矿区、车辆运动模型、模拟传感器）
 model/         MineParkingNet v0/v1/v2、变长轨迹输出与模型注册表（PyTorch）
-training/      安全 YAML 配置、数据准备、训练/验证、early stopping、原子 checkpoint 与训练报告
+training/      安全 YAML 配置、数据准备、完整车体扫掠损失、训练/验证、early stopping 与原子 checkpoint
 controller/    MPC 轨迹跟踪控制器（CEM 滚动时域优化）
 planner/       履带 Hybrid A* 专家轨迹（前后弧线、原地转向、RS/履带解析终连、完整扫掠碰撞）
-dataset/       全能力校准、Task 分层/划分/重采、双门禁、专家轨迹与融合 BEV、schema v2 统计/验收图
+dataset/       全能力校准、Task 分层/划分/重采、闭环恢复重标注、专家轨迹与融合 BEV、schema v2 统计/验收图
 configs/       可编辑理论钻机与实验 JSON 配置
-runtime/       滚动闭环引擎（轨迹源→MPC→车辆，终止判定与失败分类）
+runtime/       滚动闭环引擎（轨迹源→安全门禁/专家回退→MPC→车辆，终止判定与失败分类）
 metrics/       回合指标定义与聚合（成功率/碰撞率/误差等）
 scripts/       运行脚本
 tests/         单元测试

@@ -24,7 +24,7 @@ from interfaces import GoalPose, VehicleState
 from metrics import summarize
 from runtime import ClosedLoopEngine, ExpertSource, TerminalChecker
 from sim import DifferentialDriveModel, ParkingEnvironment, RectangleObstacle, get_vehicle
-from planner import HybridAStarPlanner
+from planner import HybridAStarPlanner, RectangleFootprintCollisionChecker
 
 
 def build_env(spec: dict) -> ParkingEnvironment:
@@ -70,6 +70,13 @@ def run_experiment(config: dict) -> dict:
     )
     planner = HybridAStarPlanner(env=env, **planner_kwargs)
     source = ExpertSource(planner)
+    actual_collision_checker = RectangleFootprintCollisionChecker(
+        env,
+        vehicle_length=vehicle.length,
+        vehicle_width=vehicle.width,
+        collision_margin=0.0,
+        resolution=vehicle.collision_check_resolution,
+    )
 
     term_cfg = config.get("terminal", {})
     engine = ClosedLoopEngine(
@@ -83,6 +90,7 @@ def run_experiment(config: dict) -> dict:
         env=env,
         replan_every=config.get("replan_every", 1),
         max_steps=config.get("max_steps", 600),
+        collision_checker=actual_collision_checker,
         **vehicle.collision_kwargs(),
     )
 

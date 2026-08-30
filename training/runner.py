@@ -19,6 +19,7 @@ from .data import model_horizon, prepare_batches, validate_model_dataset
 from .reporting import atomic_write_json, save_training_artifacts
 from .stop_calibration import calibrate_stop_threshold, write_deployment_checkpoint
 from .trainer import Trainer, TrainingHistory
+from .safety import SweptFootprintLoss, safety_geometry_from_dataset
 
 
 def run_training(config: TrainingRunConfig) -> dict[str, Any]:
@@ -37,11 +38,25 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
     val_batches = prepare_batches(
         val_data, horizon=horizon, batch_size=config.batch_size
     )
+    safety_loss = None
+    if config.trainer.collision_loss_weight > 0.0:
+        train_geometry = safety_geometry_from_dataset(train_data)
+        val_geometry = safety_geometry_from_dataset(val_data)
+        if train_geometry != val_geometry:
+            raise ValueError("启用碰撞损失时 train/val 安全几何必须一致")
+        safety_loss = SweptFootprintLoss(
+            train_geometry,
+            extra_margin_m=config.trainer.safety_extra_margin_m,
+            sample_spacing_m=config.trainer.safety_sample_spacing_m,
+            max_swept_substeps=config.trainer.safety_max_swept_substeps,
+            out_of_bounds_weight=config.trainer.safety_out_of_bounds_weight,
+        )
     trainer = Trainer(
         model,
         config.trainer,
         model_name=config.model_name,
         model_config=config.model_config,
+        safety_loss=safety_loss,
     )
 
     def record_progress(epoch: int, history: TrainingHistory) -> None:
@@ -57,6 +72,7 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
             f"epoch {epoch + 1}/{config.trainer.epochs} "
             f"train={history.train_loss[-1]:.6f} "
             f"val={history.val_loss[-1]:.6f} "
+            f"collision={history.val_collision_loss[-1]:.4f} "
             f"rollout_val_ade={history.val_rollout_ade_m[-1]:.3f}m "
             f"rollout_val_fde={history.val_rollout_fde_m[-1]:.3f}m "
             f"teacher={history.teacher_forcing_ratio[-1]:.3f} "

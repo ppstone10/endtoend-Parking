@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 
+from interfaces import Trajectory, VehicleState
 from sim import ParkingEnvironment
 from sim.footprint import rectangle_pose_is_free
 
@@ -63,6 +64,24 @@ class RectangleFootprintCollisionChecker:
             if not self.pose_free(x, y, yaw):
                 return False
         return True
+
+    def check_trajectory(
+        self, state: VehicleState, trajectory: Trajectory
+    ) -> tuple[bool, str | None]:
+        """从当前状态开始审查全部位姿和相邻点连续扫掠。"""
+        points = np.asarray(trajectory.points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+            return False, "empty_trajectory"
+        if not np.isfinite(points).all():
+            return False, "nonfinite_trajectory"
+        previous = np.asarray([state.x, state.y, state.yaw], dtype=np.float64)
+        if not self.pose_free(*previous):
+            return False, "current_pose_collision"
+        for point in points:
+            if not self.swept_segment_free(previous, point):
+                return False, "swept_collision"
+            previous = point
+        return True, None
 
     def rectangle_corners(self, x: float, y: float, yaw: float) -> np.ndarray:
         rotation = np.array(

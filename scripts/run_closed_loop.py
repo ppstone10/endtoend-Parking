@@ -15,7 +15,7 @@ from controller import MPCController
 from experiments.closed_loop_evaluation import run_dataset_network_evaluation
 from interfaces import GoalPose, VehicleState
 from metrics import summarize
-from planner import HybridAStarPlanner
+from planner import HybridAStarPlanner, RectangleFootprintCollisionChecker
 from runtime import ClosedLoopEngine, ExpertSource, TerminalChecker
 from sim import DifferentialDriveModel, MINING_DRILL_RIG
 from scripts.train import build_env
@@ -35,6 +35,13 @@ def _run_expert(args: argparse.Namespace) -> dict:
     env = build_env()
     planner = HybridAStarPlanner(env=env, **MINING_DRILL_RIG.planner_kwargs())
     source = ExpertSource(planner)
+    actual_collision_checker = RectangleFootprintCollisionChecker(
+        env,
+        vehicle_length=MINING_DRILL_RIG.length,
+        vehicle_width=MINING_DRILL_RIG.width,
+        collision_margin=0.0,
+        resolution=MINING_DRILL_RIG.collision_check_resolution,
+    )
     engine = ClosedLoopEngine(
         vehicle_model=DifferentialDriveModel(**MINING_DRILL_RIG.vehicle_model_kwargs()),
         mpc=MPCController(
@@ -48,6 +55,7 @@ def _run_expert(args: argparse.Namespace) -> dict:
         env=env,
         replan_every=args.replan_every,
         max_steps=args.steps,
+        collision_checker=actual_collision_checker,
         **MINING_DRILL_RIG.collision_kwargs(),
     )
     rng = np.random.default_rng(args.seed)
@@ -104,6 +112,12 @@ def main() -> None:
         "--selection", choices=["stratified", "head"], default="stratified"
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--safety-mode",
+        choices=["none", "expert_fallback"],
+        default="none",
+        help="网络轨迹安全模式；对照实验保留 none，安全防线使用 expert_fallback",
+    )
     args = parser.parse_args()
 
     if args.source == "expert":
@@ -121,6 +135,7 @@ def main() -> None:
             replan_every=args.replan_every,
             control_seed=args.seed,
             progress=_print_episode,
+            safety_mode=args.safety_mode,
         )
     summary = report["overall"]
     print(
@@ -131,6 +146,12 @@ def main() -> None:
     )
     if args.output and args.source == "network":
         print(f"报告：{Path(args.output).resolve()}")
+    shield = report.get("safety_shield")
+    if shield is not None:
+        print(
+            f"安全门禁：检查 {shield['checks']} 次，干预 {shield['interventions']} 次 "
+            f"({shield['intervention_rate']:.1%})，回退失败 {shield['fallback_failures']} 次"
+        )
 
 
 if __name__ == "__main__":

@@ -16,7 +16,15 @@ from controller import MPCController
 from dataset import DatasetGenerator, build_task_components
 from interfaces import GoalPose, VehicleState
 from metrics import EpisodeResult, summarize
-from runtime import ClosedLoopEngine, NetworkSource, TerminalChecker
+from planner import RectangleFootprintCollisionChecker
+from runtime import (
+    ClosedLoopEngine,
+    FootprintTrajectorySafetyChecker,
+    NetworkSource,
+    ReplanningExpertSource,
+    SafetyShieldSource,
+    TerminalChecker,
+)
 from sim import (
     DifferentialDriveModel,
     Maneuver,
@@ -112,7 +120,7 @@ def reconstruct_dataset_task(
     )
 
 
-def _load_manifest(data_path: Path) -> dict[str, Any]:
+def load_dataset_manifest(data_path: Path) -> dict[str, Any]:
     manifest_path = data_path.parent / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -196,17 +204,20 @@ def run_dataset_network_evaluation(
     replan_every: int = 10,
     control_seed: int = 0,
     progress: Callable[[int, int, EpisodeResult], None] | None = None,
+    safety_mode: str = "none",
 ) -> dict[str, Any]:
     """在数据集原始场景中执行 deployment→MPC 网络闭环评测。"""
     if max_steps <= 0 or replan_every <= 0:
         raise ValueError("max_steps 与 replan_every 必须为正")
+    if safety_mode not in {"none", "expert_fallback"}:
+        raise ValueError("safety_mode 必须为 none 或 expert_fallback")
     data_source = Path(data_path).resolve()
     checkpoint_source = Path(checkpoint_path).resolve()
     data = DatasetGenerator.load(data_source)
     metadata = data.get("task_meta")
     if int(data.get("schema_version", -1)) != 2 or not isinstance(metadata, list):
         raise ValueError("网络闭环评测要求 schema v2 数据集与 task_meta")
-    manifest = _load_manifest(data_source)
+    manifest = load_dataset_manifest(data_source)
     try:
         vehicle = VehicleConfig(**manifest["vehicle_model"])
     except (TypeError, ValueError) as exc:
@@ -233,7 +244,7 @@ def run_dataset_network_evaluation(
         if not np.allclose(stored_goal[:2], actual_goal[:2], atol=1e-7) or abs(yaw_delta) > 1e-7:
             raise ValueError(f"样本 {index} 的 goals 数组与 selected_goal 不一致")
 
-        _, pipeline = build_task_components(restored.task, vehicle)
+        planner, pipeline = build_task_components(restored.task, vehicle)
         stored_bev = data["bev_meta"]
         if (
             not np.isclose(pipeline.bev_config.resolution, float(stored_bev["resolution"]))
@@ -241,7 +252,22 @@ def run_dataset_network_evaluation(
             or list(pipeline.bev_config.shape) != list(stored_bev["shape"][-2:])
         ):
             raise ValueError(f"样本 {index} 的场景 BEV 配置与数据集不一致")
-        source = NetworkSource(pipeline, loaded.model)
+        network_source = NetworkSource(pipeline, loaded.model)
+        if safety_mode == "expert_fallback":
+            source = SafetyShieldSource(
+                network_source,
+                ReplanningExpertSource(planner),
+                FootprintTrajectorySafetyChecker(planner._collision_checker),
+            )
+        else:
+            source = network_source
+        actual_collision_checker = RectangleFootprintCollisionChecker(
+            restored.task.scene.env,
+            vehicle_length=vehicle.length,
+            vehicle_width=vehicle.width,
+            collision_margin=0.0,
+            resolution=vehicle.collision_check_resolution,
+        )
         difficulty = metadata[index]["difficulty"]
         episode_meta = {
             "dataset_index": index,
@@ -270,6 +296,7 @@ def run_dataset_network_evaluation(
             replan_every=replan_every,
             max_steps=max_steps,
             meta=episode_meta,
+            collision_checker=actual_collision_checker,
             **vehicle.collision_kwargs(),
         )
         result = engine.run(state, restored.goal)
@@ -280,6 +307,26 @@ def run_dataset_network_evaluation(
 
     overall = summarize(results)
     overall["elapsed_sec"] = time.perf_counter() - started
+    shield_stats = None
+    if safety_mode == "expert_fallback":
+        checks = sum(result.meta["safety_shield"]["checks"] for result in results)
+        interventions = sum(
+            result.meta["safety_shield"]["interventions"] for result in results
+        )
+        fallback_failures = sum(
+            result.meta["safety_shield"]["fallback_failures"] for result in results
+        )
+        reasons: dict[str, int] = defaultdict(int)
+        for result in results:
+            for reason, count in result.meta["safety_shield"]["reasons"].items():
+                reasons[reason] += int(count)
+        shield_stats = {
+            "checks": checks,
+            "interventions": interventions,
+            "intervention_rate": interventions / checks if checks else 0.0,
+            "fallback_failures": fallback_failures,
+            "reasons": dict(sorted(reasons.items())),
+        }
     report = {
         "schema_version": 1,
         "status": "completed",
@@ -296,11 +343,13 @@ def run_dataset_network_evaluation(
             "replan_every": replan_every,
             "control_seed": control_seed,
             "dynamic_events_applied": False,
+            "safety_mode": safety_mode,
         },
         "vehicle_model": vehicle.to_metadata(),
         "overall": overall,
         "groups": _group_summaries(results),
         "episodes": [_episode_public(result) for result in results],
+        "safety_shield": shield_stats,
     }
     if output_path is not None:
         atomic_write_json(Path(output_path).resolve(), report)

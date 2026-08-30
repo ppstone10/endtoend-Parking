@@ -9,7 +9,13 @@ import unittest
 import torch
 import torch.nn as nn
 
-from training import Trainer, TrainerConfig, epoch_batches
+from training import (
+    SafetyGeometry,
+    SweptFootprintLoss,
+    Trainer,
+    TrainerConfig,
+    epoch_batches,
+)
 
 
 class _TinyTrajectoryModel(nn.Module):
@@ -78,6 +84,7 @@ class TestTrainer(unittest.TestCase):
             history = trainer.fit([_batch()], [_batch()])
             self.assertTrue(history.stopped_early)
             self.assertEqual(len(history.train_loss), 2)
+            self.assertEqual(len(history.val_collision_loss), 2)
             self.assertEqual(len(history.train_rollout_ade_m), 2)
             self.assertEqual(len(history.val_rollout_fde_m), 2)
             self.assertEqual(len(history.teacher_forcing_ratio), 2)
@@ -203,6 +210,45 @@ class TestTrainer(unittest.TestCase):
     def test_rejects_early_stopping_start_outside_run(self):
         with self.assertRaisesRegex(ValueError, "early_stopping_start_epoch"):
             TrainerConfig(epochs=3, early_stopping_start_epoch=3)
+
+    def test_collision_loss_is_recorded_and_safety_geometry_is_resume_semantics(self):
+        def safety(length: float):
+            return SweptFootprintLoss(
+                SafetyGeometry(length, 0.25, 0.0, 0.25, (1.0, 1.0, 1.0, 1.0), 0),
+                extra_margin_m=0.0,
+                sample_spacing_m=0.25,
+            )
+
+        batch = list(_batch())
+        batch[0][:, 0, 4, 4] = 1.0
+        with tempfile.TemporaryDirectory() as temp:
+            config = TrainerConfig(
+                epochs=1,
+                patience=1,
+                checkpoint_dir=temp,
+                collision_loss_weight=0.5,
+            )
+            trainer = Trainer(
+                _TinyTrajectoryModel(),
+                config,
+                model_name="safe",
+                safety_loss=safety(0.5),
+            )
+            history = trainer.fit([tuple(batch)], [tuple(batch)])
+            self.assertGreater(history.val_collision_loss[0], 0.0)
+            changed = Trainer(
+                _TinyTrajectoryModel(),
+                TrainerConfig(
+                    epochs=2,
+                    patience=1,
+                    checkpoint_dir=temp,
+                    collision_loss_weight=0.5,
+                ),
+                model_name="safe",
+                safety_loss=safety(0.75),
+            )
+            with self.assertRaisesRegex(RuntimeError, "安全几何"):
+                changed.load_checkpoint(Path(temp, "last.pt"))
 
 
 if __name__ == "__main__":

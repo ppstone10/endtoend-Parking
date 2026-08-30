@@ -8,11 +8,11 @@
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像按共享 `BEVConfig` 转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
 | Python 仿真与任务 | `sim/` | 二维矿区泊车环境、携带场景级 `BEVConfig` 的 S1–S9 场景与 T1–T5 任务层；`noise.py` 提供传感器噪声；`vehicle_config.py` 严格加载 `configs/vehicles/`，是履带钻机外廓、执行上限和规划搜索参数的统一来源 |
 | 端到端网络 | `model/` | 注册表按 `net-v0/v1/v2` 构造模型：v0 为固定 horizon CNN+MLP，v1 为 CNN+GRU 变长解码和终止 logits，v2 增加 U-Net 跳连空间编码与 goal/state 交叉注意力；损失支持掩码轨迹 MSE 与终止 BCE |
-| 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有确定性样本级 shuffle、计划采样、累计停止监督、课程感知 early stopping 和逐 epoch 自由滚动诊断；runner 在 best 上用 val 自动校准停止阈值，区分可恢复训练 checkpoint 与只读 deployment checkpoint |
+| 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有确定性 shuffle、计划采样、累计停止监督、完整车体连续扫掠损失、课程感知 early stopping 和逐 epoch 自由滚动/碰撞诊断；runner 从 schema v2 解析车辆/BEV 安全几何，并在 best 上用 val 校准停止阈值 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
-| 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图；`scripts/archive_visual_references.py` 负责在删除旧数据前生成自描述可视化参考归档 |
-| 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
+| 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元；Task 驱动生成经机动与可行性双门禁保存 schema v2；`recovery.py` 从学习器闭环偏离状态生成重新审计的专家恢复样本，构建脚本按源任务原子续建并合并原训练集 |
+| 闭环运行时 | `runtime/` | `engine.py` 执行轨迹源→MPC→车辆并以完整矩形连续扫掠判碰撞；`sources.py` 提供 Expert/Network、当前状态专家重规划和安全门禁组合；`safety.py` 定义场景无关的轨迹审查接口与干预统计 |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较；预测诊断层保留逐样本误差与终止长度，按场景、任务、方向、噪声和相邻占用聚合 |
 | 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图与分组开环图；专家验收图和预测叠加图使用“前方 x、车体左方 y”右手局部系，将正 Left 显示在画面左侧，并把连续零位移航向变化汇总为从旋转前航向出发的有符号旋转弧 |
 | 批量实验 | `experiments/` | 配置驱动专家 runner；`closed_loop_evaluation.py` 从 schema v2 NPZ/manifest 确定性复原任务场景并加载 Trainer deployment，输出网络闭环整体、分组与逐回合 JSON |
@@ -47,6 +47,7 @@ Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → Traini
   同身份检查点（seed/计划/车辆模型/重试参数/批大小）+ 未完成批次游标 → 不重放已排除 task ID 地补齐合并 → 正式 NPZ/manifest
 训练 YAML → SafeLoader/严格 schema → 注册表模型 + train/val NPZ → `Trainer`
   → 样本级确定性 shuffle + 累计停止 BCE + teacher-forcing 线性退火
+  → schema v2 车辆/BEV 几何 → 预测轨迹完整矩形与连续扫掠 occupancy/越界损失
   → 每 epoch train/val 自由滚动 ADE/FDE/停止诊断 + 课程预热后 early stopping + 原子 history/best/last
   → best checkpoint 的 val 停止阈值扫描 → 只读 deployment checkpoint + 校准 JSON
   → report.json + training_curve PNG/PDF
@@ -57,9 +58,11 @@ BEVTensor + VehicleState + GoalPose → 模型注册表（net-v0/v1/v2）→ Tra
   （训练：全局专家轨迹/目标 → 起始局部系 → Trainer → 掩码轨迹/终止损失 → 原子 checkpoint）
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
 ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚动循环
-  → 终止（到达双阈值/碰撞/超时/振荡）→ EpisodeResult（metrics/ 聚合）
+  → 可选 SafetyShieldSource（完整扫掠审查 → 当前状态专家回退）
+  → 终止（到达双阈值/完整矩形连续扫掠碰撞/超时/振荡）→ EpisodeResult（含干预统计）
 schema v2 NPZ + manifest + deployment checkpoint → 闭环评测编排
   → 复原 scene/occupancy/noise/BEV/selected goal → NetworkSource（目标通道随回合更新）→ 分组 JSON
+  → 学习器闭环状态（步长/碰撞前/位置或航向偏离）→ 专家重规划与重新审计 → recovery NPZ + 原 train 合并
 ```
 
 - 障碍物碰撞与点云语义分离：`is_free`/`has_collision` 只检查 forbidden 障碍与地图边界；`raycast` 只与 emits_points 障碍求交（悬崖禁止进入但不挡射线，地面标线可通行）。
@@ -98,6 +101,9 @@ schema v2 NPZ + manifest + deployment checkpoint → 闭环评测编排
 - `dataset/calibration.py` 的 case 计划不复用 8:1:1 数据集配额：默认枚举当前专家准入单元，新版本重校准可显式探测全部几何支持单元及双向机动。身份绑定 seed、车辆模型、探测模式、case 计划、重试和预算；只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
 - `model/registry.py` 是模型名称到实现的唯一构造入口；`MineParkingNet` 保持 `net-v0` 兼容，v1/v2 的终止 logits 不改变闭环最终消费的 `Trajectory` 契约。
 - `training/Trainer` 的 checkpoint 必须核对模型名称、模型配置和影响恢复语义的训练超参数，包括 shuffle、停止平衡和 teacher-forcing 调度；允许改变总 epochs、设备和输出目录，但不得静默加载不兼容状态。
+- 启用碰撞损失时，train/val 必须为车辆模型与 BEV 几何一致的 schema v2；完整车体尺寸、数据碰撞余量和 occupancy 通道只从元数据解析。安全几何、额外余量、采样间距、扫掠上限和损失权重属于 checkpoint 恢复语义。
+- 闭环恢复样本只从仍无碰撞的学习器访问状态生成，位置与航向偏离都参与选择，并优先保留碰撞前最后安全状态；新轨迹必须重新计算机动方向与可行性证据，不得复制原起点审计。恢复检查点绑定输入计划、权重摘要、车辆和选择参数。
+- 运行时安全门禁与纯网络源正交组合：主轨迹不通过完整矩形/连续扫掠检查时才从当前状态调用专家回退；报告必须区分 `none` 与 `expert_fallback` 并记录干预率。闭环实际碰撞使用无安全余量的完整外廓，门禁使用车辆配置安全余量。
 - `best.pt`/`last.pt` 保留训练恢复语义；`deployment.pt` 写入只在 val 上选择的停止阈值并显式标记不可恢复训练，下游推理不得退回未经校准的默认阈值，也不得使用 test 选择阈值。
 - 相邻占用能力按场景×任务类型枚举实际可表达的 0/1/2 等级；T4 在占用后仍必须保留至少 3 个空闲候选位。
 - 任务随机流由根 seed、场景稳定序号、任务类型稳定序号和样本索引派生；T4 不预选目标，T5 只描述触发与载荷且不在采样时修改环境。
