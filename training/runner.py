@@ -44,11 +44,18 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
 
     def record_progress(epoch: int, history: TrainingHistory) -> None:
         atomic_write_json(config.output_dir / "history.json", history.to_dict())
+        stop_rate = history.val_stop_found_rate[-1]
+        stop_summary = (
+            "" if stop_rate is None else f" stop={stop_rate:.3f}"
+        )
         print(
             f"epoch {epoch + 1}/{config.trainer.epochs} "
             f"train={history.train_loss[-1]:.6f} "
             f"val={history.val_loss[-1]:.6f} "
-            f"best={history.best_val_loss:.6f}",
+            f"rollout_val_ade={history.val_rollout_ade_m[-1]:.3f}m "
+            f"rollout_val_fde={history.val_rollout_fde_m[-1]:.3f}m "
+            f"teacher={history.teacher_forcing_ratio[-1]:.3f} "
+            f"best={history.best_val_loss:.6f}{stop_summary}",
             flush=True,
         )
 

@@ -44,6 +44,8 @@ class TestTrainingRunner(unittest.TestCase):
 
             self.assertEqual(report["status"], "completed")
             self.assertEqual(report["metrics"]["samples"], 1)
+            self.assertEqual(len(report["history"]["train_rollout_ade_m"]), 1)
+            self.assertEqual(len(report["history"]["val_rollout_fde_m"]), 1)
             for name in (
                 "best.pt",
                 "last.pt",

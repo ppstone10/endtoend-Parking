@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 
 import numpy as np
 import torch
@@ -88,6 +89,49 @@ def prepare_batches(
             )
         )
     return tuple(batches)
+
+
+def epoch_batches(
+    batches: tuple[Batch, ...],
+    *,
+    shuffle: bool,
+    seed: int,
+    epoch: int,
+) -> tuple[Batch, ...]:
+    """按 epoch 确定性重排样本，并保持原 batch 容量。
+
+    输入 batch 保持不变；重排后的各字段共享同一索引顺序。
+    """
+    if not batches:
+        return ()
+    if not shuffle:
+        return batches
+    sizes = [int(batch[0].shape[0]) for batch in batches]
+    if any(size <= 0 for size in sizes):
+        raise ValueError("batch 不能为空")
+    if any(any(int(tensor.shape[0]) != size for tensor in batch) for batch, size in zip(batches, sizes)):
+        raise ValueError("batch 内字段的样本数必须一致")
+    cumulative: list[int] = []
+    total = 0
+    for size in sizes:
+        total += size
+        cumulative.append(total)
+    generator = torch.Generator().manual_seed(seed + epoch)
+    permutation = torch.randperm(total, generator=generator).tolist()
+    capacity = sizes[0]
+    shuffled: list[Batch] = []
+    for start in range(0, total, capacity):
+        fields: list[torch.Tensor] = []
+        selected = permutation[start : start + capacity]
+        for field_index in range(len(batches[0])):
+            rows: list[torch.Tensor] = []
+            for global_index in selected:
+                batch_index = bisect_right(cumulative, global_index)
+                previous_total = cumulative[batch_index - 1] if batch_index else 0
+                rows.append(batches[batch_index][field_index][global_index - previous_total])
+            fields.append(torch.stack(rows, dim=0))
+        shuffled.append(tuple(fields))  # type: ignore[arg-type]
+    return tuple(shuffled)
 
 
 def model_horizon(model: torch.nn.Module) -> int:

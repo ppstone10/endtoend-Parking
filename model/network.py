@@ -110,8 +110,13 @@ def variable_loss_fn(
     mask: torch.Tensor,
     *,
     stop_weight: float = 0.2,
+    balance_stop: bool = True,
 ) -> torch.Tensor:
-    """变长轨迹损失：掩码轨迹 MSE + 有效前缀终止 BCE。"""
+    """变长轨迹损失：掩码轨迹 MSE + 有效前缀终止 BCE。
+
+    ``balance_stop`` 按当前 batch 有效前缀中的负/正样本比提高终点权重，
+    避免长轨迹里单个终点被大量“继续”标签淹没。
+    """
     trajectory_loss = loss_fn(pred, target, mask)
     lengths = mask.sum(dim=1).long()
     steps = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
@@ -124,6 +129,20 @@ def variable_loss_fn(
     stop_loss = F.binary_cross_entropy_with_logits(
         stop_logits, stop_targets, reduction="none"
     )
-    stop_denom = prefix_mask.sum().clamp(min=1)
-    stop_loss = (stop_loss * prefix_mask).sum() / stop_denom
+    effective_weights = prefix_mask.to(stop_loss.dtype)
+    if balance_stop:
+        positive_count = (stop_targets * effective_weights).sum()
+        negative_count = ((1.0 - stop_targets) * effective_weights).sum()
+        positive_weight = torch.where(
+            positive_count > 0,
+            negative_count / positive_count.clamp(min=1.0),
+            positive_count.new_tensor(1.0),
+        ).clamp(min=1.0)
+        effective_weights = effective_weights * torch.where(
+            stop_targets > 0,
+            positive_weight,
+            stop_targets.new_tensor(1.0),
+        )
+    stop_denom = effective_weights.sum().clamp(min=1.0)
+    stop_loss = (stop_loss * effective_weights).sum() / stop_denom
     return trajectory_loss + float(stop_weight) * stop_loss

@@ -34,6 +34,11 @@ class TestTrainingRunConfig(unittest.TestCase):
                       epochs: 3
                       learning_rate: 0.001
                       patience: 2
+                      shuffle_train: true
+                      balance_stop_loss: true
+                      teacher_forcing_start: 1.0
+                      teacher_forcing_end: 0.2
+                      teacher_forcing_decay_epochs: 4
                     output:
                       directory: runs/net-v1
                     """
@@ -49,6 +54,9 @@ class TestTrainingRunConfig(unittest.TestCase):
             self.assertEqual(config.train_data, (root / "train.npz").resolve())
             self.assertEqual(config.output_dir, (root / "runs/net-v1").resolve())
             self.assertEqual(config.trainer.checkpoint_dir, str(config.output_dir))
+            self.assertTrue(config.trainer.shuffle_train)
+            self.assertTrue(config.trainer.balance_stop_loss)
+            self.assertEqual(config.trainer.teacher_forcing_ratio(4), 0.2)
 
     def test_rejects_unknown_fields(self):
         with tempfile.TemporaryDirectory() as temp:

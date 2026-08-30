@@ -31,7 +31,11 @@ class _ConditionedGRUDecoder(nn.Module):
         context: torch.Tensor,
         *,
         teacher_points: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 1.0,
+        sampling_generator: torch.Generator | None = None,
     ) -> TrajectoryPrediction:
+        if not 0.0 <= teacher_forcing_ratio <= 1.0:
+            raise ValueError("teacher_forcing_ratio 必须在 [0,1] 内")
         if teacher_points is not None:
             if teacher_points.ndim != 3 or teacher_points.shape[2] != 3:
                 raise ValueError("teacher_points 必须是 (B,N,3)")
@@ -50,9 +54,23 @@ class _ConditionedGRUDecoder(nn.Module):
             points.append(point)
             stop_logits.append(self.stop_head(hidden).squeeze(1))
             if teacher_points is not None and step < teacher_points.shape[1]:
-                previous = teacher_points[:, step]
+                teacher_point = teacher_points[:, step]
+                predicted_point = point.detach()
+                if teacher_forcing_ratio >= 1.0:
+                    previous = teacher_point
+                elif teacher_forcing_ratio <= 0.0:
+                    previous = predicted_point
+                else:
+                    use_teacher = torch.rand(
+                        (context.shape[0], 1),
+                        device=context.device,
+                        generator=sampling_generator,
+                    ) < teacher_forcing_ratio
+                    previous = torch.where(
+                        use_teacher, teacher_point, predicted_point
+                    )
             else:
-                previous = point
+                previous = point.detach() if teacher_points is not None else point
         return TrajectoryPrediction(
             points=torch.stack(points, dim=1),
             stop_logits=torch.stack(stop_logits, dim=1),
@@ -132,9 +150,14 @@ class MineParkingNetV1(_VariableTrajectoryMixin, nn.Module):
         state: torch.Tensor,
         *,
         teacher_points: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 1.0,
+        sampling_generator: torch.Generator | None = None,
     ) -> TrajectoryPrediction:
         return self.decoder(
-            self._context(bev, goal, state), teacher_points=teacher_points
+            self._context(bev, goal, state),
+            teacher_points=teacher_points,
+            teacher_forcing_ratio=teacher_forcing_ratio,
+            sampling_generator=sampling_generator,
         )
 
     def forward(
@@ -216,9 +239,14 @@ class MineParkingNetV2(_VariableTrajectoryMixin, nn.Module):
         state: torch.Tensor,
         *,
         teacher_points: torch.Tensor | None = None,
+        teacher_forcing_ratio: float = 1.0,
+        sampling_generator: torch.Generator | None = None,
     ) -> TrajectoryPrediction:
         return self.decoder(
-            self._context(bev, goal, state), teacher_points=teacher_points
+            self._context(bev, goal, state),
+            teacher_points=teacher_points,
+            teacher_forcing_ratio=teacher_forcing_ratio,
+            sampling_generator=sampling_generator,
         )
 
     def forward(

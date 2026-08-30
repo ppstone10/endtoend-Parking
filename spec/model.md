@@ -83,6 +83,25 @@
 - 行为：Trainer 执行训练与验证，按 val loss 保存原子 best/last checkpoint，patience 到达后 early stopping，并返回逐 epoch 历史。
 - 恢复与迁移：checkpoint 保存模型、优化器、epoch、best val 和配置；不同模型变体或不兼容配置不得静默恢复。
 
+### `MODEL-LOSS-002`：平衡变长终止监督
+
+- 前置：每条有效轨迹前缀只有最后一点为终止正类，其余有效点为负类，padding 不参与损失。
+- 行为：启用平衡模式时，按当前 batch 有效前缀中的负/正数量动态提高终止正类贡献；轨迹 MSE 与终止损失权重仍由训练配置显式组合。
+- 结果：全负预测不再通过类别数量优势获得低终止损失；长度为 1 的轨迹和不存在负类的 batch 仍产生有限损失。
+- 兼容：损失函数保留可关闭平衡模式的参数；正式 v7 v1/v2 配置必须启用平衡模式。
+
+### `MODEL-TRAIN-003`：可复现样本级 shuffle 与 scheduled sampling
+
+- 行为：训练集每个 epoch 使用由训练 seed 和 epoch 派生的确定性样本级排列重新组 batch，验证集保持稳定顺序；变长解码按配置的起止 teacher-forcing 比例和衰减 epoch 线性调度，每个样本/时间步在真实前点与已预测前点之间可复现选择。
+- 边界：模型反馈点在再次输入解码器前停止梯度，不改变轨迹点与停止 logits 的公开输出形状；固定长度 v0 不应用 scheduled sampling。
+- 恢复：同一 seed、epoch、checkpoint 和配置恢复时必须重现相同 shuffle 与采样决策；新增训练语义字段属于 checkpoint 兼容字段，旧 checkpoint 必须明确拒绝而非静默续训。
+
+### `MODEL-REPORT-002`：逐 epoch 自由滚动监控
+
+- 行为：每个 epoch 在无 teacher forcing 下评估 train/val，记录 ADE、FDE；变长模型额外记录停止命中率和预测长度 MAE，并记录实际 teacher-forcing 比例。
+- 结果：`history.json`、checkpoint 和训练曲线持久化上述指标；控制台进度显示关键自由滚动与停止指标，不能再以 teacher-forcing train loss 代替推理质量。
+- 性能：监控允许增加有限的每 epoch 推理耗时，但不执行反向传播，也不改变 best/last 的原子保存语义。
+
 ### `MODEL-CONFIG-001`：安全 YAML 训练配置
 
 - 前置：配置包含 model、data、training 和 output 映射，数据路径与输出路径允许相对 YAML 文件定位。
@@ -125,8 +144,11 @@
 | `MODEL-VAR-001` | v1 点/终止形状与 teacher forcing | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV1/_ConditionedGRUDecoder` | 点 `(B,N,3)`、终止 `(B,N)` 与变长损失通过；正式收敛待数据 | ✅ |
 | `MODEL-VAR-002` | v2 多尺度条件编码与输出契约 | `tests/test_model_variants.py` | `model/variants.py::MineParkingNetV2` | U-Net 跳连、交叉注意力及同口径输出测试通过；正式收敛待数据 | ✅ |
 | `MODEL-TRAIN-002` | val、early stopping、兼容恢复、best/last checkpoint | `tests/test_trainer.py` | `training/trainer.py::Trainer` | early stopping、原子 checkpoint、模型/超参数不兼容拒绝通过 | ✅ |
+| `MODEL-LOSS-002` | 平衡终止正负类且边界损失有限 | `tests/test_model_variants.py` | `model/network.py::variable_loss_fn` | 全负捷径与单点边界测试通过；v7 smoke 停止命中率 99.67% | ✅ |
+| `MODEL-TRAIN-003` | 每 epoch 确定性样本 shuffle、teacher-forcing 调度与恢复一致 | `tests/test_trainer.py`、`tests/test_model_variants.py` | `training/data.py::epoch_batches`、`training/trainer.py::TrainerConfig/Trainer`、`model/variants.py::_ConditionedGRUDecoder` | shuffle 跨 epoch、线性边界、采样复现和 checkpoint 语义拒绝测试通过 | ✅ |
 | `MODEL-CONFIG-001` | 安全 YAML、严格 schema、相对路径 | `tests/test_training_config.py` | `training/config.py::load_training_run_config` | SafeLoader、未知/非序列化字段拒绝和相对路径通过 | ✅ |
 | `MODEL-REPORT-001` | 历史/报告原子落盘与 PNG+PDF 曲线 | `tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/reporting.py`、`training/runner.py`、`scripts/train_model.py` | 1 epoch 合成训练贯通并生成全套产物；正式数据训练后置 | ✅ |
+| `MODEL-REPORT-002` | history/checkpoint/曲线包含自由滚动和停止监控 | `tests/test_trainer.py`、`tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/trainer.py::TrainingHistory/Trainer._rollout_metrics`、`training/reporting.py`、`training/runner.py` | 合成 runner 与 v7 全量 1 epoch smoke 均生成完整指标、checkpoint 和 PNG/PDF | ✅ |
 | `MODEL-EVAL-001` | mask ADE/FDE/环绕航向、短 horizon 拒绝 | `tests/test_open_loop_metrics.py` | `metrics/open_loop.py::compute_open_loop_metrics` | 精确数值、±π 环绕、mask 与短 horizon 拒绝通过 | ✅ |
 | `MODEL-EVAL-002` | checkpoint 恢复、多模型 JSON/图 | `tests/test_eval_openloop.py`、CLI smoke | `training/checkpoint.py`、`scripts/eval_openloop.py` | checkpoint 恢复、JSON 与 PNG/PDF 图 smoke 通过；完整 V3 闭环后置 | ✅ |
 | `MODEL-EVAL-003` | 分组指标、终止误差与预测/专家叠加图 | `tests/test_prediction_analysis.py`、v7 train/val/test CLI | `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py` | 9 项定向测试通过；v7 `net-v1` 三 split 生成 JSON 与三组 PNG/PDF，逐样本索引可回查 | ✅ |

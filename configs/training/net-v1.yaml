@@ -17,5 +17,10 @@ training:
   device: cpu
   stop_loss_weight: 0.2
   seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: true
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 15
 output:
-  directory: ../../runs/training/v7/net-v1
+  directory: ../../runs/training/v7-flow-v2/net-v1

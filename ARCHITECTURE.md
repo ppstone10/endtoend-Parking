@@ -8,7 +8,7 @@
 | Sensor2BEV | `sensor2bev/` | 将 LiDAR 点云/Camera 图像按共享 `BEVConfig` 转换为统一 BEV 表示：`lidar_bev.py`（ROI→降采样→地面滤除→栅格投影）、`camera_bev.py`（IPM 单应反投影目标区域）、`fusion.py`（通道级后融合） |
 | Python 仿真与任务 | `sim/` | 二维矿区泊车环境、携带场景级 `BEVConfig` 的 S1–S9 场景与 T1–T5 任务层；`noise.py` 提供传感器噪声；`vehicle_config.py` 严格加载 `configs/vehicles/`，是履带钻机外廓、执行上限和规划搜索参数的统一来源 |
 | 端到端网络 | `model/` | 注册表按 `net-v0/v1/v2` 构造模型：v0 为固定 horizon CNN+MLP，v1 为 CNN+GRU 变长解码和终止 logits，v2 增加 U-Net 跳连空间编码与 goal/state 交叉注意力；损失支持掩码轨迹 MSE 与终止 BCE |
-| 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有训练/验证、逐 epoch 进度、early stopping 和兼容原子 checkpoint；runner 输出历史、PNG/PDF 曲线和 val 开环报告 |
+| 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；`Trainer` 拥有确定性样本级 shuffle、计划采样、训练/验证、逐 epoch 自由滚动诊断、early stopping 和兼容原子 checkpoint；runner 输出历史、PNG/PDF 诊断图和 val 开环报告 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
 | 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元，以独立 worker 硬预算、case 原子检查点和身份校验提供中断续跑能力；Task 驱动生成由共享 `components.py` 组件工厂接入规划/传感器，机动与可行性双门禁后保存 schema v2 NPZ 和验收图；`scripts/archive_visual_references.py` 负责在删除旧数据前生成自描述可视化参考归档 |
@@ -46,7 +46,8 @@ Task → task 组件工厂 → HybridAStarPlanner + SensorBEVPipeline → Traini
   固定批次 → 失败前原子 retry 游标 → 独立机动与运动学复算 + 碰撞证据/模型版本核对 → 原子成功检查点
   同身份检查点（seed/计划/车辆模型/重试参数/批大小）+ 未完成批次游标 → 不重放已排除 task ID 地补齐合并 → 正式 NPZ/manifest
 训练 YAML → SafeLoader/严格 schema → 注册表模型 + train/val NPZ → `Trainer`
-  → 每 epoch 控制台进度 + 原子 history/best/last → best checkpoint val 开环评估
+  → 样本级确定性 shuffle + 平衡停止 BCE + teacher-forcing 线性退火
+  → 每 epoch train/val 自由滚动 ADE/FDE/停止诊断 + 原子 history/best/last → best checkpoint val 开环评估
   → report.json + training_curve PNG/PDF
 同一 val NPZ + 一个或多个 Trainer checkpoint → `eval_openloop.py`
   → ADE/FDE/航向 MAE report.json + openloop_comparison PNG/PDF
@@ -92,7 +93,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `dataset/build.py::expert_maneuvers` 拥有专家可生成能力：不改变任务几何矩阵，根据与车辆模型身份绑定的完整校准证据排除持续不可达/不稳定监督单元并限制单向可达单元；正式构建与后续校准共享该入口，偶发规划失败仍保持原单元难度重采。对齐采样后 S3 全单元与 S5/T1/T2/T5、S9/T2/T5 限制为倒车，S8/T2/T3/T5 限制为前进。
 - `dataset/calibration.py` 的 case 计划不复用 8:1:1 数据集配额：默认枚举当前专家准入单元，新版本重校准可显式探测全部几何支持单元及双向机动。身份绑定 seed、车辆模型、探测模式、case 计划、重试和预算；只有原子终态检查点算完成，中断恢复跳过完成项并重做当前未落盘 case。
 - `model/registry.py` 是模型名称到实现的唯一构造入口；`MineParkingNet` 保持 `net-v0` 兼容，v1/v2 的终止 logits 不改变闭环最终消费的 `Trajectory` 契约。
-- `training/Trainer` 的 checkpoint 必须核对模型名称、模型配置和影响恢复语义的训练超参数；允许改变总 epochs、设备和输出目录，但不得静默加载不兼容状态。
+- `training/Trainer` 的 checkpoint 必须核对模型名称、模型配置和影响恢复语义的训练超参数，包括 shuffle、停止平衡和 teacher-forcing 调度；允许改变总 epochs、设备和输出目录，但不得静默加载不兼容状态。
 - 相邻占用能力按场景×任务类型枚举实际可表达的 0/1/2 等级；T4 在占用后仍必须保留至少 3 个空闲候选位。
 - 任务随机流由根 seed、场景稳定序号、任务类型稳定序号和样本索引派生；T4 不预选目标，T5 只描述触发与载荷且不在采样时修改环境。
 - 传感器噪声只改变观测帧，不改变环境真值；默认 `clean` 与原输出兼容，非干净 profile 使用各传感器私有 seed/RNG，不读写 NumPy 全局随机状态。

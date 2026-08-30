@@ -43,6 +43,64 @@ class TestVariableModels(unittest.TestCase):
         )
         self.assertTrue(torch.isfinite(loss))
 
+    def test_balanced_stop_loss_prevents_all_negative_shortcut(self):
+        points = torch.zeros(1, 100, 3)
+        logits = torch.full((1, 100), -5.0)
+        target = torch.zeros_like(points)
+        mask = torch.ones(1, 100)
+
+        unbalanced = variable_loss_fn(
+            points, logits, target, mask, stop_weight=1.0, balance_stop=False
+        )
+        balanced = variable_loss_fn(
+            points, logits, target, mask, stop_weight=1.0, balance_stop=True
+        )
+
+        self.assertGreater(float(balanced), float(unbalanced) * 10.0)
+        single = variable_loss_fn(
+            points[:, :1], logits[:, :1], target[:, :1], mask[:, :1],
+            stop_weight=1.0, balance_stop=True,
+        )
+        self.assertTrue(torch.isfinite(single))
+
+    def test_scheduled_sampling_is_deterministic_and_changes_feedback(self):
+        model = MineParkingNetV1(max_horizon=6, hidden_dim=32)
+        teacher = model.forward_with_stop(
+            self.bev,
+            self.goal,
+            self.state,
+            teacher_points=self.target,
+            teacher_forcing_ratio=1.0,
+        )
+        free = model.forward_with_stop(
+            self.bev,
+            self.goal,
+            self.state,
+            teacher_points=self.target,
+            teacher_forcing_ratio=0.0,
+        )
+        first_generator = torch.Generator().manual_seed(17)
+        second_generator = torch.Generator().manual_seed(17)
+        mixed_a = model.forward_with_stop(
+            self.bev,
+            self.goal,
+            self.state,
+            teacher_points=self.target,
+            teacher_forcing_ratio=0.5,
+            sampling_generator=first_generator,
+        )
+        mixed_b = model.forward_with_stop(
+            self.bev,
+            self.goal,
+            self.state,
+            teacher_points=self.target,
+            teacher_forcing_ratio=0.5,
+            sampling_generator=second_generator,
+        )
+
+        self.assertFalse(torch.allclose(teacher.points, free.points))
+        self.assertTrue(torch.allclose(mixed_a.points, mixed_b.points))
+
 
 if __name__ == "__main__":
     unittest.main()

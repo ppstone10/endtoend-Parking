@@ -16,5 +16,6 @@ training:
   min_delta: 0.0
   device: cpu
   seed: 20260827
+  shuffle_train: true
 output:
-  directory: ../../runs/training/v7/net-v0
+  directory: ../../runs/training/v7-flow-v2/net-v0
