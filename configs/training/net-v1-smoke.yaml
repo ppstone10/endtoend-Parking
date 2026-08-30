@@ -11,16 +11,18 @@ data:
   batch_size: 8
 training:
   epochs: 1
-  learning_rate: 0.001
+  learning_rate: 0.0003
   patience: 1
   min_delta: 0.0
   device: cpu
   stop_loss_weight: 0.2
   seed: 20260827
   shuffle_train: true
-  balance_stop_loss: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
   teacher_forcing_start: 0.5
   teacher_forcing_end: 0.5
   teacher_forcing_decay_epochs: 1
+  early_stopping_start_epoch: 0
 output:
-  directory: ../../runs/training/v7-flow-v2/net-v1-smoke
+  directory: ../../runs/training/v7-flow-v3/net-v1-smoke

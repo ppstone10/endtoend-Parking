@@ -56,6 +56,29 @@ class TestTrainingRunner(unittest.TestCase):
             ):
                 self.assertTrue((root / "run" / name).exists(), name)
 
+    def test_variable_model_writes_calibrated_deployment_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _write_dataset(root / "train.npz", 2)
+            _write_dataset(root / "val.npz", 2)
+            config = root / "run.yaml"
+            config.write_text(
+                "model:\n"
+                "  name: net-v1\n"
+                "  config: {bev_channels: 5, max_horizon: 2, dt: 0.1, hidden_dim: 4}\n"
+                "data: {train: train.npz, val: val.npz, batch_size: 1}\n"
+                "training: {epochs: 1, patience: 1, seed: 7, balance_stop_loss: false, stop_target_mode: cumulative}\n"
+                "output: {directory: run}\n",
+                encoding="utf-8",
+            )
+
+            report = run_training_from_yaml(config)
+
+            self.assertTrue((root / "run" / "deployment.pt").is_file())
+            self.assertTrue((root / "run" / "stop_threshold_calibration.json").is_file())
+            self.assertIn("stop_threshold", report["calibration"])
+            self.assertTrue(report["checkpoints"]["deployment"].endswith("deployment.pt"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,11 +11,13 @@ import torch
 
 from dataset import DatasetGenerator
 from metrics.open_loop import evaluate_open_loop
+from metrics.prediction_analysis import collect_open_loop_predictions
 from model import build_model
 
 from .config import TrainingRunConfig, load_training_run_config
 from .data import model_horizon, prepare_batches, validate_model_dataset
 from .reporting import atomic_write_json, save_training_artifacts
+from .stop_calibration import calibrate_stop_threshold, write_deployment_checkpoint
 from .trainer import Trainer, TrainingHistory
 
 
@@ -48,6 +50,9 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         stop_summary = (
             "" if stop_rate is None else f" stop={stop_rate:.3f}"
         )
+        early_stop_summary = (
+            "active" if history.early_stopping_active[-1] else "warmup"
+        )
         print(
             f"epoch {epoch + 1}/{config.trainer.epochs} "
             f"train={history.train_loss[-1]:.6f} "
@@ -55,7 +60,8 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
             f"rollout_val_ade={history.val_rollout_ade_m[-1]:.3f}m "
             f"rollout_val_fde={history.val_rollout_fde_m[-1]:.3f}m "
             f"teacher={history.teacher_forcing_ratio[-1]:.3f} "
-            f"best={history.best_val_loss:.6f}{stop_summary}",
+            f"best={history.best_val_loss:.6f}{stop_summary} "
+            f"early_stop={early_stop_summary}",
             flush=True,
         )
 
@@ -69,6 +75,39 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
     if not best_checkpoint.is_file():
         raise RuntimeError("训练结束但 best checkpoint 不存在")
     trainer.load_checkpoint(best_checkpoint)
+    deployment_checkpoint = best_checkpoint
+    calibration: dict[str, Any] = {"status": "not_applicable"}
+    calibration_artifact: str | None = None
+    if callable(getattr(trainer.model, "forward_with_stop", None)):
+        predictions = collect_open_loop_predictions(
+            trainer.model, val_batches, device=config.trainer.device
+        )
+        if predictions.stop_logits is None:
+            raise RuntimeError("变长模型未返回停止 logits")
+        calibration_result = calibrate_stop_threshold(
+            predictions.stop_logits, predictions.masks
+        )
+        selected_threshold = float(calibration_result["selected_threshold"])
+        calibration_path = atomic_write_json(
+            config.output_dir / "stop_threshold_calibration.json",
+            calibration_result,
+        )
+        deployment_checkpoint = write_deployment_checkpoint(
+            best_checkpoint,
+            config.output_dir / "deployment.pt",
+            threshold=selected_threshold,
+            calibration=calibration_result,
+        )
+        setattr(trainer.model, "stop_threshold", selected_threshold)
+        calibration_artifact = str(calibration_path)
+        calibration = {
+            "status": "calibrated_on_validation",
+            "stop_threshold": selected_threshold,
+            "length_mae_points": calibration_result["selected"]["length_mae_points"],
+            "length_bias_points": calibration_result["selected"]["length_bias_points"],
+            "stop_found_rate": calibration_result["selected"]["stop_found_rate"],
+            "artifact": calibration_artifact,
+        }
     metrics = evaluate_open_loop(
         trainer.model, val_batches, device=config.trainer.device
     )
@@ -87,14 +126,17 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         },
         "history": history.to_dict(),
         "metrics": metrics.to_dict(),
+        "calibration": calibration,
         "checkpoints": {
             "best": str(best_checkpoint),
             "last": str(config.output_dir / "last.pt"),
+            "deployment": str(deployment_checkpoint),
         },
         "artifacts": {
             "history": str(config.output_dir / "history.json"),
             "curve_png": str(config.output_dir / "training_curve.png"),
             "curve_pdf": str(config.output_dir / "training_curve.pdf"),
+            "stop_threshold_calibration": calibration_artifact,
         },
     }
     save_training_artifacts(history, report, config.output_dir)

@@ -40,6 +40,8 @@ class TrainerConfig:
     teacher_forcing_start: float = 1.0
     teacher_forcing_end: float = 0.2
     teacher_forcing_decay_epochs: int = 15
+    early_stopping_start_epoch: int = 0
+    stop_target_mode: str = "terminal"
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -74,6 +76,14 @@ class TrainerConfig:
             or self.teacher_forcing_decay_epochs <= 0
         ):
             raise ValueError("teacher_forcing_decay_epochs 必须为正整数")
+        if (
+            isinstance(self.early_stopping_start_epoch, bool)
+            or not isinstance(self.early_stopping_start_epoch, int)
+            or not 0 <= self.early_stopping_start_epoch < self.epochs
+        ):
+            raise ValueError("early_stopping_start_epoch 必须位于 [0, epochs) 内")
+        if self.stop_target_mode not in {"terminal", "cumulative"}:
+            raise ValueError("stop_target_mode 必须为 terminal 或 cumulative")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -100,6 +110,7 @@ class TrainingHistory:
     train_predicted_length_mae_points: list[float | None] = field(default_factory=list)
     val_stop_found_rate: list[float | None] = field(default_factory=list)
     val_predicted_length_mae_points: list[float | None] = field(default_factory=list)
+    early_stopping_active: list[bool] = field(default_factory=list)
     best_epoch: int = -1
     best_val_loss: float = math.inf
     stopped_early: bool = False
@@ -168,6 +179,7 @@ class Trainer:
                 mask,
                 stop_weight=self.config.stop_loss_weight,
                 balance_stop=self.config.balance_stop_loss,
+                stop_target_mode=self.config.stop_target_mode,
             )
         return loss_fn(self.model(bev, goal, state), target, mask)
 
@@ -292,6 +304,8 @@ class Trainer:
         payload = torch.load(path, map_location=self.device, weights_only=False)
         if payload.get("schema_version") != 1:
             raise RuntimeError("不支持的训练 checkpoint schema")
+        if payload.get("resumable", True) is not True:
+            raise RuntimeError("deployment checkpoint 仅供推理，不可恢复训练")
         if payload.get("model_name") != self.model_name:
             raise RuntimeError("checkpoint 模型变体与当前 Trainer 不一致")
         if payload.get("model_config", {}) != self.model_config:
@@ -309,6 +323,8 @@ class Trainer:
             "teacher_forcing_start",
             "teacher_forcing_end",
             "teacher_forcing_decay_epochs",
+            "early_stopping_start_epoch",
+            "stop_target_mode",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)
@@ -335,11 +351,13 @@ class Trainer:
         history = TrainingHistory()
         if resume_from is not None:
             start_epoch, history = self.load_checkpoint(resume_from)
-        stale_epochs = (
-            max(0, start_epoch - history.best_epoch - 1)
-            if history.best_epoch >= 0
-            else 0
-        )
+        monitoring_start = self.config.early_stopping_start_epoch
+        if start_epoch <= monitoring_start:
+            stale_epochs = 0
+        elif history.best_epoch >= monitoring_start:
+            stale_epochs = max(0, start_epoch - history.best_epoch - 1)
+        else:
+            stale_epochs = start_epoch - monitoring_start
         for epoch in range(start_epoch, self.config.epochs):
             train_loss = self._run_epoch(train_data, training=True, epoch=epoch)
             val_loss = self._run_epoch(val_data, training=False, epoch=epoch)
@@ -362,18 +380,23 @@ class Trainer:
             history.val_predicted_length_mae_points.append(
                 val_rollout["predicted_length_mae_points"]
             )
+            monitoring_active = epoch >= monitoring_start
+            history.early_stopping_active.append(monitoring_active)
             improved = val_loss < history.best_val_loss - self.config.min_delta
             if improved:
                 history.best_val_loss = val_loss
                 history.best_epoch = epoch
-                stale_epochs = 0
+                if monitoring_active:
+                    stale_epochs = 0
                 self._save_checkpoint("best.pt", epoch, history)
-            else:
+            elif monitoring_active:
                 stale_epochs += 1
+            else:
+                stale_epochs = 0
             self._save_checkpoint("last.pt", epoch, history)
             if on_epoch_end is not None:
                 on_epoch_end(epoch, history)
-            if stale_epochs >= self.config.patience:
+            if monitoring_active and stale_epochs >= self.config.patience:
                 history.stopped_early = True
                 break
         return history

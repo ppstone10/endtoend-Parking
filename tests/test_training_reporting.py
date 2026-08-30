@@ -23,6 +23,7 @@ class TestTrainingReporting(unittest.TestCase):
             val_rollout_fde_m=[2.4, 1.4],
             val_stop_found_rate=[0.5, 1.0],
             val_predicted_length_mae_points=[3.0, 1.0],
+            early_stopping_active=[False, True],
             best_epoch=1,
             best_val_loss=1.5,
         )
@@ -37,6 +38,10 @@ class TestTrainingReporting(unittest.TestCase):
             self.assertEqual(
                 json.loads(Path(artifacts.history_json).read_text())["val_stop_found_rate"],
                 [0.5, 1.0],
+            )
+            self.assertEqual(
+                json.loads(Path(artifacts.history_json).read_text())["early_stopping_active"],
+                [False, True],
             )
             self.assertEqual(json.loads(Path(artifacts.report_json).read_text())["status"], "completed")
             self.assertTrue(Path(artifacts.curve_png).exists())

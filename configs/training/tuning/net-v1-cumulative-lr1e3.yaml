@@ -6,13 +6,13 @@ model:
     dt: 0.2
     hidden_dim: 128
 data:
-  train: ../../data/task_dataset/tracked_pivot_v7_3000/train.npz
-  val: ../../data/task_dataset/tracked_pivot_v7_3000/val.npz
+  train: ../../../data/task_dataset/tracked_pivot_v7_3000/train.npz
+  val: ../../../data/task_dataset/tracked_pivot_v7_3000/val.npz
   batch_size: 8
 training:
-  epochs: 30
-  learning_rate: 0.0003
-  patience: 5
+  epochs: 4
+  learning_rate: 0.001
+  patience: 4
   min_delta: 0.0
   device: cpu
   stop_loss_weight: 0.2
@@ -23,6 +23,6 @@ training:
   teacher_forcing_start: 1.0
   teacher_forcing_end: 0.2
   teacher_forcing_decay_epochs: 15
-  early_stopping_start_epoch: 15
+  early_stopping_start_epoch: 3
 output:
-  directory: ../../runs/training/v7-flow-v3/net-v1
+  directory: ../../../runs/training/tuning-v7/net-v1-cumulative-lr1e3

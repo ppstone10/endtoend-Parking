@@ -31,7 +31,7 @@ class TestTrainingRunConfig(unittest.TestCase):
                       val: val.npz
                       batch_size: 4
                     training:
-                      epochs: 3
+                      epochs: 5
                       learning_rate: 0.001
                       patience: 2
                       shuffle_train: true
@@ -39,6 +39,8 @@ class TestTrainingRunConfig(unittest.TestCase):
                       teacher_forcing_start: 1.0
                       teacher_forcing_end: 0.2
                       teacher_forcing_decay_epochs: 4
+                      early_stopping_start_epoch: 4
+                      stop_target_mode: cumulative
                     output:
                       directory: runs/net-v1
                     """
@@ -57,6 +59,8 @@ class TestTrainingRunConfig(unittest.TestCase):
             self.assertTrue(config.trainer.shuffle_train)
             self.assertTrue(config.trainer.balance_stop_loss)
             self.assertEqual(config.trainer.teacher_forcing_ratio(4), 0.2)
+            self.assertEqual(config.trainer.early_stopping_start_epoch, 4)
+            self.assertEqual(config.trainer.stop_target_mode, "cumulative")
 
     def test_rejects_unknown_fields(self):
         with tempfile.TemporaryDirectory() as temp:

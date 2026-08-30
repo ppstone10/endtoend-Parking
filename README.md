@@ -65,13 +65,16 @@ foreach ($split in 'train', 'val', 'test') {
 # 生成数据并训练 MineParkingNet（输出 data_training.npz 与 mineparkingnet.pt）
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/train.py --samples 40 --epochs 30
 
-# v7 修正训练流程 smoke（全量数据、1 epoch，输出到 runs/training/v7-flow-v2/net-v1-smoke）
+# v7 定型训练流程 smoke（全量数据、1 epoch，输出到 runs/training/v7-flow-v3/net-v1-smoke）
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1-smoke.yaml
 
 # smoke 通过后正式训练 net-v1；每 epoch 更新 loss、自由滚动 ADE/FDE、停止率和长度误差
 # 中断恢复时只可使用同一训练语义生成的 checkpoint：
-# resume_from: ../../runs/training/v7-flow-v2/net-v1/last.pt
+# resume_from: ../../runs/training/v7-flow-v3/net-v1/last.pt
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1.yaml
+
+# 中断恢复优先使用 last.pt；部署和开环分析使用自动校准后的 deployment.pt
+# 完整参数含义、验收门槛和人工单变量调优方法见 docs/training_guide.md
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/v7/net-v0/best.pt --checkpoint v1=runs/training/v7/net-v1/best.pt --checkpoint v2=runs/training/v7/net-v2/best.pt --output runs/openloop-eval/v7

@@ -60,6 +60,6 @@
 ## 变长轨迹训练不能用 teacher-forcing loss 代替自由滚动诊断
 
 - **触发：** 训练损失快速接近零，但验证损失剧烈波动，或变长模型总是输出到最大 horizon。
-- **规则：** 同时检查 train/val/test 的自由滚动 ADE/FDE、停止命中率和预测长度偏差，并按任务与场景分组；如果 train 自由滚动与 val 同样差，优先修复训练流程而不是归因于数据划分或普通泛化过拟合。停止 BCE 只有一个正终止点时必须处理严重类别不平衡；训练 batch 需打乱，并逐步缩小 teacher forcing 与推理反馈的分布差异。
+- **规则：** 同时检查 train/val 的自由滚动 ADE/FDE、停止命中率和预测长度偏差，并按任务与场景分组；test 只作最终确认。训练 batch 需打乱，并逐步缩小 teacher forcing 与推理反馈的分布差异；early stopping 必须晚于课程衰减。单终点极端正类加权会把停止召回推到 100% 却破坏时刻校准，变长轨迹应使用累计停止边界监督，并只在独立 val 上校准部署阈值。
 - **原因：** v7 `net-v1` 的 teacher-forcing train loss 降到 0.105，但 best checkpoint 在 train/val 自由滚动的 ADE/FDE 分别仍为 3.459/5.853m 与 3.502/5.923m，300 条 val 和 300 条 test 的停止命中率均为 0，预测长度全部落到 320 点。误差集中于 T3、S4/S6 和前进任务，而非传感器噪声等级。
-- **实现与契约：** 诊断入口为 `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`；训练修正在 `training/trainer.py`、`training/data.py`、`model/network.py` 与 `model/variants.py`，见 `MODEL-EVAL-003`、`MODEL-LOSS-002`、`MODEL-TRAIN-003`、`MODEL-REPORT-002`。修正后的 v7 一轮 smoke 达到 val ADE/FDE 0.861/1.633m、停止命中率 99.67%，但长度 MAE 仍为 42.31 点，证明停止命中与停止时刻必须分开验收。
+- **实现与契约：** 诊断入口为 `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`；训练和校准在 `training/`、`model/network.py`。同 seed 消融中，累计停止+`3e-4` 在 12 epoch 达到 val/test ADE/FDE 0.312/0.552m 与 0.293/0.527m；val 校准后长度 MAE 23.84 点、偏差 -8.61 点。见 `MODEL-LOSS-003`、`MODEL-TRAIN-004`、`MODEL-CAL-001` 和 `docs/training_guide.md`。

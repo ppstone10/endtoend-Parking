@@ -111,6 +111,7 @@ def variable_loss_fn(
     *,
     stop_weight: float = 0.2,
     balance_stop: bool = True,
+    stop_target_mode: str = "terminal",
 ) -> torch.Tensor:
     """变长轨迹损失：掩码轨迹 MSE + 有效前缀终止 BCE。
 
@@ -118,18 +119,28 @@ def variable_loss_fn(
     避免长轨迹里单个终点被大量“继续”标签淹没。
     """
     trajectory_loss = loss_fn(pred, target, mask)
+    if stop_target_mode not in {"terminal", "cumulative"}:
+        raise ValueError("stop_target_mode 必须为 terminal 或 cumulative")
     lengths = mask.sum(dim=1).long()
     steps = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
     valid_sequences = lengths > 0
     prefix_mask = steps < lengths.unsqueeze(1)
     stop_targets = torch.zeros_like(stop_logits)
-    if valid_sequences.any():
+    if stop_target_mode == "cumulative":
+        stop_targets = (
+            valid_sequences.unsqueeze(1)
+            & (steps >= (lengths - 1).clamp(min=0).unsqueeze(1))
+        ).to(stop_logits.dtype)
+        supervision_mask = valid_sequences.unsqueeze(1).expand_as(stop_logits)
+    else:
         rows = torch.nonzero(valid_sequences, as_tuple=False).squeeze(1)
-        stop_targets[rows, lengths[rows] - 1] = 1.0
+        if rows.numel():
+            stop_targets[rows, lengths[rows] - 1] = 1.0
+        supervision_mask = prefix_mask
     stop_loss = F.binary_cross_entropy_with_logits(
         stop_logits, stop_targets, reduction="none"
     )
-    effective_weights = prefix_mask.to(stop_loss.dtype)
+    effective_weights = supervision_mask.to(stop_loss.dtype)
     if balance_stop:
         positive_count = (stop_targets * effective_weights).sum()
         negative_count = ((1.0 - stop_targets) * effective_weights).sum()

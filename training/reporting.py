@@ -69,6 +69,15 @@ def save_training_artifacts(
 
     if history.teacher_forcing_ratio:
         schedule_axis.plot(epochs, history.teacher_forcing_ratio, color=COLORS["expert"])
+    if history.early_stopping_active and any(history.early_stopping_active):
+        first_active = history.early_stopping_active.index(True) + 1
+        schedule_axis.axvline(
+            first_active,
+            color=COLORS["spot"],
+            linestyle="--",
+            label="Early stopping active",
+        )
+        schedule_axis.legend()
     schedule_axis.set_ylim(-0.02, 1.02)
     schedule_axis.set_xlabel("Epoch")
     schedule_axis.set_ylabel("Ratio")

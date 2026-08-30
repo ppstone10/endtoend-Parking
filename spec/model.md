@@ -88,7 +88,7 @@
 - 前置：每条有效轨迹前缀只有最后一点为终止正类，其余有效点为负类，padding 不参与损失。
 - 行为：启用平衡模式时，按当前 batch 有效前缀中的负/正数量动态提高终止正类贡献；轨迹 MSE 与终止损失权重仍由训练配置显式组合。
 - 结果：全负预测不再通过类别数量优势获得低终止损失；长度为 1 的轨迹和不存在负类的 batch 仍产生有限损失。
-- 兼容：损失函数保留可关闭平衡模式的参数；正式 v7 v1/v2 配置必须启用平衡模式。
+- 兼容：损失函数保留可关闭平衡模式的参数；该模式只用于复现旧单终点监督，累计停止模式使用未平衡 BCE，正式 v7 v1/v2 不得混用两种策略。
 
 ### `MODEL-TRAIN-003`：可复现样本级 shuffle 与 scheduled sampling
 
@@ -101,6 +101,27 @@
 - 行为：每个 epoch 在无 teacher forcing 下评估 train/val，记录 ADE、FDE；变长模型额外记录停止命中率和预测长度 MAE，并记录实际 teacher-forcing 比例。
 - 结果：`history.json`、checkpoint 和训练曲线持久化上述指标；控制台进度显示关键自由滚动与停止指标，不能再以 teacher-forcing train loss 代替推理质量。
 - 性能：监控允许增加有限的每 epoch 推理耗时，但不执行反向传播，也不改变 best/last 的原子保存语义。
+
+### `MODEL-LOSS-003`：累计停止边界监督
+
+- 前置：每条轨迹具有连续有效前缀和至少一个有效点，模型输出覆盖完整最大 horizon。
+- 行为：累计模式在真实终点前监督“继续”，从真实终点起至最大 horizon 监督“停止”，使用未扭曲类别先验的 BCE；终点 padding 不参与轨迹 MSE，但必须参与累计停止监督。
+- 结果：停止 logits 学习单调语义上的终点边界，默认阈值 `0.5` 不再依赖极端单点正类权重；长度为最大 horizon 时仍至少有一个停止正样本。
+- 兼容与回退：保留旧单点平衡模式供历史复现；停止目标模式属于 checkpoint 兼容字段，不得跨模式静默续训。
+
+### `MODEL-TRAIN-004`：课程感知早停
+
+- 前置：配置给出最大 epoch、patience、teacher-forcing 调度和 early-stopping 起始 epoch。
+- 行为：起始 epoch 前仍计算指标和保存 last/best，但不累计 stale epoch；到达起始 epoch 时从零开始累计 patience，确保 scheduled sampling 课程有机会完整执行。
+- 结果：历史和控制台记录早停是否处于预热阶段；中断恢复必须从 checkpoint epoch 和历史重建相同的 early-stopping 状态。
+- 异常：起始 epoch 必须处于 `[0, epochs)`；正式变长配置不得早于 teacher-forcing 衰减结束开始早停。
+
+### `MODEL-CAL-001`：验证集停止阈值校准
+
+- 前置：训练完成并恢复 best checkpoint；校准数据必须是未参与梯度更新的 val split，具有停止 logits 和真实长度。
+- 行为：在固定、可记录的阈值网格上最小化预测长度 MAE，以绝对偏差、停止覆盖和距默认阈值距离作稳定同分决胜；不得读取 test 指标选择阈值。
+- 结果：保留可恢复训练的原始 `best.pt`，另存带校准阈值与来源证据的 `deployment.pt` 和 `stop_threshold_calibration.json`；下游推理与分组诊断使用 deployment checkpoint。
+- 异常与恢复：固定 horizon 模型跳过校准并继续使用 best；校准输入非有限、shape 不符或阈值网格非法时明确失败；deployment checkpoint 不得作为训练恢复点。
 
 ### `MODEL-CONFIG-001`：安全 YAML 训练配置
 
@@ -149,6 +170,9 @@
 | `MODEL-CONFIG-001` | 安全 YAML、严格 schema、相对路径 | `tests/test_training_config.py` | `training/config.py::load_training_run_config` | SafeLoader、未知/非序列化字段拒绝和相对路径通过 | ✅ |
 | `MODEL-REPORT-001` | 历史/报告原子落盘与 PNG+PDF 曲线 | `tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/reporting.py`、`training/runner.py`、`scripts/train_model.py` | 1 epoch 合成训练贯通并生成全套产物；正式数据训练后置 | ✅ |
 | `MODEL-REPORT-002` | history/checkpoint/曲线包含自由滚动和停止监控 | `tests/test_trainer.py`、`tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/trainer.py::TrainingHistory/Trainer._rollout_metrics`、`training/reporting.py`、`training/runner.py` | 合成 runner 与 v7 全量 1 epoch smoke 均生成完整指标、checkpoint 和 PNG/PDF | ✅ |
+| `MODEL-LOSS-003` | 累计停止目标覆盖终点后缀且默认不扭曲阈值 | `tests/test_model_variants.py` | `model/network.py::variable_loss_fn` | 精确后缀 BCE 与非法模式拒绝通过；v7 消融采用未平衡累计模式 | ✅ |
+| `MODEL-TRAIN-004` | 课程结束前不早停，恢复后 stale 状态一致 | `tests/test_trainer.py`、`tests/test_training_config.py` | `training/trainer.py::TrainerConfig/Trainer.fit` | 预热边界、历史标记、恢复 stale 和非法范围测试通过 | ✅ |
+| `MODEL-CAL-001` | val 阈值确定性选择并生成部署 checkpoint | `tests/test_stop_calibration.py`、`tests/test_training_runner.py` | `training/stop_calibration.py`、`training/runner.py` | 精确阈值选择、非法网格、原子 deployment 和 v3 smoke 通过；val/test 长度 MAE 23.84/26.83 点 | ✅ |
 | `MODEL-EVAL-001` | mask ADE/FDE/环绕航向、短 horizon 拒绝 | `tests/test_open_loop_metrics.py` | `metrics/open_loop.py::compute_open_loop_metrics` | 精确数值、±π 环绕、mask 与短 horizon 拒绝通过 | ✅ |
 | `MODEL-EVAL-002` | checkpoint 恢复、多模型 JSON/图 | `tests/test_eval_openloop.py`、CLI smoke | `training/checkpoint.py`、`scripts/eval_openloop.py` | checkpoint 恢复、JSON 与 PNG/PDF 图 smoke 通过；完整 V3 闭环后置 | ✅ |
 | `MODEL-EVAL-003` | 分组指标、终止误差与预测/专家叠加图 | `tests/test_prediction_analysis.py`、v7 train/val/test CLI | `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py` | 9 项定向测试通过；v7 `net-v1` 三 split 生成 JSON 与三组 PNG/PDF，逐样本索引可回查 | ✅ |

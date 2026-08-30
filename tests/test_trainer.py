@@ -85,6 +85,56 @@ class TestTrainer(unittest.TestCase):
             self.assertTrue(Path(temp, "last.pt").exists())
             self.assertFalse(any(Path(temp).glob("*.tmp")))
 
+    def test_early_stopping_waits_for_curriculum_warmup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = TrainerConfig(
+                epochs=5,
+                learning_rate=1e-6,
+                patience=1,
+                min_delta=10.0,
+                checkpoint_dir=temp,
+                teacher_forcing_decay_epochs=2,
+                early_stopping_start_epoch=2,
+            )
+            trainer = Trainer(_TinyTrajectoryModel(), config, model_name="test-model")
+
+            history = trainer.fit([_batch()], [_batch()])
+
+            self.assertTrue(history.stopped_early)
+            self.assertEqual(len(history.train_loss), 3)
+            self.assertEqual(history.early_stopping_active, [False, False, True])
+            self.assertEqual(history.teacher_forcing_ratio[-1], 0.2)
+
+    def test_resume_reconstructs_post_warmup_patience(self):
+        with tempfile.TemporaryDirectory() as temp:
+            initial = TrainerConfig(
+                epochs=5,
+                learning_rate=1e-6,
+                patience=2,
+                min_delta=10.0,
+                checkpoint_dir=temp,
+                early_stopping_start_epoch=4,
+            )
+            Trainer(_TinyTrajectoryModel(), initial, model_name="same").fit(
+                [_batch()], [_batch()]
+            )
+            resumed_config = TrainerConfig(
+                epochs=7,
+                learning_rate=1e-6,
+                patience=2,
+                min_delta=10.0,
+                checkpoint_dir=temp,
+                early_stopping_start_epoch=4,
+            )
+            resumed = Trainer(_TinyTrajectoryModel(), resumed_config, model_name="same")
+
+            history = resumed.fit(
+                [_batch()], [_batch()], resume_from=Path(temp, "last.pt")
+            )
+
+            self.assertTrue(history.stopped_early)
+            self.assertEqual(len(history.train_loss), 6)
+
     def test_checkpoint_rejects_different_model_name(self):
         with tempfile.TemporaryDirectory() as temp:
             config = TrainerConfig(
@@ -95,6 +145,19 @@ class TestTrainer(unittest.TestCase):
             other = Trainer(_TinyTrajectoryModel(), config, model_name="right")
             with self.assertRaisesRegex(RuntimeError, "模型变体"):
                 other.load_checkpoint(Path(temp, "last.pt"))
+
+    def test_checkpoint_rejects_deployment_artifact_for_resume(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = TrainerConfig(epochs=1, patience=1, checkpoint_dir=temp)
+            trainer = Trainer(_TinyTrajectoryModel(), config, model_name="same")
+            trainer.fit([_batch()], [_batch()])
+            payload = torch.load(Path(temp, "last.pt"), weights_only=False)
+            payload["resumable"] = False
+            deployment = Path(temp, "deployment.pt")
+            torch.save(payload, deployment)
+
+            with self.assertRaisesRegex(RuntimeError, "不可恢复训练"):
+                trainer.load_checkpoint(deployment)
 
     def test_checkpoint_rejects_incompatible_training_hyperparameters(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -136,6 +199,10 @@ class TestTrainer(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, "训练超参数"):
                 changed.load_checkpoint(Path(temp, "last.pt"))
+
+    def test_rejects_early_stopping_start_outside_run(self):
+        with self.assertRaisesRegex(ValueError, "early_stopping_start_epoch"):
+            TrainerConfig(epochs=3, early_stopping_start_epoch=3)
 
 
 if __name__ == "__main__":

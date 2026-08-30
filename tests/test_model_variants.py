@@ -3,6 +3,7 @@
 import unittest
 
 import torch
+import torch.nn.functional as F
 
 from model import MineParkingNetV1, MineParkingNetV2, variable_loss_fn
 
@@ -62,6 +63,36 @@ class TestVariableModels(unittest.TestCase):
             stop_weight=1.0, balance_stop=True,
         )
         self.assertTrue(torch.isfinite(single))
+
+    def test_cumulative_stop_supervision_covers_terminal_suffix(self):
+        points = torch.zeros(1, 4, 3)
+        target = torch.zeros_like(points)
+        logits = torch.tensor([[-1.0, 0.0, 1.0, 2.0]])
+        mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
+
+        loss = variable_loss_fn(
+            points,
+            logits,
+            target,
+            mask,
+            stop_weight=1.0,
+            balance_stop=False,
+            stop_target_mode="cumulative",
+        )
+        expected_targets = torch.tensor([[0.0, 1.0, 1.0, 1.0]])
+        expected = F.binary_cross_entropy_with_logits(logits, expected_targets)
+
+        self.assertTrue(torch.allclose(loss, expected))
+
+    def test_stop_target_mode_is_strict(self):
+        with self.assertRaisesRegex(ValueError, "stop_target_mode"):
+            variable_loss_fn(
+                torch.zeros(1, 2, 3),
+                torch.zeros(1, 2),
+                torch.zeros(1, 2, 3),
+                torch.ones(1, 2),
+                stop_target_mode="unknown",
+            )
 
     def test_scheduled_sampling_is_deterministic_and_changes_feedback(self):
         model = MineParkingNetV1(max_horizon=6, hidden_dim=32)
