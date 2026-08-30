@@ -56,3 +56,10 @@
 - **规则：** 对轴线入位任务必须检查目标到起点的整段车辆外廓走廊，而非只检查远端起点；相邻占用时按请求方向过滤入口被占用车辆截断的目标。固定车位航向不能同时表示前进入位和倒车入位，普通垂直/斜列车位的倒车目标应翻转 180°。T4 的候选顺序必须先包含用于构造起点的参考目标。
 - **原因：** v6 的 408 例无重采复核暴露 S7/T2 9/12、S9/T2 7/12、S9/T5 8/12，另有 S3/S9 T4 超预算；失败目标的端点均自由，但入口侧被相邻车辆截断、目标航向与请求机动相反，或先尝试了与起点不匹配的候选。修复后相同 34 单元×12 例达到 408/408。
 - **实现与契约：** `sim/tasks.py::TaskSampler._axial_clearance_limit/_orient_spots_for_maneuver/_candidate_spots`，`sim/scenes.py` 的普通车位 kind/基准航向，见 `EXPTRAJ-DATA-018`。
+
+## 变长轨迹训练不能用 teacher-forcing loss 代替自由滚动诊断
+
+- **触发：** 训练损失快速接近零，但验证损失剧烈波动，或变长模型总是输出到最大 horizon。
+- **规则：** 同时检查 train/val/test 的自由滚动 ADE/FDE、停止命中率和预测长度偏差，并按任务与场景分组；如果 train 自由滚动与 val 同样差，优先修复训练流程而不是归因于数据划分或普通泛化过拟合。停止 BCE 只有一个正终止点时必须处理严重类别不平衡；训练 batch 需打乱，并逐步缩小 teacher forcing 与推理反馈的分布差异。
+- **原因：** v7 `net-v1` 的 teacher-forcing train loss 降到 0.105，但 best checkpoint 在 train/val 自由滚动的 ADE/FDE 分别仍为 3.459/5.853m 与 3.502/5.923m，300 条 val 和 300 条 test 的停止命中率均为 0，预测长度全部落到 320 点。误差集中于 T3、S4/S6 和前进任务，而非传感器噪声等级。
+- **实现与契约：** `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`，见 `MODEL-EVAL-003`。

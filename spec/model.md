@@ -106,6 +106,13 @@
 - 行为：独立 CLI 从 checkpoint 中恢复模型注册名与模型配置，在同一 NPZ 验证集上评估一个或多个模型，原子写入 JSON，并生成 PNG+PDF 指标对比图。
 - 兼容：仅接受 Trainer schema v1 checkpoint；不修改 checkpoint 或数据集。完整 V3 的实际闭环轨迹与误差-时间图不在本轮开环入口中伪造。
 
+### `MODEL-EVAL-003`：预测误差诊断与轨迹叠加
+
+- 前置：单个 Trainer schema v1 checkpoint 与包含逐样本 `task_meta`、BEV 元数据的 schema v2 数据集。
+- 行为：在目标有效前缀上计算逐样本与按场景、任务类型、机动方向、噪声和相邻占用分组的 ADE/FDE/环绕航向误差；变长模型额外报告预测终止长度误差。按 FDE 选择全局最差样本及每类任务最差样本，将网络预测、专家轨迹、目标和 BEV 叠加到同一车体局部坐标图。
+- 结果：原子写入 JSON 报告，并保存分组指标、全局最差和按任务最差叠加图的 PNG/PDF；报告保留样本索引和任务 ID，使错误可回查到原始数据。
+- 异常：元数据缺失或未与样本逐项对齐、checkpoint 与数据不兼容、预测或停止输出形状不一致时明确失败，不静默降级为无分组结论。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -122,6 +129,7 @@
 | `MODEL-REPORT-001` | 历史/报告原子落盘与 PNG+PDF 曲线 | `tests/test_training_reporting.py`、`tests/test_training_runner.py` | `training/reporting.py`、`training/runner.py`、`scripts/train_model.py` | 1 epoch 合成训练贯通并生成全套产物；正式数据训练后置 | ✅ |
 | `MODEL-EVAL-001` | mask ADE/FDE/环绕航向、短 horizon 拒绝 | `tests/test_open_loop_metrics.py` | `metrics/open_loop.py::compute_open_loop_metrics` | 精确数值、±π 环绕、mask 与短 horizon 拒绝通过 | ✅ |
 | `MODEL-EVAL-002` | checkpoint 恢复、多模型 JSON/图 | `tests/test_eval_openloop.py`、CLI smoke | `training/checkpoint.py`、`scripts/eval_openloop.py` | checkpoint 恢复、JSON 与 PNG/PDF 图 smoke 通过；完整 V3 闭环后置 | ✅ |
+| `MODEL-EVAL-003` | 分组指标、终止误差与预测/专家叠加图 | `tests/test_prediction_analysis.py`、v7 train/val/test CLI | `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py` | 9 项定向测试通过；v7 `net-v1` 三 split 生成 JSON 与三组 PNG/PDF，逐样本索引可回查 | ✅ |
 
 ## 待人工确认
 

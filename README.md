@@ -74,6 +74,9 @@ foreach ($split in 'train', 'val', 'test') {
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/v7/net-v0/best.pt --checkpoint v1=runs/training/v7/net-v1/best.pt --checkpoint v2=runs/training/v7/net-v2/best.pt --output runs/openloop-eval/v7
+
+# 对单个 checkpoint 按场景/任务/方向/噪声/相邻占用分组，并输出最差预测—专家叠加图
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/analyze_predictions.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint runs/training/v7/net-v1/best.pt --output runs/openloop-analysis/v7/net-v1/val
 ```
 
 ```bash
