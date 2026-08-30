@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 
@@ -23,9 +23,37 @@ class RecoveryCandidate:
     position_deviation_m: float
     yaw_deviation_rad: float
     trigger: str = "stride"
+    collision_backtrack_steps: int = 0
 
 
-def select_recovery_candidates(
+@dataclass(frozen=True)
+class RecoverySelectionResult:
+    candidates: tuple[RecoveryCandidate, ...]
+    diagnostics: dict[str, int]
+
+
+def _deviation_from_expert(
+    state: VehicleState,
+    expert: np.ndarray,
+    yaw_radius_m: float,
+) -> tuple[float, float, float]:
+    position_errors = np.hypot(expert[:, 0] - state.x, expert[:, 1] - state.y)
+    yaw_errors = np.abs(
+        np.arctan2(
+            np.sin(expert[:, 2] - state.yaw),
+            np.cos(expert[:, 2] - state.yaw),
+        )
+    )
+    combined = np.hypot(position_errors, yaw_radius_m * yaw_errors)
+    match = int(np.argmin(combined))
+    return (
+        float(combined[match]),
+        float(position_errors[match]),
+        float(yaw_errors[match]),
+    )
+
+
+def select_recovery_candidates_with_diagnostics(
     states: Iterable[VehicleState],
     collisions: Iterable[bool],
     expert_points: np.ndarray,
@@ -34,8 +62,10 @@ def select_recovery_candidates(
     min_deviation_m: float,
     min_yaw_deviation_rad: float | None = None,
     yaw_radius_m: float = 1.0,
-) -> list[RecoveryCandidate]:
-    """确定性选择偏离专家分布且尚未碰撞的闭环状态。"""
+    pose_free: Callable[[float, float, float], bool] | None = None,
+    initial_state: VehicleState | None = None,
+) -> RecoverySelectionResult:
+    """选择普通偏离状态，并为每次碰撞回溯最近的规划安全状态。"""
     if (
         stride <= 0
         or not np.isfinite(min_deviation_m)
@@ -58,52 +88,123 @@ def select_recovery_candidates(
     collision_values = list(collisions)
     if len(state_values) != len(collision_values):
         raise ValueError("states 与 collisions 必须逐步对齐")
-    candidates: list[RecoveryCandidate] = []
-    for offset, (state, collision) in enumerate(
-        zip(state_values, collision_values)
-    ):
+    is_pose_free = pose_free or (lambda _x, _y, _yaw: True)
+    diagnostics = {
+        "collision_events": 0,
+        "stride_candidates_before_margin": 0,
+        "stride_margin_safe_candidates": 0,
+        "stride_margin_unsafe_candidates": 0,
+        "stride_collision_events_covered": 0,
+        "immediate_pre_collision_margin_safe_events": 0,
+        "last_margin_safe_backtrack_events": 0,
+        "last_margin_safe_backtrack_missing_events": 0,
+    }
+    by_step: dict[int, RecoveryCandidate] = {}
+    safe_stride_steps: list[int] = []
+
+    for offset, (state, collision) in enumerate(zip(state_values, collision_values)):
         step = offset + 1
-        pre_collision = (
-            offset + 1 < len(collision_values) and collision_values[offset + 1]
-        )
-        if collision or (step % stride != 0 and not pre_collision):
+        if collision or step % stride != 0:
             continue
-        position_errors = np.hypot(expert[:, 0] - state.x, expert[:, 1] - state.y)
-        yaw_errors = np.abs(
-            np.arctan2(
-                np.sin(expert[:, 2] - state.yaw),
-                np.cos(expert[:, 2] - state.yaw),
-            )
+        deviation, position_deviation, yaw_deviation = _deviation_from_expert(
+            state, expert, yaw_radius_m
         )
-        combined = np.hypot(position_errors, yaw_radius_m * yaw_errors)
-        match = int(np.argmin(combined))
-        position_deviation = float(position_errors[match])
-        yaw_deviation = float(yaw_errors[match])
-        if (
-            pre_collision
-            or position_deviation >= min_deviation_m
-            or (
-                min_yaw_deviation_rad is not None
-                and yaw_deviation >= min_yaw_deviation_rad
-            )
-        ):
-            candidates.append(
-                RecoveryCandidate(
-                    step,
-                    state,
-                    float(combined[match]),
-                    position_deviation,
-                    yaw_deviation,
-                    "pre_collision" if pre_collision else "stride",
-                )
-            )
-    return sorted(
-        candidates,
-        key=lambda item: (
-            0 if item.trigger == "pre_collision" else 1,
-            -item.deviation_m,
-            item.rollout_step,
-        ),
+        shifted = position_deviation >= min_deviation_m or (
+            min_yaw_deviation_rad is not None
+            and yaw_deviation >= min_yaw_deviation_rad
+        )
+        if not shifted:
+            continue
+        diagnostics["stride_candidates_before_margin"] += 1
+        if not is_pose_free(state.x, state.y, state.yaw):
+            diagnostics["stride_margin_unsafe_candidates"] += 1
+            continue
+        diagnostics["stride_margin_safe_candidates"] += 1
+        safe_stride_steps.append(step)
+        by_step[step] = RecoveryCandidate(
+            step,
+            state,
+            deviation,
+            position_deviation,
+            yaw_deviation,
+            "stride",
+        )
+
+    executed = [(index + 1, state) for index, state in enumerate(state_values)]
+    if initial_state is not None:
+        executed.insert(0, (0, initial_state))
+    for collision_offset, collision in enumerate(collision_values):
+        if not collision:
+            continue
+        collision_step = collision_offset + 1
+        diagnostics["collision_events"] += 1
+        if any(step < collision_step for step in safe_stride_steps):
+            diagnostics["stride_collision_events_covered"] += 1
+        prior_states = [item for item in executed if item[0] < collision_step]
+        if prior_states:
+            immediate_step, immediate_state = prior_states[-1]
+            if is_pose_free(immediate_state.x, immediate_state.y, immediate_state.yaw):
+                diagnostics["immediate_pre_collision_margin_safe_events"] += 1
+        selected: tuple[int, VehicleState] | None = None
+        for step, state in reversed(prior_states):
+            if is_pose_free(state.x, state.y, state.yaw):
+                selected = (step, state)
+                break
+        if selected is None:
+            diagnostics["last_margin_safe_backtrack_missing_events"] += 1
+            continue
+        diagnostics["last_margin_safe_backtrack_events"] += 1
+        step, state = selected
+        deviation, position_deviation, yaw_deviation = _deviation_from_expert(
+            state, expert, yaw_radius_m
+        )
+        by_step[step] = RecoveryCandidate(
+            step,
+            state,
+            deviation,
+            position_deviation,
+            yaw_deviation,
+            "collision_backtrack",
+            collision_step - step,
+        )
+
+    candidates = tuple(
+        sorted(
+            by_step.values(),
+            key=lambda item: (
+                0 if item.trigger == "collision_backtrack" else 1,
+                item.collision_backtrack_steps
+                if item.trigger == "collision_backtrack"
+                else -item.deviation_m,
+                item.rollout_step,
+            ),
+        )
+    )
+    diagnostics["selected_candidate_count"] = len(candidates)
+    return RecoverySelectionResult(candidates, diagnostics)
+
+
+def select_recovery_candidates(
+    states: Iterable[VehicleState],
+    collisions: Iterable[bool],
+    expert_points: np.ndarray,
+    *,
+    stride: int,
+    min_deviation_m: float,
+    min_yaw_deviation_rad: float | None = None,
+    yaw_radius_m: float = 1.0,
+) -> list[RecoveryCandidate]:
+    """兼容入口：无几何检查时按全部位姿可规划选择候选。"""
+    return list(
+        select_recovery_candidates_with_diagnostics(
+            states,
+            collisions,
+            expert_points,
+            stride=stride,
+            min_deviation_m=min_deviation_m,
+            min_yaw_deviation_rad=min_yaw_deviation_rad,
+            yaw_radius_m=yaw_radius_m,
+        ).candidates
     )
 
 
@@ -163,6 +264,7 @@ def build_recovery_sample(
         "position_deviation_m": candidate.position_deviation_m,
         "yaw_deviation_rad": candidate.yaw_deviation_rad,
         "trigger": candidate.trigger,
+        "collision_backtrack_steps": candidate.collision_backtrack_steps,
         "policy_checkpoint": checkpoint_identity,
         "label_policy": "expert_replan_from_learner_state",
     }
@@ -177,6 +279,8 @@ def build_recovery_sample(
 
 __all__ = [
     "RecoveryCandidate",
+    "RecoverySelectionResult",
     "build_recovery_sample",
     "select_recovery_candidates",
+    "select_recovery_candidates_with_diagnostics",
 ]

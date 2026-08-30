@@ -29,7 +29,7 @@
 ## 数据与状态
 
 - 碰撞损失输入为模型局部轨迹、有效前缀 mask 和与该局部坐标一致的 BEV occupancy 通道；车辆长宽来自数据集 `task_meta.dataset.vehicle_model`，栅格分辨率/范围/通道来自 `bev_meta`。
-- 闭环恢复样本仍写 schema v2 NPZ；`task_meta.recovery` 记录来源数据集索引、闭环步、策略 checkpoint、位置偏离和生成版本，原任务身份及 selected goal 保持可追溯。
+- 闭环恢复样本仍写 schema v2 NPZ；`task_meta.recovery` 记录来源数据集索引、闭环步、策略 checkpoint、位置偏离、碰撞回溯距离和生成版本，原任务身份及 selected goal 保持可追溯。
 - 恢复采集检查点按源样本独立落盘；续建只能复用输入数据、manifest、checkpoint、车辆模型、选择参数均一致的检查点。
 - 安全门禁状态包含检查次数、干预次数、网络不安全原因和回退失败次数；它只进入回合报告元数据，不改变 `Trajectory` 公共结构。
 
@@ -45,10 +45,12 @@
 ### `SAFE-DATA-001`：闭环偏离状态专家重标注
 
 - 前置：可复现 schema v2 数据集、manifest、deployment checkpoint 和专家组件可用。
-- 行为：在复原任务中滚动当前网络策略，按固定间隔和最小偏离阈值选取仍无碰撞的学习器状态；从该状态向原 selected goal 重新规划并采集当前 BEV，生成恢复监督样本。规划失败只淘汰该候选并记录原因，不伪造标签。
-- 结果：恢复归档可单独审计，并可与原 train 归档合并；同输入、seed 和参数得到相同的候选选择与身份。
+- 行为：在复原任务中滚动当前网络策略。普通偏离状态仍按固定间隔和最小位置/航向偏离选取，但必须在选择阶段通过专家规划器的安全余量检查；一旦发生碰撞，必须沿本回合已执行状态向前完整回溯，选择距离碰撞最近且满足同一安全余量的状态，不以固定回溯窗口或场景特例代替。随后从候选状态向原 selected goal 重新规划并采集当前 BEV。规划失败只淘汰该候选并记录原因，不伪造标签。
+- 结果：恢复归档可单独审计，并可与原 train 或既有恢复归档合并；合并时按来源索引和闭环步拒绝重复恢复样本。同输入、seed、参数、优先任务证据和基础恢复归档得到相同的候选选择与身份。
+- 困难场景补采：定向补采只能从上一轮逐任务检查点自动选择“闭环碰撞或超时且恢复样本为零”的源任务，不得写死场景名或任务类型；选择来源、索引和规则必须进入身份与报告。
+- 消融：同一闭环回放同时报告固定步长候选、紧邻碰撞状态、完整安全余量回溯三种策略对碰撞回合的覆盖，最终采用完整回溯候选的实际专家重规划成功率作为数据可用性门禁。
 - 异常与恢复：每个源样本结束后原子保存完成状态和可用恢复样本；中断后跳过已完成源样本。身份指纹不一致时拒绝续建。
-- 验收：合成/小规模任务验证学习器状态而非原起点被保存、专家轨迹从该状态开始、元数据完整、续建不重复。
+- 验收：合成/小规模任务验证学习器状态而非原起点被保存、碰撞时选择最近的安全余量状态、专家轨迹从该状态开始、元数据完整、困难任务由失败证据而非场景名选出、续建与基础归档合并均不重复；真实困难任务报告三策略消融和重规划产出率。
 
 ### `SAFE-SHIELD-001`：运行时几何安全门禁
 
@@ -75,9 +77,9 @@
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
 |---|---|---|---|---|---|
 | `SAFE-LOSS-001` | 完整车体扫掠、越界、梯度与恢复语义 | `tests/test_safety_loss.py`、`tests/test_trainer.py` | `training/safety.py::SweptFootprintLoss/safety_geometry_from_dataset`、`training/trainer.py::Trainer` | 合成安全/碰撞/旋转/越界与 checkpoint 测试通过；4 条真实专家轨迹损失为 0；276 项全量测试通过 | ✅ |
-| `SAFE-DATA-001` | 学习器状态重标注、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke | `dataset/recovery.py::select_recovery_candidates/build_recovery_sample`、恢复数据 CLI | 位置/航向/碰撞前选择与重新审计测试通过；真实 1 源任务生成 1 条 43 点恢复样本并合并 2401 条训练集 | ✅ |
+| `SAFE-DATA-001` | 学习器状态重标注、安全余量回溯、证据驱动补采、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke/真实困难任务消融 | `dataset/recovery.py::select_recovery_candidates_with_diagnostics/build_recovery_sample`、恢复数据 CLI | 15 个困难碰撞回合同回放消融：固定步长/紧邻帧/完整回溯覆盖 0/0/15，完整回溯 15/15 专家重规划成功；258 条恢复样本去重并合并为 2658 条训练集；283 项全量测试通过 | ✅ |
 | `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截/不安全回退拒绝测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞 | ✅ |
 
 ## 待人工确认
 
-- 正式闭环恢复数据规模与正式安全训练在烟雾验证通过后由用户按交付命令执行。
+- 使用冻结的 2658 条最终训练集完成 v8-safety-v2 正式训练，并按纯网络/安全门禁两种口径执行闭环验收。

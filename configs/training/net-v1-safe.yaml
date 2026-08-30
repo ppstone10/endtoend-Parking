@@ -6,7 +6,7 @@ model:
     dt: 0.2
     hidden_dim: 128
 data:
-  train: ../../data/task_dataset/tracked_pivot_v8_recovery/train_with_recovery.npz
+  train: ../../data/task_dataset/tracked_pivot_v8_recovery_final/train_with_recovery.npz
   val: ../../data/task_dataset/tracked_pivot_v7_3000/val.npz
   batch_size: 8
 training:
@@ -30,4 +30,4 @@ training:
   teacher_forcing_decay_epochs: 15
   early_stopping_start_epoch: 15
 output:
-  directory: ../../runs/training/v8-safety-v1/net-v1
+  directory: ../../runs/training/v8-safety-v2/net-v1

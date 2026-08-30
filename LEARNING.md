@@ -70,3 +70,10 @@
 - **规则：** 闭环评测必须从数据集 manifest 和任务元数据复原原始场景、占用、噪声、BEV 与 selected goal，使用车位自身容差；先比较少量相邻重规划周期，再冻结周期并按场景×任务分层评测。MPC 跟踪 RMS 很小而碰撞率高时，采用三层闭环：训练中约束完整车体连续扫掠；采集学习器实际访问的位姿/航向偏离状态并由专家重标注；运行时独立审查网络轨迹并记录专家回退干预。三层都从车辆/BEV/环境接口取几何，不能按场景编号打补丁，也不能继续靠 early stopping 或总体 ADE/FDE 调参。
 - **原因：** v7-flow-v3 net-v1 的 val/test 开环 ADE 为 0.272/0.147m，但 K=10 的 34 条 val 分层闭环仅 32.4% 成功、29.4% 碰撞，30 条 S9 仅 50.0% 成功、33.3% 碰撞；跟踪 RMS 仍只有 0.047/0.043m。K=1、5、10、20 的同批 4 条比较为 0%、25%、50%、25%，说明逐周期重置 320 点整段轨迹会放大末端振荡，但仅调整周期不能解决轨迹安全缺口。
 - **实现与契约：** `training/safety.py`、`dataset/recovery.py`、`runtime/safety.py`、`scripts/build_recovery_dataset.py` 和 `experiments/closed_loop_evaluation.py`，见 `SAFE-LOSS-001/SAFE-DATA-001/SAFE-SHIELD-001`；T5 当前结果只代表静态场景闭环，安全门禁也只保证当前环境模型中已知障碍。
+
+## 碰撞前一帧不等于可用于专家恢复的安全状态
+
+- **触发：** 闭环日志明确发生碰撞，但恢复集没有 `pre_collision` 样本，困难场景在固定步长筛选后持续零产出。
+- **规则：** 区分运行时零余量碰撞与专家规划安全余量；碰撞后沿本回合全部已执行状态反向搜索，选离碰撞最近且通过专家碰撞检查器的状态。普通步长候选也必须在选择阶段做相同检查并记录拒绝原因，不能在 CLI 后段静默丢弃。困难补采由上一轮“碰撞/超时且零恢复”的检查点派生，不写场景白名单。
+- **原因：** 240 回合首轮恢复中，18 个碰撞回合有 15 个零恢复。对这 15 个相同回放做消融，固定步长安全候选和紧邻碰撞帧均为 0/15，完整安全余量回溯为 15/15，且全部专家重规划成功；实际需要回溯 2–17 个控制步，证明固定一帧或固定窗口都不可靠。
+- **实现与契约：** `dataset/recovery.py::select_recovery_candidates_with_diagnostics`、`scripts/build_recovery_dataset.py --priority-from/--base-recovery`，见 `SAFE-DATA-001` 和 `data/task_dataset/tracked_pivot_v8_recovery_final/report.json`。
