@@ -54,6 +54,9 @@ class NetworkSource:
 
     def begin(self, start: VehicleState, goal: GoalPose) -> None:
         self._goal = goal
+        set_target_goals = getattr(self.sensor_pipeline, "set_target_goals", None)
+        if callable(set_target_goals):
+            set_target_goals([goal])
 
     def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
         import time

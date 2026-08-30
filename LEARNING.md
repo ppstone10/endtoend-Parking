@@ -63,3 +63,10 @@
 - **规则：** 同时检查 train/val 的自由滚动 ADE/FDE、停止命中率和预测长度偏差，并按任务与场景分组；test 只作最终确认。训练 batch 需打乱，并逐步缩小 teacher forcing 与推理反馈的分布差异；early stopping 必须晚于课程衰减。单终点极端正类加权会把停止召回推到 100% 却破坏时刻校准，变长轨迹应使用累计停止边界监督，并只在独立 val 上校准部署阈值。
 - **原因：** v7 `net-v1` 的 teacher-forcing train loss 降到 0.105，但 best checkpoint 在 train/val 自由滚动的 ADE/FDE 分别仍为 3.459/5.853m 与 3.502/5.923m，300 条 val 和 300 条 test 的停止命中率均为 0，预测长度全部落到 320 点。误差集中于 T3、S4/S6 和前进任务，而非传感器噪声等级。
 - **实现与契约：** 诊断入口为 `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`；训练和校准在 `training/`、`model/network.py`。同 seed 消融中，累计停止+`3e-4` 在 12 epoch 达到 val/test ADE/FDE 0.312/0.552m 与 0.293/0.527m；val 校准后长度 MAE 23.84 点、偏差 -8.61 点。见 `MODEL-LOSS-003`、`MODEL-TRAIN-004`、`MODEL-CAL-001` 和 `docs/training_guide.md`。
+
+## 低开环误差不等于网络轨迹可以安全闭环
+
+- **触发：** deployment 的 ADE/FDE 已进入亚米级，但网络→MPC 闭环仍碰撞、振荡或无法进入车位阈值。
+- **规则：** 闭环评测必须从数据集 manifest 和任务元数据复原原始场景、占用、噪声、BEV 与 selected goal，使用车位自身容差；先比较少量相邻重规划周期，再冻结周期并按场景×任务分层评测。MPC 跟踪 RMS 很小而碰撞率高时，应优先检查网络轨迹的障碍安全约束和闭环状态分布，不能继续靠 early stopping 或总体 ADE/FDE 调参。
+- **原因：** v7-flow-v3 net-v1 的 val/test 开环 ADE 为 0.272/0.147m，但 K=10 的 34 条 val 分层闭环仅 32.4% 成功、29.4% 碰撞，30 条 S9 仅 50.0% 成功、33.3% 碰撞；跟踪 RMS 仍只有 0.047/0.043m。K=1、5、10、20 的同批 4 条比较为 0%、25%、50%、25%，说明逐周期重置 320 点整段轨迹会放大末端振荡，但仅调整周期不能解决轨迹安全缺口。
+- **实现与契约：** `experiments/closed_loop_evaluation.py`、`scripts/run_closed_loop.py`、`runtime/sources.py::NetworkSource`，见 `LOOP-EVAL-001`；T5 当前结果只代表静态场景闭环。

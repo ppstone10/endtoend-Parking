@@ -87,8 +87,12 @@ foreach ($split in 'train', 'val', 'test') {
 # 闭环泊车演示（滚动闭环引擎）：专家轨迹+MPC 基线（M1 地基，成功率验收）
 python scripts/run_closed_loop.py --source expert --samples 10
 
-# 端到端主线：感知→BEV→网络→MPC 滚动闭环（需先训练模型与数据集）
-python scripts/run_closed_loop.py --source network --data data_closed_loop.npz --samples 5
+# 端到端主线：按 schema v2 元数据恢复原场景/占用/噪声/车位阈值，deployment→MPC 滚动闭环
+# 小规模分层检查；320 点模型默认每 10 个控制周期重规划，报告含整体/分组/逐回合指标
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 34 --output runs/closed-loop/v7-flow-v3/net-v1/val-stratified-34-k10/report.json
+
+# 全量评测使用 --samples 0；T5 当前只按静态场景闭环，不代表动态障碍验证
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/test.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 0 --output runs/closed-loop/v7-flow-v3/net-v1/test-full-k10/report.json
 ```
 
 ## 目录结构

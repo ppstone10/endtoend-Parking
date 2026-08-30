@@ -149,6 +149,7 @@ class TestNetworkSourcePlumbing(unittest.TestCase):
         source = NetworkSource(pipeline, _StubModel())
         goal = GoalPose(8.0, 0.0, 0.0)
         source.begin(VehicleState(0.0, 0.0, 0.0), goal)
+        self.assertEqual(env.parking_spots, [goal])
         traj, ms = source.next_trajectory(VehicleState(1.0, 2.0, np.pi / 2))
         # 桩网络在局部系输出 +x 方向 2m，车辆 yaw=90° 时全局应为 +y 方向。
         end = traj.points[-1]

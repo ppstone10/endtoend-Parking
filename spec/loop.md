@@ -3,9 +3,9 @@
 ## 元数据
 
 - Spec ID 前缀：`LOOP`
-- 强度：轻量
+- 强度：完整
 - 状态：已采纳
-- 最后更新：2026-08-23
+- 最后更新：2026-08-30
 
 ## 目标
 
@@ -61,6 +61,15 @@
 - 结果：成功率 ≥ 95%。
 - 验收：2026-08-23 实测 197/200 成功（98.5%），碰撞率 1.5%，位置误差 0.24±0.71m，航向误差 7.7°，跟踪 RMS 0.037m，耗时 183s。
 
+### `LOOP-EVAL-001`：数据集任务网络闭环评测
+
+- 前置：schema v2 数据集、同数据集 manifest、Trainer schema v1 checkpoint 与可复现任务元数据均可读；车辆元数据与当前可加载配置一致。
+- 行为：评测入口从 checkpoint 恢复模型名称、完整模型配置与停止阈值；按 manifest 根 seed、任务 ID 中的样本序号和逐样本难度恢复原始场景、占用、噪声及 BEV 配置，为当前选中目标写入 target 通道，并以该目标自己的位置/航向容差执行网络→MPC 闭环。当前 320 点 deployment 默认每 10 个 0.1s 控制周期重规划一次；该值显式记录且可由命令覆盖。
+- 结果：控制台输出逐回合结果，指定输出时原子写入包含整体指标、场景/任务/方向/噪声/占用分组和逐回合结果的 JSON；评测元数据记录数据集、checkpoint、样本选择与运行参数。
+- 异常与恢复：缺失 manifest/任务元数据、任务身份无法复现、目标与数据不一致、checkpoint/BEV/车辆模型不兼容时在运行回合前明确失败，不退回通用场景或猜测配置；输出目录可更换后重跑，不修改输入数据与 checkpoint。
+- 兼容与回退：专家随机基线入口保持可用；旧的无 manifest 网络命令不再被视为可信场景评测。回退只需恢复脚本，数据、权重和运行时公共接口不迁移。
+- 安全与隐私：只运行本地二维仿真，不授权实车控制；T5 动态事件注入仍不属于本条范围，报告必须保留任务标签但不得把静态闭环结果描述为动态避障验证。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -70,6 +79,7 @@
 | `LOOP-FAIL-001` | 失败分类 | `tests/test_runtime.py` 各失败用例 | `runtime/termination.py::classify_oscillation`、`runtime/engine.py` | unittest 通过 | ✅ |
 | `LOOP-SRC-001` | 轨迹源接口 | `tests/test_runtime.py::TestNetworkSourcePlumbing` | `runtime/sources.py` | unittest 通过 | ✅ |
 | `LOOP-GROUND-001` | 专家+MPC ≥95% | `experiments/run_experiment.py` ground_baseline | 引擎全链路 | 197/200 成功（98.5%） | ✅ |
+| `LOOP-EVAL-001` | 当前 deployment 在原始任务场景中可复现闭环并输出分组报告 | `tests/test_closed_loop_evaluation.py`；`scripts/run_closed_loop.py --source network ...` | `experiments/closed_loop_evaluation.py`、`runtime/sources.py::NetworkSource`、`scripts/run_closed_loop.py` | 600/600 任务身份复原；263 项全量测试通过；34 val + 30 S9 分层闭环报告完成 | ✅ |
 
 ## 待人工确认
 

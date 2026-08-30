@@ -15,7 +15,7 @@
 | 闭环运行时 | `runtime/` | 滚动闭环引擎：`engine.py`（轨迹源→MPC→车辆循环、终止与失败分类）、`sources.py`（ExpertSource/NetworkSource 轨迹源策略）、`termination.py`（双阈值到达判定）、`recorder.py`（逐步记录供指标与回放） |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较；预测诊断层保留逐样本误差与终止长度，按场景、任务、方向、噪声和相邻占用聚合 |
 | 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图与分组开环图；专家验收图和预测叠加图使用“前方 x、车体左方 y”右手局部系，将正 Left 显示在画面左侧，并把连续零位移航向变化汇总为从旋转前航向出发的有符号旋转弧 |
-| 批量实验 | `experiments/` | 配置驱动 runner（JSON 配置 → 引擎批量回合 → 指标汇总 → 结果落盘），配置与结果归档 `configs/`、`results/` |
+| 批量实验 | `experiments/` | 配置驱动专家 runner；`closed_loop_evaluation.py` 从 schema v2 NPZ/manifest 确定性复原任务场景并加载 Trainer deployment，输出网络闭环整体、分组与逐回合 JSON |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
 ## 数据流
@@ -58,6 +58,8 @@ BEVTensor + VehicleState + GoalPose → 模型注册表（net-v0/v1/v2）→ Tra
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
 ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚动循环
   → 终止（到达双阈值/碰撞/超时/振荡）→ EpisodeResult（metrics/ 聚合）
+schema v2 NPZ + manifest + deployment checkpoint → 闭环评测编排
+  → 复原 scene/occupancy/noise/BEV/selected goal → NetworkSource（目标通道随回合更新）→ 分组 JSON
 ```
 
 - 障碍物碰撞与点云语义分离：`is_free`/`has_collision` 只检查 forbidden 障碍与地图边界；`raycast` 只与 emits_points 障碍求交（悬崖禁止进入但不挡射线，地面标线可通行）。
@@ -82,6 +84,7 @@ ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚�
 - `sim/`、`sensor2bev/`、`model/`、`controller/` 依赖 `interfaces/` 与各自必要的 `numpy`/`torch` 数值运行时，模块间不互相耦合；`training/` 依赖 `model/` 与 PyTorch，不反向进入模型或数据层。
 - `runtime/` 依赖 `interfaces/`、`metrics/` 与注入的轨迹源/MPC/车辆模型（依赖注入，不直接 import sim/model）；`metrics/` 无内部依赖。
 - 闭环执行统一经 `runtime/ClosedLoopEngine`，轨迹源策略可替换（Expert/Network/后续基线），指标口径唯一。
+- 数据集网络闭环由 `experiments/closed_loop_evaluation.py` 编排，必须在回合开始前核对 manifest 车辆模型、任务确定性身份、selected goal、BEV 配置与 checkpoint 通道/dt；任何漂移都拒绝运行，不得回退到通用环境。T5 元数据当前不触发动态障碍注入，报告显式标为静态闭环。
 - 默认理论车型由 `configs/vehicles/tracked_drill_rig.json` 定义为以两履带几何中心居中的 6×3 m 矩形；`VehicleConfig` 将外廓、执行上限、规划速度/角速度、安全余量、搜索分辨率与解析接管范围统一注入规划器/MPC/车辆模型/碰撞/inspection。`tracked_pivot_v5` 的解析接管范围为 T3 距离上限 30m。
 - S4/S9 卸载区由 `TaskSampler` 将同一 `VehicleConfig` 的长、宽和 `collision_margin` 注入场景：双向主路至少 3.5 倍车宽、卸载位中心距至少 3 倍车宽，车尾到挡墙的物理净空为 `collision_margin + 0.3m`；`geometry_profile` 进入任务元数据和计划指纹，旧几何检查点不得续入。
 - 批量实验统一经 `experiments/run_experiment.py`（JSON 配置驱动，结果落盘 `experiments/results/`），可视化统一经 `viz/`（PNG+PDF 双格式输出）。
