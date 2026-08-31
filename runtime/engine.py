@@ -12,11 +12,12 @@ import numpy as np
 from interfaces import GoalPose, Trajectory, VehicleState
 from metrics import EpisodeResult
 from .recorder import EpisodeRecord
-from .sources import TrajectorySource
+from .sources import SafetyStopError, TrajectorySource
 from .termination import (
     FAILURE_COLLISION,
     FAILURE_OSCILLATION,
     FAILURE_POSE_ERROR,
+    FAILURE_SAFETY_STOP,
     FAILURE_TIMEOUT,
     TerminalChecker,
     classify_oscillation,
@@ -82,17 +83,56 @@ class ClosedLoopEngine:
         record = EpisodeRecord()
         self.mpc.reset()
         self.source.begin(state, goal)
-        traj, infer_ms = self.source.next_trajectory(state)
-        inference_times = [infer_ms]
+        safety_stop = False
+        try:
+            traj, infer_ms = self.source.next_trajectory(state)
+            inference_times = [infer_ms]
+        except SafetyStopError:
+            self.source.record_safety_stop()
+            safety_stop = True
+            traj = Trajectory(
+                np.asarray([[state.x, state.y, state.yaw]], dtype=np.float64),
+                dt=self.mpc.dt,
+            )
+            inference_times = []
 
         collision = False
         for step in range(self.max_steps):
+            if safety_stop:
+                break
             if step > 0 and step % self.replan_every == 0:
-                traj, infer_ms = self.source.next_trajectory(state)
-                inference_times.append(infer_ms)
+                try:
+                    traj, infer_ms = self.source.next_trajectory(state)
+                    inference_times.append(infer_ms)
+                except SafetyStopError:
+                    self.source.record_safety_stop()
+                    safety_stop = True
+                    break
             cmd = self.mpc.compute(traj, state)
             previous_state = state
-            state = self.vehicle_model.step(state, cmd, self.mpc.dt)
+            proposed_state = self.vehicle_model.step(state, cmd, self.mpc.dt)
+            guard = getattr(self.source, "guard_transition", None)
+            if callable(guard):
+                try:
+                    replacement, guard_ms = guard(previous_state, proposed_state)
+                except SafetyStopError:
+                    self.source.record_safety_stop()
+                    safety_stop = True
+                    break
+                if replacement is not None:
+                    traj = replacement
+                    inference_times.append(guard_ms)
+                    cmd = self.mpc.compute(traj, previous_state)
+                    proposed_state = self.vehicle_model.step(
+                        previous_state, cmd, self.mpc.dt
+                    )
+                    if not self.source.transition_is_safe(
+                        previous_state, proposed_state
+                    ):
+                        self.source.record_safety_stop()
+                        safety_stop = True
+                        break
+            state = proposed_state
             collision = self._check_collision(previous_state, state)
             record.log(state, cmd, traj, traj, collision)
             if collision:
@@ -100,7 +140,9 @@ class ClosedLoopEngine:
             if self.terminal.reached(state, goal):
                 break
 
-        return self._build_result(state, goal, traj, record, inference_times, collision)
+        return self._build_result(
+            state, goal, traj, record, inference_times, collision, safety_stop
+        )
 
     # ------------------------------------------------------------------
     # 内部
@@ -124,12 +166,19 @@ class ClosedLoopEngine:
         record: EpisodeRecord,
         inference_times: list[float],
         collision: bool,
+        safety_stop: bool = False,
     ) -> EpisodeResult:
         pos_err = self.terminal.pos_err(state, goal)
         yaw_err = self.terminal.yaw_err(state, goal)
-        success = (not collision) and self.terminal.reached(state, goal)
+        success = (
+            not collision
+            and not safety_stop
+            and self.terminal.reached(state, goal)
+        )
         failure = None
-        if collision:
+        if safety_stop:
+            failure = FAILURE_SAFETY_STOP
+        elif collision:
             failure = FAILURE_COLLISION
         elif success:
             failure = None

@@ -14,6 +14,7 @@ FAILURE_COLLISION = "collision"
 FAILURE_TIMEOUT = "timeout"
 FAILURE_POSE_ERROR = "pose_error"
 FAILURE_OSCILLATION = "oscillation"
+FAILURE_SAFETY_STOP = "safety_stop"
 
 
 class TerminalChecker:

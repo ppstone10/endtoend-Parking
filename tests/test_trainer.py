@@ -58,6 +58,58 @@ class TestTrainer(unittest.TestCase):
         self.assertNotEqual(order(0), order(1))
         self.assertEqual(sorted(order(0)), list(range(8)))
 
+    def test_balanced_recovery_batches_contain_all_three_semantic_pools(self):
+        source = []
+        identifiers = torch.arange(12, dtype=torch.float32)
+        groups = torch.tensor([0] * 8 + [1] * 2 + [2] * 2)
+        for start in range(0, 12, 4):
+            batch = list(_batch())
+            batch = [field[:0] for field in batch]
+            end = start + 4
+            batch[0] = torch.zeros(end - start, 5, 8, 8)
+            batch[1] = identifiers[start:end, None].repeat(1, 3)
+            batch[2] = torch.zeros(end - start, 2)
+            batch[3] = torch.zeros(end - start, 4, 3)
+            batch[4] = torch.ones(end - start, 4)
+            batch.append(groups[start:end])
+            source.append(tuple(batch))
+
+        def balanced(epoch):
+            return epoch_batches(
+                tuple(source),
+                shuffle=True,
+                seed=17,
+                epoch=epoch,
+                balance_recovery=True,
+            )
+
+        first = balanced(0)
+        self.assertEqual(
+            [[int((batch[-1] == value).sum()) for value in range(3)] for batch in first],
+            [[2, 1, 1], [2, 1, 1], [2, 1, 1], [2, 1, 1]],
+        )
+        self.assertEqual(
+            [batch[1][:, 0].tolist() for batch in first],
+            [batch[1][:, 0].tolist() for batch in balanced(0)],
+        )
+        self.assertNotEqual(
+            [batch[1][:, 0].tolist() for batch in first],
+            [batch[1][:, 0].tolist() for batch in balanced(1)],
+        )
+
+    def test_balanced_recovery_batches_require_all_pools(self):
+        batch = tuple(field.repeat((2,) + (1,) * (field.ndim - 1)) for field in _batch()) + (
+            torch.tensor([0, 0, 1, 1]),
+        )
+        with self.assertRaisesRegex(ValueError, "三个样本池"):
+            epoch_batches(
+                (batch,),
+                shuffle=True,
+                seed=0,
+                epoch=0,
+                balance_recovery=True,
+            )
+
     def test_teacher_forcing_schedule_is_linear_and_bounded(self):
         config = TrainerConfig(
             teacher_forcing_start=1.0,

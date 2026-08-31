@@ -7,6 +7,7 @@ from .sources import (
     ExpertSource,
     NetworkSource,
     ReplanningExpertSource,
+    SafetyStopError,
     SafetyShieldSource,
     TrajectorySource,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "ExpertSource",
     "NetworkSource",
     "ReplanningExpertSource",
+    "SafetyStopError",
     "SafetyShieldSource",
     "FootprintTrajectorySafetyChecker",
     "SafetyDecision",

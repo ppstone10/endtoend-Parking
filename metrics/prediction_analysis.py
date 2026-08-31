@@ -43,7 +43,7 @@ def collect_open_loop_predictions(
     with torch.no_grad():
         for batch in batches:
             bev, goal, state, target, mask = (
-                tensor.to(target_device) for tensor in batch
+                tensor.to(target_device) for tensor in batch[:5]
             )
             started = time.perf_counter()
             forward_with_stop = getattr(model, "forward_with_stop", None)

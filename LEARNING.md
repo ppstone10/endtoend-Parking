@@ -77,3 +77,10 @@
 - **规则：** 区分运行时零余量碰撞与专家规划安全余量；碰撞后沿本回合全部已执行状态反向搜索，选离碰撞最近且通过专家碰撞检查器的状态。普通步长候选也必须在选择阶段做相同检查并记录拒绝原因，不能在 CLI 后段静默丢弃。困难补采由上一轮“碰撞/超时且零恢复”的检查点派生，不写场景白名单。
 - **原因：** 240 回合首轮恢复中，18 个碰撞回合有 15 个零恢复。对这 15 个相同回放做消融，固定步长安全候选和紧邻碰撞帧均为 0/15，完整安全余量回溯为 15/15，且全部专家重规划成功；实际需要回溯 2–17 个控制步，证明固定一帧或固定窗口都不可靠。
 - **实现与契约：** `dataset/recovery.py::select_recovery_candidates_with_diagnostics`、`scripts/build_recovery_dataset.py --priority-from/--base-recovery`，见 `SAFE-DATA-001` 和 `data/task_dataset/tracked_pivot_v8_recovery_final/report.json`。
+
+## 二值最大碰撞项不能代替连续净空训练信号
+
+- **触发：** 加入完整车体碰撞损失后，开环 ADE/FDE 合格但闭环碰撞反而上升，且不同 checkpoint 的安全损失几乎不变。
+- **规则：** 先在冻结验证集上检查安全项的梯度覆盖和同口径损失，再决定是否调权重。正式训练使用由 occupancy 与地图边界构造的有符号净空场，对规划余量内的净空缺口施加连续惩罚；从已准入模型仅初始化权重进行安全微调。恢复样本均衡必须单独消融，不能因类别少就默认过采样。
+- **原因：** 旧占用峰值项 v7→v8 仅 0.293994→0.293754，梯度非零分量约 6%；同 seed 三轮消融统一复算时，v7/旧损失均衡/净空均匀/净空均衡分别为 1.102705/1.306765/0.115092/0.128024，净空均匀下降 89.6% 且 ADE/FDE 0.228/0.572m，因此正式流程采用净空损失和真实占比 shuffle。
+- **实现与契约：** `training/safety.py`、`training/checkpoint.py`、`training/data.py`、`scripts/evaluate_safety_ablation.py`，见 `SAFE-LOSS-002/SAFE-TRAIN-001` 和 `runs/training/v9-safety-ablation/ablation_report.json`。

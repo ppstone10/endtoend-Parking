@@ -30,6 +30,8 @@ def prepare_batches(
     *,
     horizon: int,
     batch_size: int,
+    clearance_fields: torch.Tensor | None = None,
+    sample_groups: np.ndarray | None = None,
 ) -> tuple[Batch, ...]:
     """转换 NPZ 数据并补齐到模型 horizon；禁止截断有效轨迹。"""
     if horizon <= 0 or batch_size <= 0:
@@ -63,6 +65,19 @@ def prepare_batches(
         raise ValueError(
             f"模型 horizon={horizon} 小于数据有效轨迹长度 {int(lengths.max())}"
         )
+    if clearance_fields is not None and tuple(clearance_fields.shape) != (
+        sample_count,
+        1,
+        bevs.shape[-2],
+        bevs.shape[-1],
+    ):
+        raise ValueError("clearance_fields 必须与数据样本和 BEV 空间对齐")
+    if sample_groups is not None:
+        sample_groups = np.asarray(sample_groups, dtype=np.int64)
+        if sample_groups.shape != (sample_count,) or not np.isin(
+            sample_groups, [0, 1, 2]
+        ).all():
+            raise ValueError("sample_groups 必须为与样本对齐的 0/1/2 数组")
 
     local_goals = np.empty_like(goals)
     padded_trajectories = np.zeros((sample_count, horizon, 3), dtype=np.float32)
@@ -79,15 +94,18 @@ def prepare_batches(
     batches: list[Batch] = []
     for start in range(0, sample_count, batch_size):
         selection = slice(start, start + batch_size)
-        batches.append(
-            (
-                torch.as_tensor(bevs[selection], dtype=torch.float32),
-                torch.as_tensor(local_goals[selection], dtype=torch.float32),
-                torch.as_tensor(states[selection, 3:5], dtype=torch.float32),
-                torch.as_tensor(padded_trajectories[selection], dtype=torch.float32),
-                torch.as_tensor(padded_masks[selection], dtype=torch.float32),
-            )
-        )
+        fields = [
+            torch.as_tensor(bevs[selection], dtype=torch.float32),
+            torch.as_tensor(local_goals[selection], dtype=torch.float32),
+            torch.as_tensor(states[selection, 3:5], dtype=torch.float32),
+            torch.as_tensor(padded_trajectories[selection], dtype=torch.float32),
+            torch.as_tensor(padded_masks[selection], dtype=torch.float32),
+        ]
+        if clearance_fields is not None:
+            fields.append(clearance_fields[selection])
+        if sample_groups is not None:
+            fields.append(torch.as_tensor(sample_groups[selection], dtype=torch.int64))
+        batches.append(tuple(fields))
     return tuple(batches)
 
 
@@ -97,6 +115,7 @@ def epoch_batches(
     shuffle: bool,
     seed: int,
     epoch: int,
+    balance_recovery: bool = False,
 ) -> tuple[Batch, ...]:
     """按 epoch 确定性重排样本，并保持原 batch 容量。
 
@@ -104,6 +123,8 @@ def epoch_batches(
     """
     if not batches:
         return ()
+    if balance_recovery:
+        return _balanced_recovery_batches(batches, seed=seed, epoch=epoch)
     if not shuffle:
         return batches
     sizes = [int(batch[0].shape[0]) for batch in batches]
@@ -132,6 +153,54 @@ def epoch_batches(
             fields.append(torch.stack(rows, dim=0))
         shuffled.append(tuple(fields))  # type: ignore[arg-type]
     return tuple(shuffled)
+
+
+def _balanced_recovery_batches(
+    batches: tuple[Batch, ...], *, seed: int, epoch: int
+) -> tuple[Batch, ...]:
+    """每 batch 固定包含普通恢复、碰撞回溯及原始专家三类样本。"""
+    capacity = int(batches[0][0].shape[0])
+    if capacity < 3:
+        raise ValueError("恢复平衡要求 batch_size 至少为 3")
+    fields = [
+        torch.cat([batch[index] for batch in batches], dim=0)
+        for index in range(len(batches[0]))
+    ]
+    groups = fields[-1]
+    if groups.ndim != 1 or not torch.all((groups >= 0) & (groups <= 2)):
+        raise ValueError("恢复平衡要求 batch 最后一个字段为 0/1/2 sample_groups")
+    pools = [
+        torch.nonzero(groups == value, as_tuple=False).flatten()
+        for value in range(3)
+    ]
+    if any(pool.numel() == 0 for pool in pools):
+        raise ValueError("恢复平衡要求原始、普通恢复、碰撞回溯三个样本池均非空")
+    generator = torch.Generator().manual_seed(seed + epoch)
+    pools = [pool[torch.randperm(pool.numel(), generator=generator)] for pool in pools]
+    original_per_batch = capacity - 2
+    result: list[Batch] = []
+    for batch_index, start in enumerate(range(0, pools[0].numel(), original_per_batch)):
+        selected = torch.cat(
+            (
+                pools[0][start : start + original_per_batch],
+                pools[1][batch_index % pools[1].numel()].reshape(1),
+                pools[2][batch_index % pools[2].numel()].reshape(1),
+            )
+        )
+        selected = selected[torch.randperm(selected.numel(), generator=generator)]
+        result.append(tuple(field[selected] for field in fields))
+    return tuple(result)
+
+
+def recovery_sample_groups(metadata: list[dict]) -> np.ndarray:
+    """把恢复元数据映射为 0=原始、1=普通恢复、2=碰撞回溯。"""
+    groups = np.zeros(len(metadata), dtype=np.int64)
+    for index, item in enumerate(metadata):
+        recovery = item.get("recovery") if isinstance(item, dict) else None
+        if not isinstance(recovery, dict):
+            continue
+        groups[index] = 2 if recovery.get("trigger") == "collision_backtrack" else 1
+    return groups
 
 
 def model_horizon(model: torch.nn.Module) -> int:

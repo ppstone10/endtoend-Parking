@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import math
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -86,6 +87,7 @@ class SweptFootprintLoss(nn.Module):
         sample_spacing_m: float = 0.5,
         max_swept_substeps: int = 16,
         out_of_bounds_weight: float = 1.0,
+        mode: str = "occupancy_max",
     ) -> None:
         super().__init__()
         if not math.isfinite(extra_margin_m) or extra_margin_m < 0.0:
@@ -96,11 +98,15 @@ class SweptFootprintLoss(nn.Module):
             raise ValueError("max_swept_substeps 必须为正整数")
         if not math.isfinite(out_of_bounds_weight) or out_of_bounds_weight < 0.0:
             raise ValueError("out_of_bounds_weight 必须为有限非负数")
+        if mode not in {"occupancy_max", "clearance_field"}:
+            raise ValueError("mode 必须为 occupancy_max 或 clearance_field")
         self.geometry = geometry
         self.extra_margin_m = float(extra_margin_m)
         self.sample_spacing_m = float(sample_spacing_m)
         self.max_swept_substeps = int(max_swept_substeps)
         self.out_of_bounds_weight = float(out_of_bounds_weight)
+        self.mode = mode
+        self.required_clearance_m = geometry.collision_margin_m + self.extra_margin_m
         footprint = self._build_footprint_samples()
         self.register_buffer("footprint_samples", footprint, persistent=False)
 
@@ -111,10 +117,16 @@ class SweptFootprintLoss(nn.Module):
             "sample_spacing_m": self.sample_spacing_m,
             "max_swept_substeps": self.max_swept_substeps,
             "out_of_bounds_weight": self.out_of_bounds_weight,
+            "mode": self.mode,
+            "required_clearance_m": self.required_clearance_m,
         }
 
     def forward(
-        self, bev: torch.Tensor, points: torch.Tensor, mask: torch.Tensor
+        self,
+        bev: torch.Tensor,
+        points: torch.Tensor,
+        mask: torch.Tensor,
+        clearance_field: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if bev.ndim != 4 or points.ndim != 3 or points.shape[-1] != 3:
             raise ValueError("安全损失要求 bev=(B,C,H,W)、points=(B,T,3)")
@@ -138,6 +150,37 @@ class SweptFootprintLoss(nn.Module):
         grid = torch.stack((grid_x, grid_y), dim=-1)
 
         occupancy = bev[:, self.geometry.occupancy_channel : self.geometry.occupancy_channel + 1]
+        if self.mode == "clearance_field":
+            if clearance_field is None:
+                raise ValueError("clearance_field 模式要求预计算净空场")
+            if clearance_field.shape != occupancy.shape:
+                raise ValueError("净空场必须与 occupancy 形状一致")
+            clearance = clearance_field.to(dtype=points.dtype, device=points.device)
+            sampled_clearance = F.grid_sample(
+                clearance,
+                grid.reshape(grid.shape[0], grid.shape[1] * grid.shape[2], 1, 2),
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            ).reshape(grid.shape[:3])
+            scale = max(self.required_clearance_m, self.geometry.bev_resolution_m)
+            deficit = torch.relu(self.required_clearance_m - sampled_clearance) / scale
+            clearance_risk = deficit.square().mean(dim=-1)
+            overflow_x = torch.maximum(
+                torch.maximum(sample_x - front, -back - sample_x),
+                torch.zeros_like(sample_x),
+            )
+            overflow_y = torch.maximum(
+                torch.maximum(sample_y - left, -right - sample_y),
+                torch.zeros_like(sample_y),
+            )
+            boundary_risk = (
+                torch.maximum(overflow_x, overflow_y) / scale
+            ).square().mean(dim=-1)
+            per_pose = clearance_risk + self.out_of_bounds_weight * boundary_risk
+            denominator = swept_mask.sum().clamp_min(1.0)
+            return (per_pose * swept_mask).sum() / denominator
+
         dilation_cells = max(
             0,
             int(math.ceil(self.extra_margin_m / self.geometry.bev_resolution_m)),
@@ -208,16 +251,13 @@ class SweptFootprintLoss(nn.Module):
         return poses, swept_mask
 
     def _build_footprint_samples(self) -> torch.Tensor:
-        half_length = (
-            self.geometry.vehicle_length_m / 2.0
-            + self.geometry.collision_margin_m
-            + self.extra_margin_m
+        footprint_inflation = (
+            self.geometry.collision_margin_m + self.extra_margin_m
+            if self.mode == "occupancy_max"
+            else 0.0
         )
-        half_width = (
-            self.geometry.vehicle_width_m / 2.0
-            + self.geometry.collision_margin_m
-            + self.extra_margin_m
-        )
+        half_length = self.geometry.vehicle_length_m / 2.0 + footprint_inflation
+        half_width = self.geometry.vehicle_width_m / 2.0 + footprint_inflation
         count_x = max(2, int(math.ceil(2.0 * half_length / self.sample_spacing_m)) + 1)
         count_y = max(2, int(math.ceil(2.0 * half_width / self.sample_spacing_m)) + 1)
         xs = torch.linspace(-half_length, half_length, count_x)
@@ -226,4 +266,95 @@ class SweptFootprintLoss(nn.Module):
         return torch.stack((mesh_x.reshape(-1), mesh_y.reshape(-1)), dim=1)
 
 
-__all__ = ["SafetyGeometry", "SweptFootprintLoss", "safety_geometry_from_dataset"]
+def build_clearance_fields(
+    bevs: np.ndarray | torch.Tensor,
+    geometry: SafetyGeometry,
+    *,
+    extra_margin_m: float,
+    chunk_size: int = 64,
+) -> torch.Tensor:
+    """从 occupancy 构造含地图边界的截断有符号欧氏净空场。"""
+    if not math.isfinite(extra_margin_m) or extra_margin_m < 0.0:
+        raise ValueError("extra_margin_m 必须为有限非负数")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size 必须为正")
+    values = torch.as_tensor(bevs, dtype=torch.float32, device="cpu")
+    if values.ndim != 4 or geometry.occupancy_channel >= values.shape[1]:
+        raise ValueError("bevs/occupancy 通道无效")
+    required = geometry.collision_margin_m + extra_margin_m
+    cap = max(required + geometry.bev_resolution_m, geometry.bev_resolution_m)
+    fields: list[torch.Tensor] = []
+    for start in range(0, values.shape[0], chunk_size):
+        occupancy = values[
+            start : start + chunk_size,
+            geometry.occupancy_channel : geometry.occupancy_channel + 1,
+        ] > 0.5
+        fields.append(
+            _truncated_signed_distance(
+                occupancy,
+                resolution=geometry.bev_resolution_m,
+                cap_m=cap,
+            ).to(torch.float16)
+        )
+    return torch.cat(fields, dim=0)
+
+
+def _truncated_signed_distance(
+    occupancy: torch.Tensor,
+    *,
+    resolution: float,
+    cap_m: float,
+) -> torch.Tensor:
+    """小半径精确栅格欧氏距离；地图外部按障碍边界处理。"""
+    if occupancy.ndim != 4 or occupancy.shape[1] != 1:
+        raise ValueError("occupancy 必须为 (B,1,H,W)")
+    radius = max(1, int(math.ceil(cap_m / resolution)))
+
+    def nearest(target: torch.Tensor) -> torch.Tensor:
+        height, width = target.shape[-2:]
+        padded = F.pad(target.to(torch.bool), (radius, radius, radius, radius))
+        distance = torch.full(
+            target.shape,
+            cap_m,
+            dtype=torch.float32,
+            device=target.device,
+        )
+        offsets = [
+            (math.hypot(dx, dy) * resolution, dx, dy)
+            for dy in range(-radius, radius + 1)
+            for dx in range(-radius, radius + 1)
+            if math.hypot(dx, dy) * resolution <= cap_m + 1e-9
+        ]
+        for value, dx, dy in sorted(offsets):
+            shifted = padded[
+                :,
+                :,
+                radius + dy : radius + dy + height,
+                radius + dx : radius + dx + width,
+            ]
+            distance = torch.where(
+                shifted,
+                torch.minimum(distance, torch.full_like(distance, value)),
+                distance,
+            )
+        return distance
+
+    outside = nearest(occupancy)
+    inside = nearest(~occupancy)
+    height, width = occupancy.shape[-2:]
+    rows = (torch.arange(height, dtype=torch.float32) + 0.5) * resolution
+    cols = (torch.arange(width, dtype=torch.float32) + 0.5) * resolution
+    boundary = torch.minimum(
+        torch.minimum(rows, height * resolution - rows)[:, None],
+        torch.minimum(cols, width * resolution - cols)[None, :],
+    ).clamp_max(cap_m)
+    outside = torch.minimum(outside, boundary[None, None])
+    return torch.where(occupancy, -inside, outside)
+
+
+__all__ = [
+    "SafetyGeometry",
+    "SweptFootprintLoss",
+    "build_clearance_fields",
+    "safety_geometry_from_dataset",
+]

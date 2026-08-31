@@ -15,6 +15,10 @@ from interfaces import GoalPose, Trajectory, VehicleState
 from .safety import SafetyShieldStats, TrajectorySafetyChecker
 
 
+class SafetyStopError(RuntimeError):
+    """门禁无法提供安全控制时请求以 safety_stop 结束当前回合。"""
+
+
 class TrajectorySource(Protocol):
     """轨迹源接口：begin 初始化回合，next_trajectory 供给参考轨迹。"""
 
@@ -79,22 +83,75 @@ class SafetyShieldSource:
         decision = self.checker.check(state, primary)
         if decision.safe:
             return primary, primary_ms
-        self.stats.record_intervention(decision.reason)
+        return self._fallback_trajectory(state, decision.reason, primary_ms)
+
+    def _fallback_trajectory(
+        self,
+        state: VehicleState,
+        reason: str | None,
+        elapsed_ms: float = 0.0,
+        *,
+        record_intervention: bool = True,
+    ) -> tuple[Trajectory, float]:
+        if record_intervention:
+            self.stats.record_intervention(reason)
         try:
             fallback, fallback_ms = self.fallback.next_trajectory(state)
         except (RuntimeError, ValueError) as exc:
             self.stats.fallback_failures += 1
-            raise RuntimeError(
-                f"安全门禁拒绝主轨迹（{decision.reason}），可信回退规划失败：{exc}"
+            raise SafetyStopError(
+                f"安全门禁拒绝主轨迹（{reason}），可信回退规划失败：{exc}"
             ) from exc
         fallback_decision = self.checker.check(state, fallback)
         if not fallback_decision.safe:
             self.stats.fallback_failures += 1
-            raise RuntimeError(
+            raise SafetyStopError(
                 "安全门禁拒绝主轨迹且回退轨迹仍不安全："
                 f"{fallback_decision.reason}"
             )
-        return fallback, primary_ms + fallback_ms
+        return fallback, elapsed_ms + fallback_ms
+
+    def guard_transition(
+        self, state: VehicleState, proposed_state: VehicleState
+    ) -> tuple[Trajectory | None, float]:
+        """在执行控制前阻止离开专家规划安全集合的状态转移。"""
+        self.stats.transition_checks += 1
+        decision = self.checker.check(
+            state,
+            Trajectory(
+                np.asarray(
+                    [[proposed_state.x, proposed_state.y, proposed_state.yaw]],
+                    dtype=np.float64,
+                ),
+                dt=0.0,
+            ),
+        )
+        if decision.safe:
+            return None, 0.0
+        self.stats.record_prevented_transition(decision.reason)
+        return self._fallback_trajectory(
+            state,
+            f"next_state_{decision.reason or 'unsafe'}",
+            record_intervention=False,
+        )
+
+    def transition_is_safe(
+        self, state: VehicleState, proposed_state: VehicleState
+    ) -> bool:
+        decision = self.checker.check(
+            state,
+            Trajectory(
+                np.asarray(
+                    [[proposed_state.x, proposed_state.y, proposed_state.yaw]],
+                    dtype=np.float64,
+                ),
+                dt=0.0,
+            ),
+        )
+        return decision.safe
+
+    def record_safety_stop(self) -> None:
+        self.stats.safety_stops += 1
 
     def safety_stats(self) -> dict:
         return self.stats.to_dict()

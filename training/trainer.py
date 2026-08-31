@@ -13,13 +13,7 @@ import torch.nn as nn
 from model import loss_fn, variable_loss_fn
 
 
-Batch = tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-]
+Batch = tuple[torch.Tensor, ...]
 
 
 @dataclass(frozen=True)
@@ -47,6 +41,8 @@ class TrainerConfig:
     safety_sample_spacing_m: float = 0.5
     safety_max_swept_substeps: int = 16
     safety_out_of_bounds_weight: float = 1.0
+    safety_loss_mode: str = "occupancy_max"
+    balance_recovery_batches: bool = False
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -104,6 +100,10 @@ class TrainerConfig:
             or self.safety_max_swept_substeps <= 0
         ):
             raise ValueError("safety_max_swept_substeps 必须为正整数")
+        if self.safety_loss_mode not in {"occupancy_max", "clearance_field"}:
+            raise ValueError("safety_loss_mode 必须为 occupancy_max 或 clearance_field")
+        if not isinstance(self.balance_recovery_batches, bool):
+            raise ValueError("balance_recovery_batches 必须为布尔值")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -152,12 +152,14 @@ class Trainer:
         model_name: str,
         model_config: dict | None = None,
         safety_loss: nn.Module | None = None,
+        initialization: dict | None = None,
     ) -> None:
         self.model = model
         self.config = config
         self.model_name = model_name
         self.model_config = {} if model_config is None else dict(model_config)
         self.safety_loss = safety_loss
+        self.initialization = None if initialization is None else dict(initialization)
         if config.collision_loss_weight > 0.0 and safety_loss is None:
             raise ValueError("collision_loss_weight > 0 时必须提供 safety_loss")
         self.device = torch.device(config.device)
@@ -178,7 +180,9 @@ class Trainer:
         epoch: int,
         batch_index: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        bev, goal, state, target, mask = self._move_batch(batch)
+        moved = self._move_batch(batch)
+        bev, goal, state, target, mask = moved[:5]
+        clearance_field = moved[5] if len(moved) >= 6 and moved[5].ndim == 4 else None
         forward_with_stop = getattr(self.model, "forward_with_stop", None)
         if callable(forward_with_stop):
             teacher_forcing_ratio = (
@@ -214,7 +218,7 @@ class Trainer:
         if self.safety_loss is None or self.config.collision_loss_weight == 0.0:
             collision_loss = torch.zeros((), dtype=base_loss.dtype, device=base_loss.device)
             return base_loss, collision_loss
-        collision_loss = self.safety_loss(bev, points, mask)
+        collision_loss = self.safety_loss(bev, points, mask, clearance_field)
         return (
             base_loss + self.config.collision_loss_weight * collision_loss,
             collision_loss,
@@ -232,6 +236,7 @@ class Trainer:
             shuffle=training and self.config.shuffle_train,
             seed=self.config.seed,
             epoch=epoch,
+            balance_recovery=training and self.config.balance_recovery_batches,
         )
         self.model.train(training)
         total = 0.0
@@ -270,7 +275,7 @@ class Trainer:
         length_error_sum = 0.0
         variable_model = callable(getattr(self.model, "forward_with_stop", None))
         for batch in batches:
-            bev, goal, state, target, mask = self._move_batch(batch)
+            bev, goal, state, target, mask = self._move_batch(batch)[:5]
             if variable_model:
                 prediction = self.model.forward_with_stop(bev, goal, state)
                 points = prediction.points
@@ -331,6 +336,7 @@ class Trainer:
                 if self.safety_loss is None
                 else getattr(self.safety_loss, "to_metadata")()
             ),
+            "initialization": self.initialization,
         }
 
     def _save_checkpoint(
@@ -374,6 +380,8 @@ class Trainer:
             "safety_sample_spacing_m",
             "safety_max_swept_substeps",
             "safety_out_of_bounds_weight",
+            "safety_loss_mode",
+            "balance_recovery_batches",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)
@@ -389,6 +397,7 @@ class Trainer:
             raise RuntimeError("checkpoint 安全几何与当前 Trainer 不一致")
         self.model.load_state_dict(payload["model_state"])
         self.optimizer.load_state_dict(payload["optimizer_state"])
+        self.initialization = payload.get("initialization")
         history = TrainingHistory(**payload["history"])
         return int(payload["epoch"]) + 1, history
 

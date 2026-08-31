@@ -18,7 +18,7 @@
 
 - 不把二维仿真的安全门禁宣称为实车功能安全认证。
 - 不改变专家规划器的可达集合、MPC 权重或现有 schema v2 基础数组语义。
-- 本轮不执行完整规模闭环采集和正式长训练；提供可恢复入口、烟雾验证和用户可执行命令。
+- 不在方案证据不足时执行正式长训练；结构变更先用同 seed 小规模消融证明安全目标下降且开环不明显退化，再提供正式训练入口。
 
 ## 边界与约束
 
@@ -42,6 +42,22 @@
 - 结果：安全轨迹损失低于碰撞或越界轨迹；碰撞预测产生有效梯度；权重为 0 时保持旧训练语义。
 - 验收：合成 BEV 覆盖安全、碰撞、旋转扫掠和越界测试；训练 checkpoint 把安全超参数纳入恢复兼容检查。
 
+### `SAFE-LOSS-002`：连续净空距离场损失
+
+- 前置：满足 `SAFE-LOSS-001` 的几何输入；occupancy 为不参与反向传播的环境观测。
+- 行为：从每个 BEV occupancy 和地图边界确定性构造截断欧氏净空场；预测轨迹继续按完整车体和相邻位姿扫掠采样，但惩罚改为“规划碰撞余量+训练额外余量”内的连续二次净空缺口，越界按实际米制穿透量叠加。不得以二值占用最大值作为正式安全训练目标。
+- 结果：安全轨迹为零损失；越接近或侵入障碍损失越高；碰撞轨迹在障碍边缘和侵入区域获得指向净空增大的非零梯度，真实验证集安全损失不得与旧模型数值持平后仍宣称有效。
+- 兼容：保留 `occupancy_max` 仅用于消融复现；正式配置必须使用 `clearance_field`，模式和距离场契约进入 checkpoint 身份。
+- 验收：合成距离值、边界、平移/旋转扫掠、侵入深度和梯度方向测试；同一验证集上完整方案相对冻结 v7 的净空损失至少下降 10%，且 ADE≤0.40m、FDE≤0.80m。
+
+### `SAFE-TRAIN-001`：恢复状态安全微调
+
+- 前置：已有通过开环准入的 Trainer checkpoint，模型名称和模型配置与新运行完全一致；最终恢复数据保持 `original/stride/collision_backtrack` 来源身份。
+- 行为：`initialize_from` 只加载基线模型权重，不加载 optimizer、epoch、patience 或旧输出目录，与 `resume_from` 明确互斥；安全微调固定使用推理阶段的 teacher-forcing 终值。启用恢复平衡后，每个训练 batch 确定性包含一个普通恢复样本、一个碰撞回溯样本和其余原始专家样本，各池按 seed+epoch 独立重排并循环，验证集保持原分布且不重采样。
+- 结果：相同 seed、初始化、数据和配置生成相同 batch；恢复小类不会因总体 shuffle 被稀释；checkpoint/report 记录初始化身份和采样策略，不能伪装成断点恢复。
+- 异常与恢复：checkpoint 模型契约不一致、数据缺少任一恢复池、batch size<3、同时指定初始化与恢复时，在训练前明确拒绝。
+- 验收：配置、权重加载、三路 batch 组成/确定性/epoch 变化、checkpoint 语义和报告测试；小规模消融分别隔离旧损失、净空损失和三路采样。
+
 ### `SAFE-DATA-001`：闭环偏离状态专家重标注
 
 - 前置：可复现 schema v2 数据集、manifest、deployment checkpoint 和专家组件可用。
@@ -60,6 +76,13 @@
 - 异常与恢复：回退轨迹仍不安全或规划失败时明确终止/报错，不继续执行已知不安全轨迹。
 - 验收：运行时单测覆盖安全放行、不安全切换、连续扫掠拦截和统计；闭环评测 CLI 可显式选择 `none` 或 `expert_fallback`。
 
+### `SAFE-SHIELD-002`：执行前可回退状态不变量
+
+- 前置：`SAFE-SHIELD-001` 的主/回退轨迹审查器和与专家规划一致的安全余量检查器；闭环引擎可在执行控制前预测下一状态。
+- 行为：每个控制周期在真正推进车辆前检查“当前状态→候选下一状态”的完整车体扫掠；若该转移会离开专家可规划安全集合，必须仍在当前安全状态调用回退轨迹并重新计算控制。回退控制的下一转移仍不安全时，不执行该控制，以 `safety_stop` 结束回合并记录原因，不抛出异常中断批量评测。
+- 结果：门禁回合的每个已执行状态都保持专家碰撞检查器 `pose_free`；报告分别记录轨迹检查、转移检查、提前阻止和安全停止。门禁结果仍不得计作纯网络能力。
+- 验收：单测复现“下一步将侵入规划余量但尚未实际碰撞”，确认在前一安全状态切换回退；不安全回退产生可汇总的 `safety_stop` 而非批次异常；小规模真实门禁评测可完整写报告。
+
 ## 兼容、迁移与回退
 
 - 旧训练 YAML 未配置安全权重时等价于原训练；启用安全损失必须使用 schema v2 且车辆/BEV 元数据完整。
@@ -76,10 +99,13 @@
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
 |---|---|---|---|---|---|
-| `SAFE-LOSS-001` | 完整车体扫掠、越界、梯度与恢复语义 | `tests/test_safety_loss.py`、`tests/test_trainer.py` | `training/safety.py::SweptFootprintLoss/safety_geometry_from_dataset`、`training/trainer.py::Trainer` | 合成安全/碰撞/旋转/越界与 checkpoint 测试通过；4 条真实专家轨迹损失为 0；276 项全量测试通过 | ✅ |
+| `SAFE-LOSS-001` | 旧二值完整车体扫掠、越界、梯度与恢复语义 | `tests/test_safety_loss.py`、`tests/test_trainer.py` | `training/safety.py::SweptFootprintLoss/safety_geometry_from_dataset` | 合成测试曾通过，但 v7→v8 同一验证集仅 0.293994→0.293754，梯度非零分量约 6%，不足以支撑正式安全训练；保留为消融对照 | 🚫 |
+| `SAFE-LOSS-002` | 连续净空、侵入梯度、真实损失下降 | `tests/test_safety_loss.py`、`scripts/evaluate_safety_ablation.py` | `training/safety.py::build_clearance_fields/SweptFootprintLoss` | 合成净空/边界/梯度测试通过；同一 val 统一复算 v7 1.102705→净空均匀 0.115092，下降 89.6%，ADE/FDE 0.228/0.572m | ✅ |
+| `SAFE-TRAIN-001` | 权重初始化、三路 batch、身份与消融 | `tests/test_training_config.py`、`tests/test_trainer.py`、小规模消融 | `training/checkpoint.py::initialize_model_from_checkpoint`、`training/data.py::epoch_batches`、`training/runner.py` | 三组同 seed/v7 初始化消融完成；三池均衡净空 0.128024、ADE/FDE 0.263/0.590m，略差于真实占比 shuffle，故能力保留但正式配置关闭 | ✅ |
 | `SAFE-DATA-001` | 学习器状态重标注、安全余量回溯、证据驱动补采、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke/真实困难任务消融 | `dataset/recovery.py::select_recovery_candidates_with_diagnostics/build_recovery_sample`、恢复数据 CLI | 15 个困难碰撞回合同回放消融：固定步长/紧邻帧/完整回溯覆盖 0/0/15，完整回溯 15/15 专家重规划成功；258 条恢复样本去重并合并为 2658 条训练集；283 项全量测试通过 | ✅ |
 | `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截/不安全回退拒绝测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞 | ✅ |
+| `SAFE-SHIELD-002` | 执行前转移门禁、可回退不变量、安全停止 | `tests/test_runtime_safety.py`、小规模真实门禁评测 | `runtime/sources.py::SafetyShieldSource/SafetyStopError`、`runtime/engine.py::ClosedLoopEngine.run` | 单测覆盖转移提前拦截、安全停止和真实异常透传；10 条分层门禁评测 4830 次转移检查、55 次轨迹回退、0 回退失败、0 safety stop、0 碰撞且完整写报告 | ✅ |
 
 ## 待人工确认
 
-- 使用冻结的 2658 条最终训练集完成 v8-safety-v2 正式训练，并按纯网络/安全门禁两种口径执行闭环验收。
+- 小规模消融已通过；下一步由用户执行 `configs/training/net-v1-safe.yaml` 的 v9 正式训练，再按相同索引分别执行纯网络和门禁闭环验收。当前 10 条门禁 smoke 成功率仅 30%（失败均为振荡），不得据此宣称纯网络闭环已准入。

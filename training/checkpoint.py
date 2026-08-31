@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -49,3 +50,34 @@ def load_model_checkpoint(
         checkpoint=checkpoint,
         epoch=int(payload.get("epoch", -1)),
     )
+
+
+def initialize_model_from_checkpoint(
+    model: torch.nn.Module,
+    path: str | Path,
+    *,
+    model_name: str,
+    model_config: dict[str, Any],
+) -> dict[str, Any]:
+    """只加载兼容模型权重，不继承优化器或训练进度。"""
+    loaded = load_model_checkpoint(path)
+    if loaded.model_name != model_name or loaded.model_config != model_config:
+        raise ValueError("初始化 checkpoint 的模型名称或配置不一致")
+    model.load_state_dict(loaded.model.state_dict())
+    digest = hashlib.sha256()
+    with loaded.checkpoint.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return {
+        "policy": "model_weights_only",
+        "checkpoint": str(loaded.checkpoint),
+        "checkpoint_sha256": digest.hexdigest(),
+        "source_epoch": loaded.epoch,
+    }
+
+
+__all__ = [
+    "LoadedModel",
+    "initialize_model_from_checkpoint",
+    "load_model_checkpoint",
+]

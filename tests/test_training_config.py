@@ -16,6 +16,7 @@ class TestTrainingRunConfig(unittest.TestCase):
             root = Path(temp)
             (root / "train.npz").touch()
             (root / "val.npz").touch()
+            (root / "base.pt").touch()
             config_path = root / "run.yaml"
             config_path.write_text(
                 textwrap.dedent(
@@ -43,6 +44,7 @@ class TestTrainingRunConfig(unittest.TestCase):
                       stop_target_mode: cumulative
                     output:
                       directory: runs/net-v1
+                    initialize_from: base.pt
                     """
                 ).strip(),
                 encoding="utf-8",
@@ -61,6 +63,7 @@ class TestTrainingRunConfig(unittest.TestCase):
             self.assertEqual(config.trainer.teacher_forcing_ratio(4), 0.2)
             self.assertEqual(config.trainer.early_stopping_start_epoch, 4)
             self.assertEqual(config.trainer.stop_target_mode, "cumulative")
+            self.assertEqual(config.initialize_from, (root / "base.pt").resolve())
 
     def test_rejects_unknown_fields(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -99,6 +102,24 @@ class TestTrainingRunConfig(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "可序列化"):
+                load_training_run_config(path)
+
+    def test_rejects_initialize_and_resume_together(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("train.npz", "val.npz", "base.pt", "last.pt"):
+                (root / name).touch()
+            path = root / "conflict.yaml"
+            path.write_text(
+                "model: {name: net-v0}\n"
+                "data: {train: train.npz, val: val.npz}\n"
+                "training: {epochs: 1}\n"
+                "output: {directory: runs/test}\n"
+                "initialize_from: base.pt\n"
+                "resume_from: last.pt\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "不得同时"):
                 load_training_run_config(path)
 
 

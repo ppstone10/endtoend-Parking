@@ -79,11 +79,14 @@ foreach ($split in 'train', 'val', 'test') {
 # 从首轮检查点自动补采“碰撞/超时且零恢复”任务；完整回溯最近的规划安全余量状态，保留并去重合并首轮恢复集
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/build_recovery_dataset.py --data data/task_dataset/tracked_pivot_v7_3000/train.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --output data/task_dataset/tracked_pivot_v8_recovery_final --priority-from data/task_dataset/tracked_pivot_v8_recovery --base-recovery data/task_dataset/tracked_pivot_v8_recovery/recovery.npz
 
-# 使用“原专家 + 完整恢复集”训练；启用完整车体连续扫掠碰撞损失，输出写入 v8-safety-v2
+# 从已准入 v7 权重初始化，使用“原专家 + 完整恢复集”和连续净空扫掠损失微调；输出写入 v9-safety-v1
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/train_model.py --config configs/training/net-v1-safe.yaml
 
 # 中断恢复优先使用 last.pt；部署和开环分析使用自动校准后的 deployment.pt
 # 完整参数含义、验收门槛和人工单变量调优方法见 docs/training_guide.md
+
+# 需要复核安全损失时，以同一验证集/净空定义统一比较 checkpoint（首项为下降率基线）
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_safety_ablation.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v7=runs/training/v7-flow-v3/net-v1/best.pt --checkpoint v9=runs/training/v9-safety-v1/net-v1/best.pt --output runs/training/v9-safety-v1/safety_comparison.json
 
 # 用同一验证集比较一个或多个 Trainer checkpoint，输出 report.json 与 PNG/PDF 对比图
 & 'D:\conda\envs\endtoend-parking\python.exe' scripts/eval_openloop.py --data data/task_dataset/tracked_pivot_v7_3000/val.npz --checkpoint v0=runs/training/v7/net-v0/best.pt --checkpoint v1=runs/training/v7/net-v1/best.pt --checkpoint v2=runs/training/v7/net-v2/best.pt --output runs/openloop-eval/v7
@@ -104,8 +107,8 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/test.npz --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 0 --output runs/closed-loop/v7-flow-v3/net-v1/test-full-k10/report.json
 
 # 安全训练完成后分别保留纯网络和安全门禁两种口径；后者审查完整矩形扫掠并在不安全时专家重规划
-python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v8-safety-v2/net-v1/deployment.pt --samples 34 --safety-mode none --output runs/closed-loop/v8-safety-v2/net-v1/val-pure/report.json
-python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v8-safety-v2/net-v1/deployment.pt --samples 34 --safety-mode expert_fallback --output runs/closed-loop/v8-safety-v2/net-v1/val-shield/report.json
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v9-safety-v1/net-v1/deployment.pt --samples 34 --safety-mode none --output runs/closed-loop/v9-safety-v1/net-v1/val-pure/report.json
+python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v9-safety-v1/net-v1/deployment.pt --samples 34 --safety-mode expert_fallback --output runs/closed-loop/v9-safety-v1/net-v1/val-shield/report.json
 ```
 
 ## 目录结构

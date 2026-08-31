@@ -13,13 +13,23 @@ from dataset import DatasetGenerator
 from metrics.open_loop import evaluate_open_loop
 from metrics.prediction_analysis import collect_open_loop_predictions
 from model import build_model
+from training.checkpoint import initialize_model_from_checkpoint
 
 from .config import TrainingRunConfig, load_training_run_config
-from .data import model_horizon, prepare_batches, validate_model_dataset
+from .data import (
+    model_horizon,
+    prepare_batches,
+    recovery_sample_groups,
+    validate_model_dataset,
+)
 from .reporting import atomic_write_json, save_training_artifacts
 from .stop_calibration import calibrate_stop_threshold, write_deployment_checkpoint
 from .trainer import Trainer, TrainingHistory
-from .safety import SweptFootprintLoss, safety_geometry_from_dataset
+from .safety import (
+    SweptFootprintLoss,
+    build_clearance_fields,
+    safety_geometry_from_dataset,
+)
 
 
 def run_training(config: TrainingRunConfig) -> dict[str, Any]:
@@ -31,14 +41,18 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
     model = build_model(config.model_name, config.model_config)
     validate_model_dataset(model, train_data)
     validate_model_dataset(model, val_data)
+    initialization = None
+    if config.initialize_from is not None:
+        initialization = initialize_model_from_checkpoint(
+            model,
+            config.initialize_from,
+            model_name=config.model_name,
+            model_config=config.model_config,
+        )
     horizon = model_horizon(model)
-    train_batches = prepare_batches(
-        train_data, horizon=horizon, batch_size=config.batch_size
-    )
-    val_batches = prepare_batches(
-        val_data, horizon=horizon, batch_size=config.batch_size
-    )
     safety_loss = None
+    train_clearance = None
+    val_clearance = None
     if config.trainer.collision_loss_weight > 0.0:
         train_geometry = safety_geometry_from_dataset(train_data)
         val_geometry = safety_geometry_from_dataset(val_data)
@@ -50,13 +64,42 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
             sample_spacing_m=config.trainer.safety_sample_spacing_m,
             max_swept_substeps=config.trainer.safety_max_swept_substeps,
             out_of_bounds_weight=config.trainer.safety_out_of_bounds_weight,
+            mode=config.trainer.safety_loss_mode,
         )
+        if config.trainer.safety_loss_mode == "clearance_field":
+            train_clearance = build_clearance_fields(
+                train_data["bevs"],
+                train_geometry,
+                extra_margin_m=config.trainer.safety_extra_margin_m,
+            )
+            val_clearance = build_clearance_fields(
+                val_data["bevs"],
+                val_geometry,
+                extra_margin_m=config.trainer.safety_extra_margin_m,
+            )
+    train_groups = None
+    if config.trainer.balance_recovery_batches:
+        train_groups = recovery_sample_groups(train_data["task_meta"])
+    train_batches = prepare_batches(
+        train_data,
+        horizon=horizon,
+        batch_size=config.batch_size,
+        clearance_fields=train_clearance,
+        sample_groups=train_groups,
+    )
+    val_batches = prepare_batches(
+        val_data,
+        horizon=horizon,
+        batch_size=config.batch_size,
+        clearance_fields=val_clearance,
+    )
     trainer = Trainer(
         model,
         config.trainer,
         model_name=config.model_name,
         model_config=config.model_config,
         safety_loss=safety_loss,
+        initialization=initialization,
     )
 
     def record_progress(epoch: int, history: TrainingHistory) -> None:
@@ -134,6 +177,7 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         "model_name": config.model_name,
         "model_config": config.model_config,
         "trainer_config": asdict(config.trainer),
+        "initialization": initialization,
         "data": {
             "train": str(config.train_data),
             "val": str(config.val_data),

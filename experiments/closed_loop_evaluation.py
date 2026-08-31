@@ -310,11 +310,23 @@ def run_dataset_network_evaluation(
     shield_stats = None
     if safety_mode == "expert_fallback":
         checks = sum(result.meta["safety_shield"]["checks"] for result in results)
+        transition_checks = sum(
+            result.meta["safety_shield"].get("transition_checks", 0)
+            for result in results
+        )
         interventions = sum(
             result.meta["safety_shield"]["interventions"] for result in results
         )
         fallback_failures = sum(
             result.meta["safety_shield"]["fallback_failures"] for result in results
+        )
+        prevented_transitions = sum(
+            result.meta["safety_shield"].get("prevented_transitions", 0)
+            for result in results
+        )
+        safety_stops = sum(
+            result.meta["safety_shield"].get("safety_stops", 0)
+            for result in results
         )
         reasons: dict[str, int] = defaultdict(int)
         for result in results:
@@ -322,9 +334,17 @@ def run_dataset_network_evaluation(
                 reasons[reason] += int(count)
         shield_stats = {
             "checks": checks,
+            "transition_checks": transition_checks,
             "interventions": interventions,
             "intervention_rate": interventions / checks if checks else 0.0,
+            "prevented_transitions": prevented_transitions,
+            "transition_prevention_rate": (
+                prevented_transitions / transition_checks
+                if transition_checks
+                else 0.0
+            ),
             "fallback_failures": fallback_failures,
+            "safety_stops": safety_stops,
             "reasons": dict(sorted(reasons.items())),
         }
     report = {

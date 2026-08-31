@@ -32,8 +32,11 @@ class FootprintTrajectorySafetyChecker:
 @dataclass
 class SafetyShieldStats:
     checks: int = 0
+    transition_checks: int = 0
     interventions: int = 0
+    prevented_transitions: int = 0
     fallback_failures: int = 0
+    safety_stops: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
 
     def record_intervention(self, reason: str | None) -> None:
@@ -41,10 +44,20 @@ class SafetyShieldStats:
         key = reason or "unspecified"
         self.reasons[key] = self.reasons.get(key, 0) + 1
 
+    def record_prevented_transition(self, reason: str | None) -> None:
+        self.prevented_transitions += 1
+        key = f"next_state_{reason or 'unsafe'}"
+        self.reasons[key] = self.reasons.get(key, 0) + 1
+
     def to_dict(self) -> dict:
         result = asdict(self)
         result["intervention_rate"] = (
             self.interventions / self.checks if self.checks else 0.0
+        )
+        result["transition_prevention_rate"] = (
+            self.prevented_transitions / self.transition_checks
+            if self.transition_checks
+            else 0.0
         )
         return result
 

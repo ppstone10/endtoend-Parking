@@ -23,6 +23,7 @@ class TrainingRunConfig:
     trainer: TrainerConfig
     output_dir: Path
     resume_from: Path | None = None
+    initialize_from: Path | None = None
 
 
 def load_training_run_config(path: str | Path) -> TrainingRunConfig:
@@ -40,7 +41,11 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
         raise ValueError(f"训练 YAML 无法读取：{exc}") from exc
 
     root = _mapping(raw, "根配置")
-    _reject_unknown(root, {"model", "data", "training", "output", "resume_from"}, "根配置")
+    _reject_unknown(
+        root,
+        {"model", "data", "training", "output", "resume_from", "initialize_from"},
+        "根配置",
+    )
     model = _required_mapping(root, "model")
     data = _required_mapping(root, "data")
     training = _required_mapping(root, "training")
@@ -82,6 +87,16 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
         resume_from = _resolve_path(source.parent, resume_value)
         if not resume_from.is_file():
             raise ValueError(f"resume_from 不存在：{resume_from}")
+    initialize_value = root.get("initialize_from")
+    if initialize_value is not None and not isinstance(initialize_value, str):
+        raise ValueError("initialize_from 必须为路径字符串或 null")
+    initialize_from = None
+    if initialize_value:
+        initialize_from = _resolve_path(source.parent, initialize_value)
+        if not initialize_from.is_file():
+            raise ValueError(f"initialize_from 不存在：{initialize_from}")
+    if resume_from is not None and initialize_from is not None:
+        raise ValueError("resume_from 与 initialize_from 不得同时指定")
 
     return TrainingRunConfig(
         source=source,
@@ -93,6 +108,7 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
         trainer=trainer,
         output_dir=output_dir,
         resume_from=resume_from,
+        initialize_from=initialize_from,
     )
 
 
