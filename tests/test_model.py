@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import torch
 
-from model import MineParkingNet, loss_fn
+from model import MineParkingNet, endpoint_alignment_loss, loss_fn
 from model.network import MineParkingNet as _Net
 
 
@@ -50,6 +50,39 @@ class TestLossFn(unittest.TestCase):
         loss = loss_fn(pred, target, mask)
         # 有效点数为 2*10，每点 3 维差 1，损失仍为 3.0。
         self.assertAlmostEqual(loss.item(), 3.0, places=5)
+
+
+class TestEndpointAlignmentLoss(unittest.TestCase):
+    def test_penalizes_prediction_far_from_target_on_tail_points(self):
+        pred = torch.zeros(2, 10, 3)
+        target = torch.zeros(2, 10, 3)
+        target[:, 4:6] = torch.tensor([5.0, 2.0, 0.5])
+        mask = torch.zeros(2, 10)
+        mask[:, :6] = 1.0
+        aligned = pred.clone()
+        aligned[:, 4:6] = target[:, 4:6]
+        far = pred.clone()
+        far[:, 4:6] = target[:, 4:6] + 10.0
+        near_loss = endpoint_alignment_loss(aligned, target, mask, tail_points=4)
+        far_loss = endpoint_alignment_loss(far, target, mask, tail_points=4)
+        self.assertLess(near_loss.item(), far_loss.item())
+        self.assertGreater(far_loss.item(), 0.0)
+
+    def test_tail_points_only_matters(self):
+        pred = torch.zeros(1, 8, 3)
+        target = torch.zeros(1, 8, 3)
+        mask = torch.ones(1, 8)
+        pred[0, 0, 0] = 100.0  # 头部大偏差不应影响
+        self.assertAlmostEqual(
+            endpoint_alignment_loss(pred, target, mask, tail_points=4).item(), 0.0
+        )
+
+    def test_rejects_bad_tail_points(self):
+        pred = torch.zeros(1, 8, 3)
+        target = torch.zeros(1, 8, 3)
+        mask = torch.ones(1, 8)
+        with self.assertRaisesRegex(ValueError, "tail_points"):
+            endpoint_alignment_loss(pred, target, mask, tail_points=0)
 
 
 class TestTrainingConvergence(unittest.TestCase):

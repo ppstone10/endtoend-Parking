@@ -88,6 +88,8 @@ class SweptFootprintLoss(nn.Module):
         max_swept_substeps: int = 16,
         out_of_bounds_weight: float = 1.0,
         mode: str = "occupancy_max",
+        goal_exempt_radius_m: float = 0.0,
+        goal_exempt_weight: float = 0.0,
     ) -> None:
         super().__init__()
         if not math.isfinite(extra_margin_m) or extra_margin_m < 0.0:
@@ -100,12 +102,21 @@ class SweptFootprintLoss(nn.Module):
             raise ValueError("out_of_bounds_weight 必须为有限非负数")
         if mode not in {"occupancy_max", "clearance_field"}:
             raise ValueError("mode 必须为 occupancy_max 或 clearance_field")
+        if not math.isfinite(goal_exempt_radius_m) or goal_exempt_radius_m < 0.0:
+            raise ValueError("goal_exempt_radius_m 必须为有限非负数")
+        if (
+            not math.isfinite(goal_exempt_weight)
+            or not 0.0 <= goal_exempt_weight <= 1.0
+        ):
+            raise ValueError("goal_exempt_weight 必须为 [0,1] 内有限数")
         self.geometry = geometry
         self.extra_margin_m = float(extra_margin_m)
         self.sample_spacing_m = float(sample_spacing_m)
         self.max_swept_substeps = int(max_swept_substeps)
         self.out_of_bounds_weight = float(out_of_bounds_weight)
         self.mode = mode
+        self.goal_exempt_radius_m = float(goal_exempt_radius_m)
+        self.goal_exempt_weight = float(goal_exempt_weight)
         self.required_clearance_m = geometry.collision_margin_m + self.extra_margin_m
         footprint = self._build_footprint_samples()
         self.register_buffer("footprint_samples", footprint, persistent=False)
@@ -119,6 +130,8 @@ class SweptFootprintLoss(nn.Module):
             "out_of_bounds_weight": self.out_of_bounds_weight,
             "mode": self.mode,
             "required_clearance_m": self.required_clearance_m,
+            "goal_exempt_radius_m": self.goal_exempt_radius_m,
+            "goal_exempt_weight": self.goal_exempt_weight,
         }
 
     def forward(
@@ -127,6 +140,7 @@ class SweptFootprintLoss(nn.Module):
         points: torch.Tensor,
         mask: torch.Tensor,
         clearance_field: torch.Tensor | None = None,
+        goal: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if bev.ndim != 4 or points.ndim != 3 or points.shape[-1] != 3:
             raise ValueError("安全损失要求 bev=(B,C,H,W)、points=(B,T,3)")
@@ -134,6 +148,8 @@ class SweptFootprintLoss(nn.Module):
             raise ValueError("安全损失 batch/mask 形状不一致")
         if self.geometry.occupancy_channel >= bev.shape[1]:
             raise ValueError("occupancy 通道索引超出 BEV")
+        if self.goal_exempt_radius_m > 0.0 and goal is None:
+            raise ValueError("启用 goal_exempt 时必须提供局部坐标 goal=(B,3)")
 
         poses, swept_mask = self._swept_poses(points, mask)
         footprint = self.footprint_samples.to(dtype=points.dtype, device=points.device)
@@ -178,6 +194,7 @@ class SweptFootprintLoss(nn.Module):
                 torch.maximum(overflow_x, overflow_y) / scale
             ).square().mean(dim=-1)
             per_pose = clearance_risk + self.out_of_bounds_weight * boundary_risk
+            per_pose = self._apply_goal_exemption(per_pose, poses, goal)
             denominator = swept_mask.sum().clamp_min(1.0)
             return (per_pose * swept_mask).sum() / denominator
 
@@ -202,6 +219,30 @@ class SweptFootprintLoss(nn.Module):
         per_pose = collision_risk + self.out_of_bounds_weight * boundary_risk
         denominator = swept_mask.sum().clamp_min(1.0)
         return (per_pose * swept_mask).sum() / denominator
+
+    def _apply_goal_exemption(
+        self,
+        per_pose: torch.Tensor,
+        poses: torch.Tensor,
+        goal: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """对接近目标位姿的扫掠位姿降低净空惩罚权重。
+
+        专家轨迹末端在车位内贴目标停车，物理上无法满足 required_clearance；
+        若 net 空约束同样作用于目标附近，网络只能绕开目标或强贴目标（闭环
+        振荡/碰撞根因）。此处按扫掠位姿到目标位姿的距离做平滑降权：豁免
+        半径内净空惩罚权重向 goal_exempt_weight 衰减，越界惩罚保持不变。
+        """
+        if self.goal_exempt_radius_m <= 0.0 or goal is None:
+            return per_pose
+        if goal.ndim != 2 or goal.shape[-1] != 3 or goal.shape[0] != poses.shape[0]:
+            raise ValueError("goal_exempt 要求 goal=(B,3) 与 batch 对齐")
+        distance = torch.linalg.vector_norm(
+            poses[..., :2] - goal[:, None, :2], dim=-1
+        )
+        ratio = (distance / self.goal_exempt_radius_m).clamp(0.0, 1.0)
+        weight = self.goal_exempt_weight + (1.0 - self.goal_exempt_weight) * ratio
+        return per_pose * weight
 
     def _swept_poses(
         self, points: torch.Tensor, mask: torch.Tensor

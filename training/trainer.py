@@ -42,7 +42,11 @@ class TrainerConfig:
     safety_max_swept_substeps: int = 16
     safety_out_of_bounds_weight: float = 1.0
     safety_loss_mode: str = "occupancy_max"
+    safety_goal_exempt_radius_m: float = 0.0
+    safety_goal_exempt_weight: float = 0.0
     balance_recovery_batches: bool = False
+    endpoint_alignment_weight: float = 0.0
+    endpoint_alignment_tail_points: int = 8
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -102,8 +106,24 @@ class TrainerConfig:
             raise ValueError("safety_max_swept_substeps 必须为正整数")
         if self.safety_loss_mode not in {"occupancy_max", "clearance_field"}:
             raise ValueError("safety_loss_mode 必须为 occupancy_max 或 clearance_field")
+        for name, value in (
+            ("safety_goal_exempt_radius_m", self.safety_goal_exempt_radius_m),
+            ("safety_goal_exempt_weight", self.safety_goal_exempt_weight),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} 必须为有限非负数")
+        if not 0.0 <= self.safety_goal_exempt_weight <= 1.0:
+            raise ValueError("safety_goal_exempt_weight 必须位于 [0,1]")
         if not isinstance(self.balance_recovery_batches, bool):
             raise ValueError("balance_recovery_batches 必须为布尔值")
+        if not math.isfinite(self.endpoint_alignment_weight) or self.endpoint_alignment_weight < 0.0:
+            raise ValueError("endpoint_alignment_weight 必须为有限非负数")
+        if (
+            isinstance(self.endpoint_alignment_tail_points, bool)
+            or not isinstance(self.endpoint_alignment_tail_points, int)
+            or self.endpoint_alignment_tail_points <= 0
+        ):
+            raise ValueError("endpoint_alignment_tail_points 必须为正整数")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -217,12 +237,21 @@ class Trainer:
             base_loss = loss_fn(points, target, mask)
         if self.safety_loss is None or self.config.collision_loss_weight == 0.0:
             collision_loss = torch.zeros((), dtype=base_loss.dtype, device=base_loss.device)
-            return base_loss, collision_loss
-        collision_loss = self.safety_loss(bev, points, mask, clearance_field)
-        return (
-            base_loss + self.config.collision_loss_weight * collision_loss,
-            collision_loss,
-        )
+            total = base_loss
+        else:
+            collision_loss = self.safety_loss(bev, points, mask, clearance_field, goal)
+            total = base_loss + self.config.collision_loss_weight * collision_loss
+        if self.config.endpoint_alignment_weight > 0.0:
+            from model import endpoint_alignment_loss
+
+            endpoint_loss = endpoint_alignment_loss(
+                points,
+                target,
+                mask,
+                tail_points=self.config.endpoint_alignment_tail_points,
+            )
+            total = total + self.config.endpoint_alignment_weight * endpoint_loss
+        return total, collision_loss
 
     def _run_epoch(
         self, batches: tuple[Batch, ...], *, training: bool, epoch: int
@@ -381,7 +410,11 @@ class Trainer:
             "safety_max_swept_substeps",
             "safety_out_of_bounds_weight",
             "safety_loss_mode",
+            "safety_goal_exempt_radius_m",
+            "safety_goal_exempt_weight",
             "balance_recovery_batches",
+            "endpoint_alignment_weight",
+            "endpoint_alignment_tail_points",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)

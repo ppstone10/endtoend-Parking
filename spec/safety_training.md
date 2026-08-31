@@ -48,7 +48,16 @@
 - 行为：从每个 BEV occupancy 和地图边界确定性构造截断欧氏净空场；预测轨迹继续按完整车体和相邻位姿扫掠采样，但惩罚改为“规划碰撞余量+训练额外余量”内的连续二次净空缺口，越界按实际米制穿透量叠加。不得以二值占用最大值作为正式安全训练目标。
 - 结果：安全轨迹为零损失；越接近或侵入障碍损失越高；碰撞轨迹在障碍边缘和侵入区域获得指向净空增大的非零梯度，真实验证集安全损失不得与旧模型数值持平后仍宣称有效。
 - 兼容：保留 `occupancy_max` 仅用于消融复现；正式配置必须使用 `clearance_field`，模式和距离场契约进入 checkpoint 身份。
+- 可选目标豁免：`safety_goal_exempt_radius_m`/`safety_goal_exempt_weight` 对距目标位姿半径内扫掠点平滑降权净空惩罚（越界惩罚保留），用于处理"专家轨迹末端在车位内贴目标、物理上无法满足 required_clearance"的冲突；默认半径 0 保持原语义。v11 实测豁免不能单独解决闭环失败，能力保留默认关闭。
 - 验收：合成距离值、边界、平移/旋转扫掠、侵入深度和梯度方向测试；同一验证集上完整方案相对冻结 v7 的净空损失至少下降 10%，且 ADE≤0.40m、FDE≤0.80m。
+
+### `SAFE-LOSS-003`：近端终点对齐监督
+
+- 前置：变长轨迹模型输出局部坐标预测与局部专家轨迹；mask 有效段表示专家轨迹前缀。
+- 行为：对每个样本 mask 末端的 `endpoint_alignment_tail_points` 个有效点，施加相对该样本局部专家轨迹的加权 MSE（位置+航向）；权重 `endpoint_alignment_weight` 为 0 时保持旧训练语义完全不变。此监督强化"预测轨迹末端逼近专家轨迹末端、保留 MPC 收敛余量"的模式，对抗净空损失在车辆接近目标时诱导"缩短轨迹躲避障碍"、停止长度提前触发、终点距目标与航向误差膨胀的退化。监督对象是专家轨迹 `target` 而非目标位姿，避免强制轨迹塌缩到终点。
+- 结果：启用时预测轨迹末端向专家轨迹末端收敛，不改变固定 horizon 模型的训练路径；配置进入 checkpoint 训练超参数兼容检查。
+- 兼容：默认权重 0，旧 YAML 无需任何改动；`endpoint_alignment_tail_points` 必须为正整数。
+- 验收：合成 pred/target/mask 覆盖末端对齐生效、非末端点不参与、非法 tail_points 拒绝；Trainer 合成 batch 验证启用权重后总损失提高；checkpoint 兼容字段拒绝权重不一致的续训。
 
 ### `SAFE-TRAIN-001`：恢复状态安全微调
 
@@ -101,6 +110,7 @@
 |---|---|---|---|---|---|
 | `SAFE-LOSS-001` | 旧二值完整车体扫掠、越界、梯度与恢复语义 | `tests/test_safety_loss.py`、`tests/test_trainer.py` | `training/safety.py::SweptFootprintLoss/safety_geometry_from_dataset` | 合成测试曾通过，但 v7→v8 同一验证集仅 0.293994→0.293754，梯度非零分量约 6%，不足以支撑正式安全训练；保留为消融对照 | 🚫 |
 | `SAFE-LOSS-002` | 连续净空、侵入梯度、真实损失下降 | `tests/test_safety_loss.py`、`scripts/evaluate_safety_ablation.py` | `training/safety.py::build_clearance_fields/SweptFootprintLoss` | 合成净空/边界/梯度测试通过；同一 val 统一复算 v7 1.102705→净空均匀 0.115092，下降 89.6%，ADE/FDE 0.228/0.572m | ✅ |
+| `SAFE-LOSS-003` | 近端终点对齐、默认关闭、checkpoint 兼容 | `tests/test_model.py::TestEndpointAlignmentLoss`、`tests/test_trainer.py`、`tests/test_training_config.py` | `model/network.py::endpoint_alignment_loss`、`training/trainer.py::TrainerConfig` | 合成末端对齐/非末端不参与/非法参数、Trainer 总损失提高与 checkpoint 拒绝不一致续训均通过；真实闭环振荡定位确认近端退化后引入 | ✅ |
 | `SAFE-TRAIN-001` | 权重初始化、三路 batch、身份与消融 | `tests/test_training_config.py`、`tests/test_trainer.py`、小规模消融 | `training/checkpoint.py::initialize_model_from_checkpoint`、`training/data.py::epoch_batches`、`training/runner.py` | 三组同 seed/v7 初始化消融完成；三池均衡净空 0.128024、ADE/FDE 0.263/0.590m，略差于真实占比 shuffle，故能力保留但正式配置关闭 | ✅ |
 | `SAFE-DATA-001` | 学习器状态重标注、安全余量回溯、证据驱动补采、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke/真实困难任务消融 | `dataset/recovery.py::select_recovery_candidates_with_diagnostics/build_recovery_sample`、恢复数据 CLI | 15 个困难碰撞回合同回放消融：固定步长/紧邻帧/完整回溯覆盖 0/0/15，完整回溯 15/15 专家重规划成功；258 条恢复样本去重并合并为 2658 条训练集；283 项全量测试通过 | ✅ |
 | `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截/不安全回退拒绝测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞 | ✅ |

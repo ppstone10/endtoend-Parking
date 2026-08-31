@@ -58,7 +58,7 @@ def evaluate_checkpoint(
                 points = loaded.model(bev, goal, state)
             count = int(bev.shape[0])
             weighted_loss += float(
-                safety_loss(bev, points, mask, clearance).cpu()
+                safety_loss(bev, points, mask, clearance, goal).cpu()
             ) * count
             sample_count += count
     metrics = evaluate_open_loop(loaded.model, batches).to_dict()
@@ -88,9 +88,13 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="消融 JSON 输出路径")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--extra-margin-m", type=float, default=0.1)
+    parser.add_argument("--goal-exempt-radius-m", type=float, default=0.0)
+    parser.add_argument("--goal-exempt-weight", type=float, default=0.0)
     args = parser.parse_args()
     if args.batch_size <= 0:
         parser.error("batch-size 必须为正")
+    if args.goal_exempt_radius_m < 0.0 or not 0.0 <= args.goal_exempt_weight <= 1.0:
+        parser.error("goal-exempt-radius-m 必须非负且 goal-exempt-weight 位于 [0,1]")
 
     data_path = Path(args.data).resolve()
     data = DatasetGenerator.load(data_path)
@@ -102,6 +106,8 @@ def main() -> None:
         geometry,
         extra_margin_m=args.extra_margin_m,
         mode="clearance_field",
+        goal_exempt_radius_m=args.goal_exempt_radius_m,
+        goal_exempt_weight=args.goal_exempt_weight,
     )
     results = [
         evaluate_checkpoint(
@@ -126,6 +132,8 @@ def main() -> None:
             "name": "continuous_swept_footprint_clearance_loss",
             "extra_margin_m": args.extra_margin_m,
             "geometry": geometry.to_dict(),
+            "goal_exempt_radius_m": args.goal_exempt_radius_m,
+            "goal_exempt_weight": args.goal_exempt_weight,
             "baseline_label": results[0]["label"],
         },
         "results": results,

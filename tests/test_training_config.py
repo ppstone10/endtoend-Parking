@@ -65,6 +65,40 @@ class TestTrainingRunConfig(unittest.TestCase):
             self.assertEqual(config.trainer.stop_target_mode, "cumulative")
             self.assertEqual(config.initialize_from, (root / "base.pt").resolve())
 
+    def test_accepts_endpoint_alignment_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "train.npz").touch()
+            (root / "val.npz").touch()
+            path = root / "endpoint.yaml"
+            path.write_text(
+                "model: {name: net-v1}\n"
+                "data: {train: train.npz, val: val.npz}\n"
+                "training: {epochs: 1, endpoint_alignment_weight: 0.5, "
+                "endpoint_alignment_tail_points: 12}\n"
+                "output: {directory: runs/test}\n",
+                encoding="utf-8",
+            )
+            config = load_training_run_config(path)
+            self.assertEqual(config.trainer.endpoint_alignment_weight, 0.5)
+            self.assertEqual(config.trainer.endpoint_alignment_tail_points, 12)
+
+    def test_rejects_invalid_endpoint_weight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "train.npz").touch()
+            (root / "val.npz").touch()
+            path = root / "bad.yaml"
+            path.write_text(
+                "model: {name: net-v0}\n"
+                "data: {train: train.npz, val: val.npz}\n"
+                "training: {epochs: 1, endpoint_alignment_weight: -1.0}\n"
+                "output: {directory: runs/test}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "endpoint_alignment_weight"):
+                load_training_run_config(path)
+
     def test_rejects_unknown_fields(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "bad.yaml"

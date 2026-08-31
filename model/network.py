@@ -103,6 +103,42 @@ def loss_fn(
     return diff.sum() / denom
 
 
+def endpoint_alignment_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    tail_points: int = 8,
+) -> torch.Tensor:
+    """近端终点对齐监督：对预测轨迹末端加权逼近专家轨迹末端。
+
+    车辆接近目标时净空损失会诱导网络"缩短轨迹躲避障碍"，使停止长度
+    提前触发、终点距目标与航向误差膨胀（闭环振荡根因）。此损失对 mask
+    末端 ``tail_points`` 个有效点施加加权的专家轨迹模仿，恢复"逼近目标
+    但保留 MPC 收敛余量"的 v7 轨迹模式；权重越高越强调近端收敛。
+    使用专家轨迹 ``target`` 而非目标位姿做监督，避免强制轨迹塌缩到终点。
+    """
+    if pred.ndim != 3 or pred.shape[-1] != 3 or target.ndim != 3 or target.shape != pred.shape:
+        raise ValueError("endpoint_alignment_loss 要求 pred/target=(B,T,3) 且形状一致")
+    if mask.shape != pred.shape[:2]:
+        raise ValueError("endpoint_alignment_loss batch/mask 形状不一致")
+    if isinstance(tail_points, bool) or not isinstance(tail_points, int) or tail_points <= 0:
+        raise ValueError("tail_points 必须为正整数")
+    lengths = mask.sum(dim=1).long()
+    steps = torch.arange(pred.shape[1], device=pred.device).unsqueeze(0)
+    tail_begin = (lengths - tail_points).clamp(min=0).unsqueeze(1)
+    tail_span = (steps >= tail_begin) & (steps < lengths.unsqueeze(1))
+    end_idx = steps.masked_select(tail_span)
+    batch_idx = tail_span.nonzero(as_tuple=False)[:, 0]
+    tail_pred = pred[batch_idx, end_idx]
+    tail_target = target[batch_idx, end_idx]
+    pos_err = (tail_pred[..., :2] - tail_target[..., :2]).pow(2).sum(-1)
+    yaw_err = (tail_pred[..., 2] - tail_target[..., 2]).pow(2)
+    per_point = pos_err + yaw_err
+    denominator = tail_span.sum().clamp(min=1.0)
+    return per_point.sum() / denominator
+
+
 def variable_loss_fn(
     pred: torch.Tensor,
     stop_logits: torch.Tensor,

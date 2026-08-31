@@ -65,6 +65,8 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
             max_swept_substeps=config.trainer.safety_max_swept_substeps,
             out_of_bounds_weight=config.trainer.safety_out_of_bounds_weight,
             mode=config.trainer.safety_loss_mode,
+            goal_exempt_radius_m=config.trainer.safety_goal_exempt_radius_m,
+            goal_exempt_weight=config.trainer.safety_goal_exempt_weight,
         )
         if config.trainer.safety_loss_mode == "clearance_field":
             train_clearance = build_clearance_fields(

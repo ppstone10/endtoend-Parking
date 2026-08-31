@@ -28,6 +28,22 @@ class _TinyTrajectoryModel(nn.Module):
         return self.value.expand(bev.shape[0], self.horizon, 3)
 
 
+class _TinyVariableModel(_TinyTrajectoryModel):
+    def forward_with_stop(
+        self, bev, goal, state, *, teacher_points=None,
+        teacher_forcing_ratio=1.0, sampling_generator=None,
+    ):
+        points = self.forward(bev, goal, state)
+        stop_logits = torch.zeros(points.shape[:2])
+        return _Prediction(points, stop_logits)
+
+
+class _Prediction:
+    def __init__(self, points, stop_logits):
+        self.points = points
+        self.stop_logits = stop_logits
+
+
 def _batch():
     return (
         torch.zeros(2, 5, 8, 8),
@@ -36,6 +52,12 @@ def _batch():
         torch.ones(2, 4, 3),
         torch.ones(2, 4),
     )
+
+
+def _batch_with_goal(x: float):
+    batch = list(_batch())
+    batch[1] = torch.full((2, 3), float(x))
+    return tuple(batch)
 
 
 class TestTrainer(unittest.TestCase):
@@ -300,6 +322,51 @@ class TestTrainer(unittest.TestCase):
                 safety_loss=safety(0.75),
             )
             with self.assertRaisesRegex(RuntimeError, "安全几何"):
+                changed.load_checkpoint(Path(temp, "last.pt"))
+
+    def test_endpoint_alignment_adds_loss_when_enabled(self):
+        trainer = Trainer(
+            _TinyVariableModel(),
+            TrainerConfig(epochs=1, patience=1, checkpoint_dir="runs/x"),
+            model_name="safe",
+        )
+        total_off, collision = trainer._batch_loss(
+            _batch(), training=True, epoch=0, batch_index=0
+        )
+        trainer_on = Trainer(
+            _TinyVariableModel(),
+            TrainerConfig(
+                epochs=1,
+                patience=1,
+                checkpoint_dir="runs/x",
+                endpoint_alignment_weight=1.0,
+            ),
+            model_name="safe",
+        )
+        total_on, _ = trainer_on._batch_loss(
+            _batch(), training=True, epoch=0, batch_index=0
+        )
+        # target=1、预测=0 时，末端加权 target 模仿应提高总损失
+        self.assertGreater(total_on.item(), total_off.item())
+
+    def test_checkpoint_rejects_changed_endpoint_alignment_semantics(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = TrainerConfig(
+                epochs=1, patience=1, checkpoint_dir=temp,
+                endpoint_alignment_weight=0.5,
+            )
+            Trainer(_TinyVariableModel(), config, model_name="same").fit(
+                [_batch_with_goal(5.0)], [_batch_with_goal(5.0)]
+            )
+            changed = Trainer(
+                _TinyVariableModel(),
+                TrainerConfig(
+                    epochs=2, patience=1, checkpoint_dir=temp,
+                    endpoint_alignment_weight=1.0,
+                ),
+                model_name="same",
+            )
+            with self.assertRaisesRegex(RuntimeError, "训练超参数"):
                 changed.load_checkpoint(Path(temp, "last.pt"))
 
 
