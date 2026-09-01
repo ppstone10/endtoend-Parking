@@ -5,6 +5,7 @@ from .recorder import EpisodeRecord
 from .safety import FootprintTrajectorySafetyChecker, SafetyDecision, SafetyShieldStats
 from .sources import (
     ExpertSource,
+    HierarchicalPlanningSource,
     NetworkSource,
     ReplanningExpertSource,
     SafetyStopError,
@@ -17,6 +18,7 @@ __all__ = [
     "ClosedLoopEngine",
     "EpisodeRecord",
     "ExpertSource",
+    "HierarchicalPlanningSource",
     "NetworkSource",
     "ReplanningExpertSource",
     "SafetyStopError",

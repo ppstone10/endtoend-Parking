@@ -63,6 +63,89 @@ class ReplanningExpertSource:
         return trajectory, (time.perf_counter() - started) * 1000.0
 
 
+class HierarchicalPlanningSource:
+    """分层轨迹源：网络提供全局参考，局部规划器生成短距轨迹（路线 B）。
+
+    每次重规划：
+    1. 网络输出全局参考轨迹（长程意图，可含轻微误差）；
+    2. 从当前状态沿参考轨迹累计弧长，取 lookahead 弧长处的目标位姿作为子目标；
+    3. 局部规划器（Hybrid A*）从当前状态规划到子目标，得到短距可执行轨迹；
+    4. MPC 只跟踪该短段。
+
+    收益：网络只需"长程大致正确"，近端精度由局部规划器兜底，绕开纯网络
+    近端轨迹退化（振荡）。网络参考不可达时回退到全局目标。
+    """
+
+    def __init__(self, network_source, local_planner, lookahead: float = 3.0) -> None:
+        self.network = network_source
+        self.local_planner = local_planner
+        self.lookahead = lookahead
+        self._goal: GoalPose | None = None
+
+    def begin(self, start: VehicleState, goal: GoalPose) -> None:
+        self._goal = goal
+        self.network.begin(start, goal)
+
+    def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
+        assert self._goal is not None, "begin 未调用"
+        import time
+
+        reference, elapsed_ms = self.network.next_trajectory(state)
+        candidates = self._subgoal_candidates(reference, state)
+        started = time.perf_counter()
+        last_error: Exception | None = None
+        for subgoal in candidates:
+            try:
+                trajectory = self.local_planner.plan(state, subgoal)
+            except (RuntimeError, ValueError) as exc:
+                last_error = exc
+                continue
+            return trajectory, elapsed_ms + (time.perf_counter() - started) * 1000.0
+        raise SafetyStopError(
+            f"分层局部规划无法到达任何候选子目标（{len(candidates)} 个）："
+            f"{last_error}"
+        ) from last_error
+
+    def _subgoal_candidates(self, reference: Trajectory, state: VehicleState) -> list[GoalPose]:
+        """生成候选子目标：lookahead 逐步缩短（远→近），最后回退全局目标。"""
+        pts = np.asarray(reference.points, dtype=np.float64)
+        assert self._goal is not None
+        if pts.shape[0] == 0:
+            return [self._goal]
+        segments = np.hypot(np.diff(pts[:, 0]), np.diff(pts[:, 1]))
+        from_start = np.concatenate([[0.0], np.cumsum(segments)]) if segments.shape[0] else np.array([0.0])
+        state_to_start = np.hypot(pts[0, 0] - state.x, pts[0, 1] - state.y)
+        candidates: list[GoalPose] = []
+        for fraction in (1.0, 0.6, 0.35, 0.15):
+            target_arc = state_to_start + self.lookahead * fraction
+            idx = int(np.searchsorted(from_start, target_arc))
+            idx = min(max(idx, 1), pts.shape[0] - 1)
+            candidates.append(self._to_goal_pose(pts[idx], self._goal))
+        candidates.append(self._goal)
+        # 去重（相同位姿只保留一次）。
+        unique: list[GoalPose] = []
+        for candidate in candidates:
+            if not any(
+                abs(candidate.x - old.x) < 1e-6
+                and abs(candidate.y - old.y) < 1e-6
+                and abs(candidate.yaw - old.yaw) < 1e-6
+                for old in unique
+            ):
+                unique.append(candidate)
+        return unique
+
+    @staticmethod
+    def _to_goal_pose(point: np.ndarray, fallback: GoalPose | None) -> GoalPose:
+        if point.shape[0] >= 3:
+            return GoalPose(float(point[0]), float(point[1]), float(point[2]))
+        if fallback is not None:
+            return fallback
+        return GoalPose(float(point[0]), float(point[1]), 0.0)
+
+    def record_safety_stop(self) -> None:
+        """与 SafetyShieldSource 接口对齐：safety_stop 回合计数（当前无统计）。"""
+
+
 class SafetyShieldSource:
     """审查主轨迹，不安全时从当前状态切换到可信回退源。"""
 

@@ -20,6 +20,7 @@ from planner import RectangleFootprintCollisionChecker
 from runtime import (
     ClosedLoopEngine,
     FootprintTrajectorySafetyChecker,
+    HierarchicalPlanningSource,
     NetworkSource,
     ReplanningExpertSource,
     SafetyShieldSource,
@@ -209,8 +210,8 @@ def run_dataset_network_evaluation(
     """在数据集原始场景中执行 deployment→MPC 网络闭环评测。"""
     if max_steps <= 0 or replan_every <= 0:
         raise ValueError("max_steps 与 replan_every 必须为正")
-    if safety_mode not in {"none", "expert_fallback"}:
-        raise ValueError("safety_mode 必须为 none 或 expert_fallback")
+    if safety_mode not in {"none", "expert_fallback", "hierarchical"}:
+        raise ValueError("safety_mode 必须为 none、expert_fallback 或 hierarchical")
     data_source = Path(data_path).resolve()
     checkpoint_source = Path(checkpoint_path).resolve()
     data = DatasetGenerator.load(data_source)
@@ -259,6 +260,8 @@ def run_dataset_network_evaluation(
                 ReplanningExpertSource(planner),
                 FootprintTrajectorySafetyChecker(planner._collision_checker),
             )
+        elif safety_mode == "hierarchical":
+            source = HierarchicalPlanningSource(network_source, planner, lookahead=3.0)
         else:
             source = network_source
         actual_collision_checker = RectangleFootprintCollisionChecker(

@@ -114,9 +114,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--safety-mode",
-        choices=["none", "expert_fallback"],
+        choices=["none", "expert_fallback", "hierarchical"],
         default="none",
-        help="网络轨迹安全模式；对照实验保留 none，安全防线使用 expert_fallback",
+        help="网络轨迹安全/分层模式；对照实验保留 none，安全防线使用 expert_fallback，"
+             "分层短距局部规划使用 hierarchical",
     )
     args = parser.parse_args()
 

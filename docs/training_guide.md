@@ -112,6 +112,20 @@
 - `winding`：实际路径长度 / 起终点直线距离。>1 说明绕路；振荡回合会显著抬高。
 - 与专家基线（`LOOP-GROUND-001`）同组对比：若纯网络 time_dist_ratio/winding 明显高于专家，直接量化"规划低效"，不需只看成功率。
 
+## 路线 B：分层短距局部规划闭环（HierarchicalPlanningSource）
+
+`runtime/sources.py::HierarchicalPlanningSource`：网络输出全局参考轨迹 → 沿参考取 lookahead 弧长子目标（多候选逐步回退）→ 局部规划器（Hybrid A*）从当前状态规划到子目标 → MPC 跟踪短段。所有候选失败时以 `SafetyStopError` 优雅结束，不崩溃。
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/run_closed_loop.py --source network \
+    --data data/task_dataset/tracked_pivot_v7_3000/val.npz \
+    --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 34 \
+    --safety-mode hierarchical --output runs/closed-loop/v7-flow-v3/net-v1/val-hierarchical-34-k10/report.json
+```
+
+- 判定：分层目标是"保留纯网络能力 + 用局部规划消除碰撞/近端退化"。若分层成功率 < 纯网络（如 S7 平行场景），该场景应回退纯网络源。
+- 实测 v7 34 条：58.8% 成功/0% 碰撞；S1/S2/S6/S8 80–100%，S3/S4/S7 需迭代。
+
 ## 正式验收
 
 先看 val，再只执行一次 test。推荐准入线：

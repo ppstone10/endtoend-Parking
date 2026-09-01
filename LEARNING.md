@@ -64,6 +64,13 @@
 - **原因：** v7 `net-v1` 的 teacher-forcing train loss 降到 0.105，但 best checkpoint 在 train/val 自由滚动的 ADE/FDE 分别仍为 3.459/5.853m 与 3.502/5.923m，300 条 val 和 300 条 test 的停止命中率均为 0，预测长度全部落到 320 点。误差集中于 T3、S4/S6 和前进任务，而非传感器噪声等级。
 - **实现与契约：** 诊断入口为 `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`；训练和校准在 `training/`、`model/network.py`。同 seed 消融中，累计停止+`3e-4` 在 12 epoch 达到 val/test ADE/FDE 0.312/0.552m 与 0.293/0.527m；val 校准后长度 MAE 23.84 点、偏差 -8.61 点。见 `MODEL-LOSS-003`、`MODEL-TRAIN-004`、`MODEL-CAL-001` 和 `docs/training_guide.md`。
 
+## 分层短距局部规划可绕开纯网络近端退化，但需场景适配
+
+- **触发：** 纯网络闭环长期 <35% 成功（近端振荡/碰撞），训练侧微调（净空/近端对齐/目标豁免）均失败。
+- **规则：** 让网络只负责全局参考轨迹（长程意图），局部规划器从当前状态沿参考取 lookahead 子目标生成短段，MPC 跟踪短段（`HierarchicalPlanningSource`）。子目标不可达时逐步缩短 lookahead，全部失败以 `SafetyStopError` 优雅结束。
+- **原因：** v7 34 条实测分层 32.4%→58.8% 成功、碰撞 29.4%→0%（无门禁）；S1/S2/S6/S8 达 80–100%（普通结构化场景），但 S3 紧 bay 局部规划失败、S4 远距卸载仍振荡、S7 平行停车反被破坏（lookahead 沿参考取点在平行场景失效）。证明分层消除碰撞与近端退化，但 lookahead 策略需按场景类型（垂直/平行/远距）适配，或失败时回退纯网络。
+- **实现与契约：** `runtime/sources.py::HierarchicalPlanningSource`、`experiments/closed_loop_evaluation.py --safety-mode hierarchical`，见 `docs/closed_loop_verification_design.md` §3。
+
 ## 闭环失败归因要用"访问状态 vs 专家重规划"而非数据集起点开环
 
 - **触发：** 闭环振荡/碰撞反复出现，但数据集起点开环 ADE/FDE 全达标，无法定位是规划退化还是感知/控制问题；或想区分振荡与碰撞两类失败。
