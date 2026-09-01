@@ -78,6 +78,13 @@
 - **原因：** 240 回合首轮恢复中，18 个碰撞回合有 15 个零恢复。对这 15 个相同回放做消融，固定步长安全候选和紧邻碰撞帧均为 0/15，完整安全余量回溯为 15/15，且全部专家重规划成功；实际需要回溯 2–17 个控制步，证明固定一帧或固定窗口都不可靠。
 - **实现与契约：** `dataset/recovery.py::select_recovery_candidates_with_diagnostics`、`scripts/build_recovery_dataset.py --priority-from/--base-recovery`，见 `SAFE-DATA-001` 和 `data/task_dataset/tracked_pivot_v8_recovery_final/report.json`。
 
+## BEV occupancy 保真度必须对比"传感器可感知真值"而非"几何全量真值"
+
+- **触发：** 评估 LiDAR→BEV occupancy 通道的还原质量时，直接把场景障碍几何栅格化当作真值，测出的 IoU 系统性偏低（约 0.13），且 clean 与 high 噪声差异不明显，无法指导感知层调优。
+- **规则：** occupancy 真值应使用"从同一位姿、相同 BEV 配置、高束数（如 3600）无噪声 LiDAR 投射的占用栅格"作为主口径，反映当前传感器配置可感知占用的上限；场景 emits_points 障碍的全量几何栅格只作参考。车辆位姿采样要让车头朝向目标车位，否则目标常在相机视野外，target 命中率会恒为 0 而掩盖真实问题。
+- **原因：** 360 束 LiDAR 在 40×40m BEV 上存在稀疏采样与遮挡，几何全量栅格包含大量"看不到"的占用，IoU 被拉低且与噪声无关；改用高束数真值后 clean IoU 约 0.6、Precision≈1.0、Recall≈0.6（稀疏性），low/high 逐级退化且 Precision 同时下降（噪声虚警），才有诊断价值。
+- **实现与契约：** `metrics/bev_fidelity.py::rasterize_lidar_truth_occupancy/rasterize_ground_truth_occupancy`、`scripts/evaluate_bev_fidelity.py`；验收口径见训练指南「L1 感知→BEV 保真评测」。
+
 ## 二值最大碰撞项不能代替连续净空训练信号
 
 - **触发：** 加入完整车体碰撞损失后，开环 ADE/FDE 合格但闭环碰撞反而上升，且不同 checkpoint 的安全损失几乎不变。

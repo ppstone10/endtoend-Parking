@@ -56,6 +56,18 @@
 - `stop_threshold_calibration.json`：完整阈值网格、选择目标和同分决胜证据。
 - `training_curve.png/.pdf`：loss、自由滚动、课程/早停阶段和停止质量。
 
+## L1 感知→BEV 保真评测
+
+闭环验收前先隔离感知层失真（验证阶梯 L1，见 `docs/closed_loop_verification_design.md` §4）：
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_bev_fidelity.py --poses-per-scene 4 --output runs/bev-fidelity/L1-v1
+```
+
+- occupancy 主口径为"高分辨率 LiDAR 采样真值"（3600 束 clean 同配置投射），几何真值作参考；target 用车位矩形真值。
+- 判定：target 命中率应 ≥0.9；clean→high 的 occupancy IoU 退化幅度用于确认感知层不是闭环失败主因；若 high 噪声下 IoU 系统性低于 0.35，先检查感知/BEV 参数再进入规划层调优。
+- 全部指标写入 `report.json`（逐场景×噪声档 + 整体）并输出退化曲线 PNG/PDF。
+
 ## 正式验收
 
 先看 val，再只执行一次 test。推荐准入线：
