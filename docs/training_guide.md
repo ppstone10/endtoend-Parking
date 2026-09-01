@@ -68,6 +68,50 @@
 - 判定：target 命中率应 ≥0.9；clean→high 的 occupancy IoU 退化幅度用于确认感知层不是闭环失败主因；若 high 噪声下 IoU 系统性低于 0.35，先检查感知/BEV 参数再进入规划层调优。
 - 全部指标写入 `report.json`（逐场景×噪声档 + 整体）并输出退化曲线 PNG/PDF。
 
+## L2 闭环访问状态轨迹质量评测
+
+闭环失败归因的规划层指标（验证阶梯 L2，见 `docs/closed_loop_verification_design.md` §4）：
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_visited_state_trajectory.py \
+    --data data/task_dataset/tracked_pivot_v7_3000/val.npz \
+    --model runs/training/v7-flow-v3/net-v1/deployment.pt \
+    --samples 34 --output runs/visited-state/L2-v1-v7/report.json
+```
+
+- 每次重规划记录车辆状态、网络预测轨迹与专家在同一状态的重规划轨迹，输出访问状态 ADE/FDE/航向 MAE、近端（<3m）预测长度/终点距目标/终点航向/方向切换，以及跨重规划一致性。
+- 判定：近端航向误差与方向切换应接近专家量级（flips 0、近端航向收敛）；若近端预测长度骤缩（如 <2m）且航向偏差大，按方向 B 结论修训练侧（近端终点对齐）而非调 MPC。
+- 报告含整体/分组/逐重规划行与退化曲线 PNG/PDF。
+
+## L3 单周期 MPC 跟踪复核
+
+隔离控制层的指标（验证阶梯 L3，见 `docs/closed_loop_verification_design.md` §4）：
+
+```powershell
+# 专家参考：控制层基线（应保持 M1 量级）
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py \
+    --data data/task_dataset/tracked_pivot_v7_3000/val.npz --samples 34 --source expert \
+    --output runs/single-cycle/L3-expert/report.json
+
+# 网络参考：网络轨迹下控制层仍能跟上（RMS 应远小于近端轨迹误差）
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py \
+    --data data/task_dataset/tracked_pivot_v7_3000/val.npz \
+    --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 34 --source network \
+    --output runs/single-cycle/L3-network/report.json
+```
+
+- 指标：跟踪横向 RMS、周期末对参考轨迹最近点偏差、reach_ratio。
+- 判定：专家参考 RMS 应保持 M1 量级（<0.05m）；若网络参考 RMS 明显大于专家参考且伴随失败，问题在网络参考轨迹（查 L2）而非 MPC。
+- 实测 v7：专家 RMS 0.02–0.04m、网络 RMS 多数 <0.05m → 控制层健康。
+
+## L4 顶层效率判据
+
+闭环报告的 `summarize` 已自动输出两项效率异常检测（验证阶梯 L4，见 `docs/closed_loop_verification_design.md` §7）：
+
+- `time_dist_ratio`：泊车时间 / 实际路径长度（s/m）。低速泊车正常量级约 2 s/m；明显高于基线（如 >3）说明振荡/空转（车在动但不推进）。
+- `winding`：实际路径长度 / 起终点直线距离。>1 说明绕路；振荡回合会显著抬高。
+- 与专家基线（`LOOP-GROUND-001`）同组对比：若纯网络 time_dist_ratio/winding 明显高于专家，直接量化"规划低效"，不需只看成功率。
+
 ## 正式验收
 
 先看 val，再只执行一次 test。推荐准入线：

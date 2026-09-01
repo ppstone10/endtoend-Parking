@@ -47,7 +47,13 @@ class EpisodeResult:
 
 
 def summarize(results: list[EpisodeResult]) -> dict:
-    """聚合多回合指标：成功率、碰撞率与各项均值±标准差。"""
+    """聚合多回合指标：成功率、碰撞率与各项均值±标准差。
+
+    除八项论文指标外，附加两条顶层异常检测指标：
+    - time_dist_ratio：泊车时间 / 实际路径长度（s/m），异常高说明振荡/空转；
+    - winding：实际路径长度 / 起终点直线距离，异常高说明绕路。
+    winding 依赖回合 meta 中的 start_xy（起终点直线距离），缺失时跳过。
+    """
 
     def _ms(values: list[float]) -> tuple[float, float]:
         arr = np.asarray(values, dtype=np.float64)
@@ -65,6 +71,29 @@ def summarize(results: list[EpisodeResult]) -> dict:
         mean, std = _ms([getattr(r, key) for r in results])
         out[f"{key}_mean"] = mean
         out[f"{key}_std"] = std
+
+    # 时间-距离效率比：时间与路径同量级衡量空转。
+    ratios = [r.parking_time / r.path_length for r in results if r.path_length > 0.0]
+    if ratios:
+        mean, std = _ms(ratios)
+        out["time_dist_ratio_mean"] = mean
+        out["time_dist_ratio_std"] = std
+
+    # 蜿蜒度：路径长度 / 起终点直线距离（需要 meta 提供 start_xy）。
+    winding = [
+        r.path_length / np.hypot(
+            float(r.meta["goal_x"] - r.meta["start_x"]),
+            float(r.meta["goal_y"] - r.meta["start_y"]),
+        )
+        for r in results
+        if r.path_length > 0.0
+        and {"start_x", "start_y", "goal_x", "goal_y"}.issubset(r.meta)
+    ]
+    if winding:
+        mean, std = _ms(winding)
+        out["winding_mean"] = mean
+        out["winding_std"] = std
+
     failures: dict[str, int] = {}
     for r in results:
         if r.failure is not None:

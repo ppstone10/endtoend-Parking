@@ -144,8 +144,8 @@ L4 全闭环组合             （顶层判据：成功率/碰撞/终点位姿/�
 ## 10. 落地顺序（建议）
 
 1. **L1 BEV 保真评测**（新增脚本 + 指标，成本最低、独立性强）。**✅ 已完成 v1**：`metrics/bev_fidelity.py` + `scripts/evaluate_bev_fidelity.py`，occupancy 采用"高分辨率 LiDAR 采样真值"主口径与"几何真值"参考口径，target 用车位矩形真值；输出逐场景×噪声档 IoU/Precision/Recall/命中率与退化曲线。实测 9 场景：clean occ IoU 0.53–0.63（LiDAR 稀疏性致召回不饱和）、high 退化至 0.35–0.48、target 命中率 0.93–0.99。
-2. **L2 固化访问状态轨迹质量报告**（把诊断脚本提升为验收报告，纳入闭环评测输出）。
-3. **L3 单周期跟踪复核**（专家基线已证，补充网络参考单周期口径）。
-4. **L4 顶层判据补齐**（效率指标 `time_dist_ratio`、蜿蜒度）。
+2. **L2 固化访问状态轨迹质量报告**（把诊断脚本提升为验收报告，纳入闭环评测输出）。**✅ 已完成 v1**：`metrics/visited_state.py` + `scripts/evaluate_visited_state_trajectory.py`，在闭环每次重规划时同时采集网络预测与专家重规划，输出访问状态开环误差（ADE/FDE/航向）、近端质量（预测长度/终点/航向/方向切换）、跨重规划一致性，按场景/任务/机动/噪声分组。实测 v7 34 条：整体 vs_ADE 0.499m/近端航向 50.4°/flips 0.57；S4 近端航向 113° 定位振荡，S3 近端长度 3.6m 未骤缩且 vs_ADE 0.149 定位碰撞——正确区分两种失败模式。
+3. **L3 单周期跟踪复核**（专家基线已证，补充网络参考单周期口径）。**✅ 已完成 v1**：`scripts/evaluate_single_cycle_tracking.py`，给定参考轨迹只运行一个重规划周期，测跟踪横向 RMS 与周期末对参考偏差。实测 v7 34 条：专家参考 RMS 0.019–0.042m/末端偏差 0.01–0.05m；网络参考 RMS 多数 <0.05m（个别 S4/S6 0.08–0.14m）——**MPC 跟踪能力不是闭环瓶颈，问题在网络生成的参考轨迹本身（L2 已定位）**。
+4. **L4 顶层判据补齐**（效率指标 `time_dist_ratio`、蜿蜒度）。**✅ 已完成**：`metrics/evaluation.py::summarize` 新增 `time_dist_ratio`（parking_time/path_length）与 `winding`（path_length/起终点直线距离，依赖 episode_meta 注入 start/goal 坐标）；`experiments/closed_loop_evaluation.py` 注入 `start_x/y`、`goal_x/y`。实测 v7 34 条闭环：time_dist_ratio 2.15±0.22 s/m、winding 1.55±0.80——为振荡/绕路提供连续量化基线。
 5. **C 训练侧**：执行 v10（近端对齐）训练与同索引闭环准入；成功后用 v10 deployment 重采恢复数据，迭代 DAgger。
 6. **路线 B 落地**：以完整轨迹为参考的短距局部规划层（用网络局部输出，专家/门禁兜底），验证近端振荡是否被局部层吸收。

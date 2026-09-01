@@ -281,6 +281,10 @@ def run_dataset_network_evaluation(
             "tol_pos": restored.tol_pos,
             "tol_yaw": restored.tol_yaw,
             "dynamic_event_applied": False,
+            "start_x": float(state.x),
+            "start_y": float(state.y),
+            "goal_x": float(restored.goal.x),
+            "goal_y": float(restored.goal.y),
         }
         engine = ClosedLoopEngine(
             vehicle_model=DifferentialDriveModel(**vehicle.vehicle_model_kwargs()),

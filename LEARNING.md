@@ -64,6 +64,13 @@
 - **原因：** v7 `net-v1` 的 teacher-forcing train loss 降到 0.105，但 best checkpoint 在 train/val 自由滚动的 ADE/FDE 分别仍为 3.459/5.853m 与 3.502/5.923m，300 条 val 和 300 条 test 的停止命中率均为 0，预测长度全部落到 320 点。误差集中于 T3、S4/S6 和前进任务，而非传感器噪声等级。
 - **实现与契约：** 诊断入口为 `metrics/prediction_analysis.py`、`scripts/analyze_predictions.py`、`viz/prediction_analysis.py`；训练和校准在 `training/`、`model/network.py`。同 seed 消融中，累计停止+`3e-4` 在 12 epoch 达到 val/test ADE/FDE 0.312/0.552m 与 0.293/0.527m；val 校准后长度 MAE 23.84 点、偏差 -8.61 点。见 `MODEL-LOSS-003`、`MODEL-TRAIN-004`、`MODEL-CAL-001` 和 `docs/training_guide.md`。
 
+## 闭环失败归因要用"访问状态 vs 专家重规划"而非数据集起点开环
+
+- **触发：** 闭环振荡/碰撞反复出现，但数据集起点开环 ADE/FDE 全达标，无法定位是规划退化还是感知/控制问题；或想区分振荡与碰撞两类失败。
+- **规则：** 在闭环滚动中记录每个重规划状态，并在同一状态同时采集网络预测与专家重规划，比较访问状态 ADE/FDE/航向；近端（距目标 <3m）单独统计网络预测长度/终点距目标/终点航向/方向切换；相邻重规划统计终点航向跳变与长度跳变。分组按场景/任务/机动/噪声输出。
+- **原因：** 数据集起点开环是"自指+分布内"评测，无法暴露闭环诱导状态上的退化。v7 34 条 L2 报告显示：S4 近端预测航向 113°、flips 1.09 → 振荡；S3 近端长度 3.6m 未骤缩且 vs_ADE 0.149 → 碰撞。两类失败在 L2 指标上可区分，而成功率/碰撞率粗口径做不到。
+- **实现与契约：** `metrics/visited_state.py`、`scripts/evaluate_visited_state_trajectory.py`、`viz/visited_state.py`；验收口径见训练指南「L2 闭环访问状态轨迹质量评测」。
+
 ## 低开环误差不等于网络轨迹可以安全闭环
 
 - **触发：** deployment 的 ADE/FDE 已进入亚米级，但网络→MPC 闭环仍碰撞、振荡或无法进入车位阈值。
