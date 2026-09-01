@@ -261,7 +261,14 @@ def run_dataset_network_evaluation(
                 FootprintTrajectorySafetyChecker(planner._collision_checker),
             )
         elif safety_mode == "hierarchical":
-            source = HierarchicalPlanningSource(network_source, planner, lookahead=3.0)
+            source = HierarchicalPlanningSource(
+                network_source,
+                planner,
+                lookahead=3.0,
+                safety_checker=FootprintTrajectorySafetyChecker(
+                    planner._collision_checker
+                ),
+            )
         else:
             source = network_source
         actual_collision_checker = RectangleFootprintCollisionChecker(

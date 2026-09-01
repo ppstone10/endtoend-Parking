@@ -76,10 +76,12 @@ class HierarchicalPlanningSource:
     近端轨迹退化（振荡）。网络参考不可达时回退到全局目标。
     """
 
-    def __init__(self, network_source, local_planner, lookahead: float = 3.0) -> None:
+    def __init__(self, network_source, local_planner, lookahead: float = 3.0, near_threshold: float = 5.0, safety_checker=None) -> None:
         self.network = network_source
         self.local_planner = local_planner
         self.lookahead = lookahead
+        self.near_threshold = near_threshold
+        self.safety_checker = safety_checker
         self._goal: GoalPose | None = None
 
     def begin(self, start: VehicleState, goal: GoalPose) -> None:
@@ -101,27 +103,41 @@ class HierarchicalPlanningSource:
                 last_error = exc
                 continue
             return trajectory, elapsed_ms + (time.perf_counter() - started) * 1000.0
+        # 局部规划全部失败：若注入安全检查器且网络参考轨迹安全，回退纯网络
+        # 保留原本能力（如 S7 平行）；否则 safety_stop（如 S3 紧 bay 纯网络本就不安全）。
+        if self.safety_checker is not None and reference.horizon >= 2:
+            decision = self.safety_checker.check(state, reference)
+            if decision.safe:
+                return reference, elapsed_ms
         raise SafetyStopError(
-            f"分层局部规划无法到达任何候选子目标（{len(candidates)} 个）："
+            f"分层局部规划无法到达任何候选子目标（{len(candidates)} 个）"
+            f"{'' if self.safety_checker is None else '且网络参考不安全'}："
             f"{last_error}"
         ) from last_error
 
     def _subgoal_candidates(self, reference: Trajectory, state: VehicleState) -> list[GoalPose]:
-        """生成候选子目标：lookahead 逐步缩短（远→近），最后回退全局目标。"""
+        """生成候选子目标：全局目标优先，沿参考渐进点兜底。
+
+        全局目标优先（直接规划到目标是达成"到达+位姿达标"的最可靠路径，
+        避免长距离跟随参考导致航向发散振荡）；沿参考点作为中间候选；
+        全部不可达时由安全检查器决定回退纯网络或 safety_stop。
+        """
         pts = np.asarray(reference.points, dtype=np.float64)
         assert self._goal is not None
-        if pts.shape[0] == 0:
-            return [self._goal]
-        segments = np.hypot(np.diff(pts[:, 0]), np.diff(pts[:, 1]))
-        from_start = np.concatenate([[0.0], np.cumsum(segments)]) if segments.shape[0] else np.array([0.0])
-        state_to_start = np.hypot(pts[0, 0] - state.x, pts[0, 1] - state.y)
-        candidates: list[GoalPose] = []
-        for fraction in (1.0, 0.6, 0.35, 0.15):
-            target_arc = state_to_start + self.lookahead * fraction
-            idx = int(np.searchsorted(from_start, target_arc))
-            idx = min(max(idx, 1), pts.shape[0] - 1)
-            candidates.append(self._to_goal_pose(pts[idx], self._goal))
-        candidates.append(self._goal)
+        candidates: list[GoalPose] = [self._goal]
+        if pts.shape[0] >= 2:
+            segments = np.hypot(np.diff(pts[:, 0]), np.diff(pts[:, 1]))
+            from_start = (
+                np.concatenate([[0.0], np.cumsum(segments)])
+                if segments.shape[0]
+                else np.array([0.0])
+            )
+            state_to_start = np.hypot(pts[0, 0] - state.x, pts[0, 1] - state.y)
+            for fraction in (0.15, 0.35, 0.6, 1.0):
+                target_arc = state_to_start + self.lookahead * fraction
+                idx = int(np.searchsorted(from_start, target_arc))
+                idx = min(max(idx, 1), pts.shape[0] - 1)
+                candidates.append(self._to_goal_pose(pts[idx], self._goal))
         # 去重（相同位姿只保留一次）。
         unique: list[GoalPose] = []
         for candidate in candidates:

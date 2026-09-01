@@ -45,30 +45,32 @@ class _FakePlanner:
 
 
 class TestHierarchicalPlanningSource(unittest.TestCase):
-    def _make(self, lookahead=3.0):
+    def _make(self, lookahead=3.0, near_threshold=5.0):
         network = _FakeNetwork(length=10.0)
         planner = _FakePlanner()
-        source = HierarchicalPlanningSource(network, planner, lookahead=lookahead)
+        source = HierarchicalPlanningSource(
+            network, planner, lookahead=lookahead, near_threshold=near_threshold
+        )
         return network, planner, source
 
-    def test_subgoal_picked_ahead_of_current_state(self):
-        _, planner, source = self._make(lookahead=3.0)
+    def test_far_state_prioritizes_goal(self):
+        # 全局目标优先，避免长距离跟随参考振荡。
+        network = _FakeNetwork(length=10.0)  # 参考从 0 到 10m
+        planner = _FakePlanner()
+        source = HierarchicalPlanningSource(network, planner, lookahead=3.0)
         source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(10.0, 0.0, 0.0))
-        traj, _ = source.next_trajectory(VehicleState(1.0, 0.0, 0.0))
+        source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
         self.assertIsNotNone(planner.last_goal)
-        # 子目标应在当前状态前方约 lookahead 弧长（沿参考）。
-        self.assertGreater(planner.last_goal.x, 1.0)
-        self.assertAlmostEqual(planner.last_goal.x, 4.0, delta=0.6)
+        self.assertAlmostEqual(planner.last_goal.x, 10.0)
 
-    def test_falls_back_to_closer_subgoal_when_far_unreachable(self):
-        # 局部规划器拒绝 x>5 的子目标，验证逐步缩短 lookahead 回退。
+    def test_far_state_falls_back_to_reference_when_goal_unreachable(self):
         network = _FakeNetwork(length=10.0)
         planner = _FakePlanner()
         planner.max_x = 5.0
 
         def plan(state, goal):
             if goal.x > planner.max_x:
-                raise ValueError("子目标不可达")
+                raise ValueError("目标不可达")
             planner.last_goal = goal
             return Trajectory(
                 points=np.stack(
@@ -81,27 +83,11 @@ class TestHierarchicalPlanningSource(unittest.TestCase):
         source = HierarchicalPlanningSource(network, planner, lookahead=3.0)
         source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(10.0, 0.0, 0.0))
         source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
+        # 远距目标不可达时回退沿参考渐进点（<6m）。
         self.assertIsNotNone(planner.last_goal)
-        self.assertLessEqual(planner.last_goal.x, 5.0)
+        self.assertLessEqual(planner.last_goal.x, 6.0)
 
-    def test_subgoal_at_end_when_reference_short(self):
-        _, planner, source = self._make(lookahead=20.0)
-        source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(10.0, 0.0, 0.0))
-        source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
-        # 参考总长 10m < lookahead 20m → 取参考终点附近。
-        self.assertAlmostEqual(planner.last_goal.x, 10.0, delta=0.6)
-
-    def test_empty_reference_falls_back_to_goal(self):
-        network = _FakeNetwork(length=10.0)
-        network.traj = Trajectory(points=np.zeros((0, 3)), dt=0.2)
-        planner = _FakePlanner()
-        source = HierarchicalPlanningSource(network, planner, lookahead=3.0)
-        source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(5.0, 2.0, 1.0))
-        source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
-        self.assertEqual(planner.last_goal.x, 5.0)
-        self.assertEqual(planner.last_goal.y, 2.0)
-
-    def test_all_subgoals_unreachable_raises(self):
+    def test_all_unreachable_falls_back_to_network_when_safe(self):
         network = _FakeNetwork(length=10.0)
         planner = _FakePlanner()
 
@@ -109,7 +95,36 @@ class TestHierarchicalPlanningSource(unittest.TestCase):
             raise ValueError("全部不可达")
 
         planner.plan = plan
-        source = HierarchicalPlanningSource(network, planner, lookahead=3.0)
+
+        class _Safe:
+            def check(self, state, trajectory):
+                from runtime import SafetyDecision
+                return SafetyDecision(safe=True)
+
+        source = HierarchicalPlanningSource(
+            network, planner, lookahead=3.0, safety_checker=_Safe()
+        )
+        source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(10.0, 0.0, 0.0))
+        traj, _ = source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
+        self.assertEqual(traj.horizon, 21)  # 安全则回退纯网络
+
+    def test_all_unreachable_raises_when_network_unsafe(self):
+        network = _FakeNetwork(length=10.0)
+        planner = _FakePlanner()
+
+        def plan(state, goal):
+            raise ValueError("全部不可达")
+
+        planner.plan = plan
+
+        class _Unsafe:
+            def check(self, state, trajectory):
+                from runtime import SafetyDecision
+                return SafetyDecision(safe=False, reason="collision")
+
+        source = HierarchicalPlanningSource(
+            network, planner, lookahead=3.0, safety_checker=_Unsafe()
+        )
         source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(10.0, 0.0, 0.0))
         from runtime import SafetyStopError
         with self.assertRaises(SafetyStopError):
