@@ -104,22 +104,41 @@ class MpcVehicleExecutor:
 
 
 class IdealPathExecutor:
-    """理想执行器：沿参考轨迹按弧长直接推进车辆状态。
+    """理想执行器：沿参考轨迹按**标称步长**推进车辆状态。
 
-    每次前进的名义弧长取参考轨迹的"相邻点弧长中位数"（由网络 dt 决定），因此
-    推进速度与轨迹自身的采样间隔一致：网络 dt=0.2s、控制周期 0.1s（
-    ``control_steps_per_point=2``）时每点耗时 0.1s，等价于 1 点/米级的
-    匀速前进。前进时沿轨迹折线插值位置与航向，不引入跟踪误差与控制限幅，
-    代表"执行器能完美跟踪网络轨迹"的上界，用于判定网络自身是否收敛。
+    推进速度只由"轨迹的时间语义"决定，不由网络输出点的疏密决定：
+
+    - ``point_spacing_m`` 给出相邻轨迹点的标称间距（米）。网络轨迹的标称间距由
+      dt 与标称速度决定；未显式给出时取 ``DEFAULT_POINT_SPACING_M``。
+    - 每个控制周期前进 ``point_spacing_m / control_steps_per_point`` 的弧长，
+      即在轨迹折线上做弧长插值，位置与航向线性插值，不引入跟踪误差与控制限幅。
+
+    这代表"执行器能完美跟踪网络轨迹"的上界，用于判定网络自身是否收敛。
+
+    **为什么不用轨迹点距中位数做步长**：网络在近端会输出变短且点更密的轨迹
+    （已知退化形态）。若把步长绑到实际点距，点越密就走得越慢，超时会变成
+    "网络输出稠密"的机械后果，而不是"网络没收敛"的证据。标称步长把这两件事分开。
 
     重规划时（``begin_trajectory``）弧长游标清零，新轨迹从起点开始消费；
     起点即当前车辆位置，所以游标从 0 开始推进不会造成跳变。
     """
 
-    def __init__(self, control_steps_per_point: float = 1.0) -> None:
+    DEFAULT_POINT_SPACING_M = 0.5
+
+    def __init__(
+        self,
+        control_steps_per_point: float = 1.0,
+        *,
+        point_spacing_m: float | None = None,
+    ) -> None:
         if control_steps_per_point <= 0.0:
             raise ValueError("control_steps_per_point 必须为正")
+        if point_spacing_m is not None and point_spacing_m <= 0.0:
+            raise ValueError("point_spacing_m 必须为正")
         self._factor = float(control_steps_per_point)
+        self._point_spacing = (
+            self.DEFAULT_POINT_SPACING_M if point_spacing_m is None else float(point_spacing_m)
+        )
         self._points: np.ndarray | None = None
         self._arc: np.ndarray | None = None
         self._cursor_arc = 0.0
@@ -153,9 +172,14 @@ class IdealPathExecutor:
         self._factor = float(value)
 
     @property
+    def point_spacing_m(self) -> float:
+        """相邻轨迹点的标称间距（米）。"""
+        return self._point_spacing
+
+    @property
     def arc_per_step(self) -> float:
-        """每个控制周期前进的名义弧长（点距中位数 / 每点控制周期数）。"""
-        return self.arc_per_point / self._factor
+        """每个控制周期前进的弧长 = 标称点距 / 每点控制周期数。"""
+        return self._point_spacing / self._factor
 
     def begin_trajectory(self, trajectory: Trajectory) -> None:
         points = _as_points(trajectory)
@@ -195,8 +219,8 @@ class IdealPathExecutor:
         )
 
     @property
-    def arc_per_point(self) -> float:
-        """相邻轨迹点的名义弧长（轨迹不规则时取中位数，避免极端段主导）。"""
+    def nominal_point_spacing_m(self) -> float:
+        """轨迹实际点距中位数（仅作诊断，不参与推进速度计算）。"""
         assert self._points is not None and self._arc is not None
         segment = np.diff(self._arc)
         if segment.shape[0] == 0:
@@ -224,11 +248,17 @@ class IdealPathExecutor:
         )
 
     def audit(self) -> dict:
-        """理想执行诊断（无预测-执行偏差量词：理想执行的偏差恒为跟踪口径）。"""
+        """理想执行诊断（推进速度由标称步长决定，与实际点距中位数无关）。"""
         total_arc = float(self._arc[-1]) if self._arc is not None else 0.0
+        actual_spacing = (
+            round(self.nominal_point_spacing_m, 4) if self._points is not None else None
+        )
         return {
             "kind": "ideal_path",
             "control_steps_per_point": self._factor,
+            "point_spacing_m": self._point_spacing,
+            "arc_per_step_m": round(self.arc_per_step, 4),
+            "actual_point_spacing_median_m": actual_spacing,
             "samples": self._samples,
             "executed_distance_m": round(self._executed_distance, 4),
             "total_arc_m": round(total_arc, 4),

@@ -17,6 +17,7 @@ from .sources import SafetyStopError, TrajectorySource
 from .termination import (
     FAILURE_COLLISION,
     FAILURE_OSCILLATION,
+    FAILURE_PLANNING,
     FAILURE_POSE_ERROR,
     FAILURE_SAFETY_STOP,
     FAILURE_TIMEOUT,
@@ -89,13 +90,21 @@ class ClosedLoopEngine:
         return self.executor.audit()
 
     def run(self, start: VehicleState, goal: GoalPose) -> EpisodeResult:
-        """执行一次闭环泊车回合，返回完整指标。"""
+        """执行一次闭环泊车回合，返回完整指标。
+
+        规划器用 ``ValueError`` 表达"该状态不可行"（如重规划起点与障碍冲突），
+        这类失败不再让异常穿透整个批次：回合以 ``planning_failure`` 结束并保留
+        已走过的状态，便于批量评测区分"规划不可行"与"网络振荡"。
+        ``RuntimeError`` 等其他异常保持向上传播（既有契约：模型级故障不得被
+        悄悄降级成安全停车）。
+        """
         state = VehicleState(start.x, start.y, start.yaw, start.v, start.omega)
         record = EpisodeRecord()
         self.mpc.reset()
         self.executor.reset()
         self.source.begin(state, goal)
         safety_stop = False
+        planning_failure: str | None = None
         try:
             traj, infer_ms = self.source.next_trajectory(state)
             self.executor.begin_trajectory(traj)
@@ -108,10 +117,17 @@ class ClosedLoopEngine:
                 dt=self.mpc.dt,
             )
             inference_times = []
+        except ValueError as exc:
+            planning_failure = f"initial: {exc}"
+            traj = Trajectory(
+                np.asarray([[state.x, state.y, state.yaw]], dtype=np.float64),
+                dt=self.mpc.dt,
+            )
+            inference_times = []
 
         collision = False
         for step in range(self.max_steps):
-            if safety_stop:
+            if safety_stop or planning_failure is not None:
                 break
             if step > 0 and step % self.replan_every == 0:
                 try:
@@ -121,6 +137,9 @@ class ClosedLoopEngine:
                 except SafetyStopError:
                     self.source.record_safety_stop()
                     safety_stop = True
+                    break
+                except ValueError as exc:
+                    planning_failure = f"replan@{step}: {exc}"
                     break
             previous_state = state
             proposed_state = self.executor.propose(state, traj, self.mpc.dt)
@@ -154,7 +173,14 @@ class ClosedLoopEngine:
                 break
 
         return self._build_result(
-            state, goal, traj, record, inference_times, collision, safety_stop
+            state,
+            goal,
+            traj,
+            record,
+            inference_times,
+            collision,
+            safety_stop,
+            planning_failure=planning_failure,
         )
 
     # ------------------------------------------------------------------
@@ -180,12 +206,14 @@ class ClosedLoopEngine:
         inference_times: list[float],
         collision: bool,
         safety_stop: bool = False,
+        planning_failure: str | None = None,
     ) -> EpisodeResult:
         pos_err = self.terminal.pos_err(state, goal)
         yaw_err = self.terminal.yaw_err(state, goal)
         success = (
             not collision
             and not safety_stop
+            and planning_failure is None
             and self.terminal.reached(state, goal)
         )
         failure = None
@@ -193,6 +221,12 @@ class ClosedLoopEngine:
             failure = FAILURE_SAFETY_STOP
         elif collision:
             failure = FAILURE_COLLISION
+        elif planning_failure is not None:
+            # 轨迹源完全给不出轨迹：第一步就失败记 planning_failure，
+            # 中途失败（已推进若干步）按 timeout 记，并保留原因供归因。
+            failure = (
+                FAILURE_PLANNING if record.n_steps == 0 else FAILURE_TIMEOUT
+            )
         elif success:
             failure = None
         elif classify_oscillation(np.array([c.v for c in record.cmds]), self._ref_flips(traj)):
@@ -202,6 +236,8 @@ class ClosedLoopEngine:
         else:
             failure = FAILURE_TIMEOUT
         result_meta = dict(self.meta)
+        if planning_failure is not None:
+            result_meta["planning_failure"] = planning_failure
         safety_stats = getattr(self.source, "safety_stats", None)
         if callable(safety_stats):
             result_meta["safety_shield"] = safety_stats()

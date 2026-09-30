@@ -291,6 +291,7 @@ def run_validation_experiment(
     control_seed: int = 0,
     indices: list[int] | None = None,
     ideal_steps_per_point: float | None = None,
+    ideal_point_spacing_m: float | None = None,
     hierarchical_lookahead: float = 3.0,
     progress: Callable[[int, int, EpisodeBundle], None] | None = None,
 ) -> dict[str, Any]:
@@ -372,7 +373,10 @@ def run_validation_experiment(
             **vehicle.mpc_kwargs(),
         )
         executor = (
-            IdealPathExecutor(control_steps_per_point=ideal_factor)
+            IdealPathExecutor(
+                control_steps_per_point=ideal_factor,
+                point_spacing_m=ideal_point_spacing_m,
+            )
             if spec.executor == "ideal_path"
             else None
         )
@@ -458,6 +462,11 @@ def run_validation_experiment(
             "control_seed": control_seed,
             "mpc_dt": mpc_dt,
             "ideal_steps_per_point": ideal_factor if spec.executor == "ideal_path" else None,
+            "ideal_point_spacing_m": (
+                IdealPathExecutor.DEFAULT_POINT_SPACING_M
+                if spec.executor == "ideal_path" and ideal_point_spacing_m is None
+                else (ideal_point_spacing_m if spec.executor == "ideal_path" else None)
+            ),
             "hierarchical_lookahead": (
                 hierarchical_lookahead if spec.safety_mode == "hierarchical" else None
             ),

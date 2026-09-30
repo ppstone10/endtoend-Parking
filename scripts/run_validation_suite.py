@@ -310,6 +310,7 @@ def _run_suite(args: argparse.Namespace, output: Path) -> dict[str, dict]:
                 control_seed=args.seed,
                 indices=indices,
                 ideal_steps_per_point=args.ideal_steps_per_point,
+                ideal_point_spacing_m=args.ideal_point_spacing,
                 progress=progress,
             )
             if label is not None:
@@ -477,6 +478,12 @@ def main() -> None:
         help="显式索引列表 JSON（含 indices 字段）；用于历史基线口径对齐",
     )
     parser.add_argument("--ideal-steps-per-point", type=float, default=None)
+    parser.add_argument(
+        "--ideal-point-spacing",
+        type=float,
+        default=None,
+        help="理想执行的标称点距（米）；默认 0.5，用于推进速度敏感性对照",
+    )
     parser.add_argument("--output", default="runs/validation")
     args = parser.parse_args()
 

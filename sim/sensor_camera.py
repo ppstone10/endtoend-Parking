@@ -58,16 +58,21 @@ class SimulatedCamera:
         if self.env.parking_spots and not missed:
             goal = self.env.parking_spots[0]
             rect = self._parking_rectangle(goal)
+            # 先把目标矩形变换到车辆局部系并按"相机前方"裁剪，再投影填充。
+            # 旧实现"任一角点投影失败即整帧丢弃"会把部分可见的目标一起清空；
+            # 只取可见角点凸包又在跨相机平面时丢点（可能剩不到 3 个），
+            # 故对局部多边形做近距离裁剪后再投影。
+            local_rect = [
+                self._to_local(px, py, x, y, yaw) for px, py in rect
+            ]
+            visible = self._clip_to_camera_front(local_rect)
             pixels = []
-            for px, py in rect:
-                local = self._to_local(px, py, x, y, yaw)
-                proj = self.model.project(float(local[0]), float(local[1]))
-                if proj is None:
-                    pixels = []
-                    break
-                pixels.append(proj)
-            if pixels:
-                self._fill_polygon(image, pixels, 255)
+            for point in visible:
+                proj = self.model.project(float(point[0]), float(point[1]))
+                if proj is not None:
+                    pixels.append(proj)
+            if len(pixels) >= 3:
+                self._fill_polygon(image, self._convex_hull(pixels), 255)
 
         if config.false_positive_rate > 0.0 and self.rng.random() < config.false_positive_rate:
             self._add_false_positive(image)
@@ -112,6 +117,58 @@ class SimulatedCamera:
         return np.array(
             [cos_yaw * dx + sin_yaw * dy, -sin_yaw * dx + cos_yaw * dy]
         )
+
+    def _clip_to_camera_front(
+        self, polygon: list[np.ndarray], *, eps: float = 1e-3
+    ) -> list[tuple[float, float]]:
+        """按相机前方条件 ``cosP·X + h·sinP > 0`` 对地面多边形做 Sutherland–Hodgman 裁剪。
+
+        相机斜向下看时，车辆后方约 0.87m 以外的地面点落在相机平面之后。此处对
+        这些边求与相机平面的交点并插值，使跨越相机平面的目标仍能渲染可见部分。
+        """
+        cos_p, sin_p = np.cos(self.model.pitch), np.sin(self.model.pitch)
+        offset = self.model.height * sin_p
+
+        def depth(point: np.ndarray) -> float:
+            return cos_p * float(point[0]) + offset
+
+        output: list[np.ndarray] = []
+        count = len(polygon)
+        for index in range(count):
+            current = polygon[index]
+            following = polygon[(index + 1) % count]
+            d_current, d_following = depth(current), depth(following)
+            current_in = d_current > eps
+            following_in = d_following > eps
+            if current_in:
+                output.append(current)
+            if current_in != following_in:
+                span = d_current - d_following
+                if abs(span) > 1e-12:
+                    ratio = d_current / span
+                    output.append(current + ratio * (following - current))
+        return [(float(point[0]), float(point[1])) for point in output]
+
+    def _convex_hull(self, points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """Andrew 单调链凸包；点数不足 3 时原样返回。"""
+        unique = sorted({(float(px), float(py)) for px, py in points})
+        if len(unique) < 3:
+            return unique
+
+        def cross(o, a, b) -> float:
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+        lower: list[tuple[float, float]] = []
+        for point in unique:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+                lower.pop()
+            lower.append(point)
+        upper: list[tuple[float, float]] = []
+        for point in reversed(unique):
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+                upper.pop()
+            upper.append(point)
+        return lower[:-1] + upper[:-1]
 
     def _fill_polygon(
         self, image: np.ndarray, vertices: list[tuple[float, float]], value: int

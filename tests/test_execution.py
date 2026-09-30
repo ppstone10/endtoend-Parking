@@ -59,29 +59,57 @@ class TestMpcVehicleExecutor(unittest.TestCase):
 
 
 class TestIdealPathExecutor(unittest.TestCase):
-    def test_follows_arc_length_exactly(self):
+    """推进速度由标称点距决定，与网络输出点的疏密无关。"""
+
+    def test_advances_by_nominal_spacing_per_control_period(self):
         trajectory = _straight_trajectory(length=5.0, n=51, dt=0.2)
-        executor = IdealPathExecutor(control_steps_per_point=2.0)
+        executor = IdealPathExecutor(control_steps_per_point=2.0, point_spacing_m=0.4)
         state = VehicleState(0.0, 0.0, 0.0)
         executor.begin_trajectory(trajectory)
         for _ in range(20):
             state = executor.propose(state, trajectory, 0.1)
         self.assertAlmostEqual(state.y, 0.0, places=9)
-        # 点距 0.1m、每点 2 个控制周期 → 每周期 0.05m，20 步 ≈ 1.0m。
-        self.assertAlmostEqual(state.x, 1.0, delta=0.05)
+        # 标称点距 0.4m、每点 2 个控制周期 → 每周期 0.2m，20 步 = 4.0m（轨迹长 5m）。
+        self.assertAlmostEqual(state.x, 4.0, delta=0.05)
         audit = executor.audit()
         self.assertEqual(audit["kind"], "ideal_path")
-        self.assertAlmostEqual(audit["executed_distance_m"], 1.0, delta=0.05)
+        self.assertAlmostEqual(audit["arc_per_step_m"], 0.2, delta=1e-9)
+        self.assertAlmostEqual(audit["executed_distance_m"], 4.0, delta=0.05)
         self.assertEqual(audit["advance_failures"], 0)
 
-    def test_single_step_per_point_matches_point_spacing(self):
-        trajectory = _straight_trajectory(length=5.0, n=51, dt=0.2)
-        executor = IdealPathExecutor(control_steps_per_point=1.0)
+    def test_default_spacing_is_half_metre(self):
+        executor = IdealPathExecutor(control_steps_per_point=2.0)
+        self.assertAlmostEqual(executor.point_spacing_m, 0.5)
+        self.assertAlmostEqual(executor.arc_per_step, 0.25)
+
+    def test_advance_speed_independent_of_point_density(self):
+        """回归：近端输出点变密不得拖慢推进（曾经把点距中位数当步长）。"""
+        coarse = np.stack(
+            [np.linspace(0.0, 5.0, 11), np.zeros(11), np.zeros(11)], axis=1
+        )
+        dense = np.stack(
+            [np.linspace(0.0, 5.0, 501), np.zeros(501), np.zeros(501)], axis=1
+        )
+        results = []
+        for points in (coarse, dense):
+            trajectory = Trajectory(points=points, dt=0.2)
+            executor = IdealPathExecutor(control_steps_per_point=1.0, point_spacing_m=0.5)
+            state = VehicleState(0.0, 0.0, 0.0)
+            executor.begin_trajectory(trajectory)
+            for _ in range(6):
+                state = executor.propose(state, trajectory, 0.1)
+            results.append(state.x)
+        self.assertAlmostEqual(results[0], 3.0, delta=0.05)
+        self.assertAlmostEqual(results[1], 3.0, delta=0.05)
+
+    def test_clamps_at_trajectory_end(self):
+        trajectory = _straight_trajectory(length=1.0, n=11, dt=0.2)
+        executor = IdealPathExecutor(control_steps_per_point=1.0, point_spacing_m=0.5)
         state = VehicleState(0.0, 0.0, 0.0)
         executor.begin_trajectory(trajectory)
-        for _ in range(10):
+        for _ in range(20):
             state = executor.propose(state, trajectory, 0.1)
-        self.assertAlmostEqual(state.x, 1.0, delta=0.05)
+        self.assertAlmostEqual(state.x, 1.0, delta=1e-6)
 
     def test_headings_interpolated_on_turn(self):
         pts = np.array(
@@ -91,7 +119,7 @@ class TestIdealPathExecutor(unittest.TestCase):
                 [1.0, 1.0, np.pi / 2.0],
             ]
         )
-        executor = IdealPathExecutor(control_steps_per_point=1.0)
+        executor = IdealPathExecutor(control_steps_per_point=1.0, point_spacing_m=1.0)
         executor.begin_trajectory(Trajectory(points=pts, dt=0.2))
         state = VehicleState(0.0, 0.0, 0.0)
         states = [executor.propose(state, Trajectory(points=pts, dt=0.2), 0.1) for _ in range(4)]
@@ -104,15 +132,15 @@ class TestIdealPathExecutor(unittest.TestCase):
 
     def test_begin_trajectory_resets_cursor(self):
         trajectory = _straight_trajectory(length=5.0, n=51)
-        executor = IdealPathExecutor(control_steps_per_point=1.0)
+        executor = IdealPathExecutor(control_steps_per_point=1.0, point_spacing_m=0.5)
         state = VehicleState(0.0, 0.0, 0.0)
         executor.begin_trajectory(trajectory)
         for _ in range(10):
             state = executor.propose(state, trajectory, 0.1)
-        self.assertGreater(state.x, 0.5)
+        self.assertGreater(state.x, 4.0)
         executor.begin_trajectory(trajectory)
         state = executor.propose(state, trajectory, 0.1)
-        self.assertAlmostEqual(state.x, 0.1, delta=0.02)
+        self.assertAlmostEqual(state.x, 0.5, delta=0.05)
 
     def test_single_point_trajectory_rejected(self):
         executor = IdealPathExecutor()
@@ -122,6 +150,10 @@ class TestIdealPathExecutor(unittest.TestCase):
     def test_zero_steps_per_point_rejected(self):
         with self.assertRaises(ValueError):
             IdealPathExecutor(control_steps_per_point=0.0)
+
+    def test_non_positive_point_spacing_rejected(self):
+        with self.assertRaises(ValueError):
+            IdealPathExecutor(point_spacing_m=0.0)
 
 
 if __name__ == "__main__":

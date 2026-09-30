@@ -118,6 +118,12 @@ def main() -> None:
         default=None,
         help="理想执行每前进一个轨迹点所用的控制周期数；默认按网络 dt/MPC dt 对齐",
     )
+    parser.add_argument(
+        "--ideal-point-spacing",
+        type=float,
+        default=None,
+        help="理想执行的标称点距（米）；默认 0.5，用于推进速度敏感性对照",
+    )
     parser.add_argument("--hierarchical-lookahead", type=float, default=3.0)
     parser.add_argument("--output", default="runs/validation/report.json")
     parser.add_argument("--list", action="store_true", help="列出可用实验组合")
@@ -174,6 +180,7 @@ def main() -> None:
         control_seed=args.seed,
         indices=_load_indices(args.indices_file),
         ideal_steps_per_point=args.ideal_steps_per_point,
+        ideal_point_spacing_m=args.ideal_point_spacing,
         hierarchical_lookahead=args.hierarchical_lookahead,
         progress=progress,
     )

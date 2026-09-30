@@ -1,7 +1,7 @@
 """闭环终止判定与失败分类。
 
 到达判定为位置+航向双阈值（阈值来自目标车位容差，见 REQUIREMENTS §3）；
-失败分类：碰撞 / 超时 / 位姿超差 / 振荡。
+失败分类：碰撞 / 超时 / 位姿超差 / 振荡 / safety_stop / planning_failure。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ FAILURE_TIMEOUT = "timeout"
 FAILURE_POSE_ERROR = "pose_error"
 FAILURE_OSCILLATION = "oscillation"
 FAILURE_SAFETY_STOP = "safety_stop"
+FAILURE_PLANNING = "planning_failure"
 
 
 class TerminalChecker:
