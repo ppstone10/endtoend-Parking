@@ -233,7 +233,7 @@ def s2_diagonal_lot(
 # ---------------------------------------------------------------------------
 
 MAINT_GEOMETRY_PROFILE = "vehicle_relative_v1"
-MAINT_SIDE_CLEARANCE = 0.6
+MAINT_SIDE_CLEARANCE = 0.625  # bay 宽 4.25m（标准入口 4.0~4.5m 中值），单侧净空约 0.625m
 
 
 @register_scene("S3_maintenance")
@@ -248,7 +248,7 @@ def s3_maintenance(
 
     真实矿区语义：维修车间前的硬化作业道，卡车沿作业道对齐 bay 轴线后
     倒车入位（yaw -90° 车头朝外）。作业道深度按 3.5 倍车长保证
-    T3(15–30m) 远距接近可落地；bay 单侧净空 0.6m（需求 0.5~0.8m）。
+     T3(15–30m) 远距接近可落地；bay 宽 4.25m（标准入口 4.0~4.5m 中值，单侧净空约 0.625m）。
     """
     _validate_vehicle_scale(vehicle_length, vehicle_width, collision_margin)
     clearance = MAINT_SIDE_CLEARANCE
@@ -403,11 +403,12 @@ def s5_crusher(
     slot_count: int = 2,
     seed: int = 0,
 ) -> SceneBundle:
-    """破碎站卸料口：两侧混凝土墙窄槽（间距 4.2m，单侧余量 0.6m）+ 入口挡柱。
+    """破碎站卸料口：两侧混凝土墙窄槽（间距 4.75m，单侧余量约 0.875m）+ 入口挡柱。
 
     目标：倒车入槽居中停稳；槽底料口为禁区（禁入不挡射线）。
+    通道 4.75m 为标准区间 4.5~5.0m 的中值。
     """
-    slot_w = 4.2
+    slot_w = 4.75
     slot_depth = 8.0
     pitch = slot_w + 0.8  # 槽间隔墙厚
     row_len = slot_count * pitch
@@ -451,9 +452,9 @@ def s5_crusher(
         env=env,
         spots=spots,
         spawn_zones=[(-row_len / 2 - 1, row_len / 2 + 1, -8.0, -2.0)],
-        difficulty_knobs={"slot_count": slot_count, "clearance": 0.6},
-        description="破碎站卸料口：4.2m 窄槽倒车居中，槽底料口禁区",
-        title_en="Crusher station: reverse into 4.2m slot, chute forbidden"
+        difficulty_knobs={"slot_count": slot_count, "clearance": 0.875},
+        description="破碎站卸料口：4.75m 窄槽倒车居中，槽底料口禁区",
+        title_en="Crusher station: reverse into 4.75m slot, chute forbidden"
     )
 
 
@@ -599,7 +600,7 @@ def s8_weigh_station(seed: int = 0) -> SceneBundle:
     称重台沿行驶方向 7m，完整覆盖 6m 车身（停稳时前后轴均在台上）。
     """
     wall_t = 0.5
-    lane_half = 3.0  # 车道半宽（车宽 3m + 余量）
+    lane_half = 2.0  # 车道半宽，通道净宽 4.0m（标准 P6 推荐值，单侧 0.5m）
     pad_x_min, pad_x_max = 2.0, 9.0  # 台心 5.5，两侧各留 0.5m 余量
     obstacles: list[Obstacle] = [
         RectangleObstacle(-25.0, 25.0, lane_half, lane_half + wall_t, kind=KIND_WALL),

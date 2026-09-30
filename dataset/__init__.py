@@ -10,6 +10,7 @@ from .calibration import (
 )
 from .components import build_task_components
 from .generator import DatasetGenerator, TaskGenerationError, TrainingSample
+from .gt_bev import GroundTruthBEVPipeline, ground_truth_vehicle_outline
 from .recovery import (
     RecoveryCandidate,
     RecoverySelectionResult,
@@ -60,6 +61,8 @@ __all__ = [
     "require_trajectory_feasibility",
     "summarize_trajectory_feasibility",
     "SensorBEVPipeline",
+    "GroundTruthBEVPipeline",
+    "ground_truth_vehicle_outline",
     "DatasetSplits",
     "split_tasks",
     "render_sample_overlay",

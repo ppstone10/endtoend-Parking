@@ -8,6 +8,12 @@ from .prediction_analysis import (
     collect_open_loop_predictions,
     public_sample_metric,
 )
+from .rollout import (
+    CycleSample,
+    CycleTracker,
+    analyze_cycle_samples,
+    linear_slope,
+)
 
 __all__ = [
     "EpisodeResult",
@@ -19,4 +25,8 @@ __all__ = [
     "evaluate_open_loop",
     "public_sample_metric",
     "summarize",
+    "CycleSample",
+    "CycleTracker",
+    "analyze_cycle_samples",
+    "linear_slope",
 ]

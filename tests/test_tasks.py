@@ -118,8 +118,8 @@ class TestTaskSampling(unittest.TestCase):
     def test_adjacent_occupancy_levels_respect_scene_and_t4_capacity(self):
         sampler = TaskSampler(seed=9)
         self.assertEqual(
-            sampler.adjacent_occupancy_levels("S7_fuel_station", TaskType.T1_NEAR),
-            (0, 1),
+            sampler.adjacent_occupancy_levels("S1_parking_lot", TaskType.T1_NEAR),
+            (0, 1, 2),
         )
         self.assertEqual(
             sampler.adjacent_occupancy_levels("S4_dump_area", TaskType.T4_MULTI_SPOT),
@@ -145,10 +145,11 @@ class TestTaskMatrix(unittest.TestCase):
     def setUp(self):
         self.sampler = TaskSampler(seed=77)
 
-    def test_capability_matrix_contains_all_45_cells(self):
+    def test_capability_matrix_contains_all_cells(self):
         cells = self.sampler.capability_matrix()
-        self.assertEqual(len(cells), 45)
-        self.assertEqual(len({(c.scene_name, c.task_type) for c in cells}), 45)
+        # 正式场景 8 个（S7 加油按标准排除）× 5 任务 = 40 单元。
+        self.assertEqual(len(cells), 40)
+        self.assertEqual(len({(c.scene_name, c.task_type) for c in cells}), 40)
         unsupported = [cell for cell in cells if not cell.supported]
         self.assertTrue(unsupported)
         self.assertTrue(all(cell.reason for cell in unsupported))
@@ -220,7 +221,6 @@ class TestTaskPlannerIntegration(unittest.TestCase):
         cases = [
             ("S3_maintenance", TaskType.T3_LONG, Maneuver.REVERSE, (15.0, 30.0)),
             ("S5_crusher", TaskType.T2_MEDIUM, Maneuver.REVERSE, (8.0, 15.0)),
-            ("S7_fuel_station", TaskType.T2_MEDIUM, Maneuver.FORWARD, (8.0, 15.0)),
         ]
         for scene_name, task_type, maneuver, bounds in cases:
             for sample_index in range(3):
@@ -291,9 +291,6 @@ class TestTaskPlannerIntegration(unittest.TestCase):
             ("S1_parking_lot", TaskType.T1_NEAR, 8, Maneuver.FORWARD, 2),
             ("S1_parking_lot", TaskType.T2_MEDIUM, 10, Maneuver.FORWARD, 1),
             ("S1_parking_lot", TaskType.T5_DYNAMIC, 11, Maneuver.REVERSE, 2),
-            ("S7_fuel_station", TaskType.T2_MEDIUM, 3, Maneuver.REVERSE, 1),
-            ("S7_fuel_station", TaskType.T2_MEDIUM, 9, Maneuver.REVERSE, 1),
-            ("S7_fuel_station", TaskType.T2_MEDIUM, 11, Maneuver.REVERSE, 1),
             ("S9_mine_complex", TaskType.T2_MEDIUM, 0, Maneuver.REVERSE, 0),
             ("S9_mine_complex", TaskType.T2_MEDIUM, 1, Maneuver.REVERSE, 1),
             ("S9_mine_complex", TaskType.T2_MEDIUM, 6, Maneuver.REVERSE, 0),

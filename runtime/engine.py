@@ -11,6 +11,7 @@ import numpy as np
 
 from interfaces import GoalPose, Trajectory, VehicleState
 from metrics import EpisodeResult
+from .execution import MpcVehicleExecutor, TrajectoryExecutor
 from .recorder import EpisodeRecord
 from .sources import SafetyStopError, TrajectorySource
 from .termination import (
@@ -47,6 +48,8 @@ class ClosedLoopEngine:
     source 为轨迹源；terminal 为到达判定；env 提供碰撞检测（可选）；
     vehicle_length/vehicle_width 用于碰撞矩形；replan_every 为重规划周期
     （控制周期数，1 为逐周期）；max_steps 为回合步数上限。
+    executor 为执行器（默认 MPC + 车辆运动模型的生产路径）；传入理想执行器
+    即可用同一引擎做"执行器完美跟踪"的对照，用于隔离网络自身的滚动行为。
     """
 
     def __init__(
@@ -62,6 +65,7 @@ class ClosedLoopEngine:
         max_steps: int = 600,
         meta: dict | None = None,
         collision_checker=None,
+        executor: TrajectoryExecutor | None = None,
     ) -> None:
         if replan_every < 1:
             raise ValueError("replan_every 至少为 1")
@@ -76,16 +80,25 @@ class ClosedLoopEngine:
         self.max_steps = max_steps
         self.meta = meta or {}
         self.collision_checker = collision_checker
+        self.executor: TrajectoryExecutor = (
+            executor if executor is not None else MpcVehicleExecutor(mpc, vehicle_model)
+        )
+
+    def executor_audit(self) -> dict:
+        """执行器诊断量（理想执行的跟踪比与预测-执行偏差等）。"""
+        return self.executor.audit()
 
     def run(self, start: VehicleState, goal: GoalPose) -> EpisodeResult:
         """执行一次闭环泊车回合，返回完整指标。"""
         state = VehicleState(start.x, start.y, start.yaw, start.v, start.omega)
         record = EpisodeRecord()
         self.mpc.reset()
+        self.executor.reset()
         self.source.begin(state, goal)
         safety_stop = False
         try:
             traj, infer_ms = self.source.next_trajectory(state)
+            self.executor.begin_trajectory(traj)
             inference_times = [infer_ms]
         except SafetyStopError:
             self.source.record_safety_stop()
@@ -103,14 +116,14 @@ class ClosedLoopEngine:
             if step > 0 and step % self.replan_every == 0:
                 try:
                     traj, infer_ms = self.source.next_trajectory(state)
+                    self.executor.begin_trajectory(traj)
                     inference_times.append(infer_ms)
                 except SafetyStopError:
                     self.source.record_safety_stop()
                     safety_stop = True
                     break
-            cmd = self.mpc.compute(traj, state)
             previous_state = state
-            proposed_state = self.vehicle_model.step(state, cmd, self.mpc.dt)
+            proposed_state = self.executor.propose(state, traj, self.mpc.dt)
             guard = getattr(self.source, "guard_transition", None)
             if callable(guard):
                 try:
@@ -121,10 +134,10 @@ class ClosedLoopEngine:
                     break
                 if replacement is not None:
                     traj = replacement
+                    self.executor.begin_trajectory(traj)
                     inference_times.append(guard_ms)
-                    cmd = self.mpc.compute(traj, previous_state)
-                    proposed_state = self.vehicle_model.step(
-                        previous_state, cmd, self.mpc.dt
+                    proposed_state = self.executor.propose(
+                        previous_state, traj, self.mpc.dt
                     )
                     if not self.source.transition_is_safe(
                         previous_state, proposed_state
@@ -134,7 +147,7 @@ class ClosedLoopEngine:
                         break
             state = proposed_state
             collision = self._check_collision(previous_state, state)
-            record.log(state, cmd, traj, traj, collision)
+            record.log(state, self.executor.last_cmd, traj, traj, collision)
             if collision:
                 break
             if self.terminal.reached(state, goal):

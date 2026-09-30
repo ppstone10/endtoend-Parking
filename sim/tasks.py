@@ -75,15 +75,29 @@ _TASK_DISTANCE = {
     TaskType.T5_DYNAMIC: DistanceTier.MEDIUM,
 }
 
+# 正式启用场景集合（对齐 docs/无人矿卡自动泊车预置场景设计标准.md）。
+# 标准 §14 明确不单独设置"加油"场景（P6 称重取代），故 S7_fuel_station 排除在
+# 正式能力矩阵/数据生成/任务采样之外，但其构造器与 SCENE_REGISTRY 保留，作为
+# 可扩展场景（后续场景不足时可重新加入本集合）。
+ACTIVE_SCENES = (
+    "S1_parking_lot",
+    "S2_diagonal_lot",
+    "S3_maintenance",
+    "S4_dump_area",
+    "S5_crusher",
+    "S6_loading_face",
+    "S8_weigh_station",
+    "S9_mine_complex",
+)
+
 _OCCUPANCY_SCENES = {
     "S1_parking_lot",
     "S2_diagonal_lot",
     "S4_dump_area",
-    "S7_fuel_station",
     "S9_mine_complex",
 }
 
-_VEHICLE_SCALED_SCENES = {"S3_maintenance", "S4_dump_area", "S7_fuel_station", "S9_mine_complex"}
+_VEHICLE_SCALED_SCENES = {"S3_maintenance", "S4_dump_area", "S9_mine_complex"}
 
 # 使用连续轴线入口的车位类型。紧 bay 需要避免随机大转角；普通垂直/斜列
 # 车位也需要让请求的前进/倒车机动与车头朝向、入口侧保持一致。
@@ -479,7 +493,7 @@ class TaskSampler:
     def _random_stream(
         self, scene_name: str, task_type: TaskType, sample_index: int
     ) -> tuple[int, int, np.random.Generator]:
-        scenes = sorted(SCENE_REGISTRY)
+        scenes = list(ACTIVE_SCENES)
         kinds = list(TaskType)
         coordinates = [self.seed, scenes.index(scene_name), kinds.index(task_type), sample_index]
         task_seq, scene_seq, sample_seq = np.random.SeedSequence(coordinates).spawn(3)
@@ -832,10 +846,10 @@ class TaskSampler:
 
     @staticmethod
     def _normalize_scenes(scene_names: Iterable[str] | None) -> tuple[str, ...]:
-        scenes = tuple(sorted(SCENE_REGISTRY) if scene_names is None else scene_names)
+        scenes = tuple(ACTIVE_SCENES if scene_names is None else scene_names)
         unknown = [name for name in scenes if name not in SCENE_REGISTRY]
         if unknown:
-            raise ValueError(f"未知场景：{unknown}")
+            raise ValueError(f"未知场景{unknown}")
         return scenes
 
     @staticmethod
