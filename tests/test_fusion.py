@@ -43,13 +43,22 @@ class TestSimulatedCamera(unittest.TestCase):
         self.assertGreater((frame.image > 0).sum(), 0)
 
     def test_out_of_fov_no_wide_fill(self):
-        # 泊车位在车辆左后方（相机视野外），不应产生横跨全图的错误填充。
-        env = _setup_env(parking_x=-5.0, parking_y=-8.0)
-        camera = SimulatedCamera(env, self.intrinsics)
+        # 目标在相机可见范围之外（超出 BEV 覆盖半径），不得产生横跨全图的错误填充。
+        env = _setup_env(parking_x=-40.0, parking_y=-40.0)
+        camera = SimulatedCamera(env, self.intrinsics, view_yaws_deg=(0.0,))
         frame = camera.capture(0.0, 0.0, 0.0)
         white = frame.image[:, :, 0] > 0
-        # 视野外目标要么完全不可见，要么仅出现在图像边缘小范围，不得铺满全宽。
-        self.assertLess((white).sum(), 50)
+        self.assertLess(int(white.sum()), 50)
+
+    def test_surround_view_sees_goal_outside_single_view_fov(self):
+        """环视配置下，位于车辆左后方的目标应被渲染得比单前视更充分。"""
+        env = _setup_env(parking_x=-5.0, parking_y=-8.0)
+        single = SimulatedCamera(env, self.intrinsics, view_yaws_deg=(0.0,))
+        surround = SimulatedCamera(env, self.intrinsics)
+        single_pixels = int((single.capture(0.0, 0.0, 0.0).image > 0).sum())
+        surround_pixels = int((surround.capture(0.0, 0.0, 0.0).image > 0).sum())
+        self.assertGreater(surround_pixels, single_pixels)
+        self.assertGreater(surround_pixels, 0)
 
 
 class TestCamera2BEV(unittest.TestCase):

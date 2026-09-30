@@ -43,6 +43,15 @@ def _camera() -> CameraModel:
     )
 
 
+def _views_from_metadata(data: dict) -> tuple[float, ...] | None:
+    """从 task_meta.dataset.camera 读取记录下来的相机视角配置。"""
+    for meta in data.get("task_meta") or []:
+        camera = ((meta or {}).get("dataset") or {}).get("camera")
+        if isinstance(camera, dict) and camera.get("view_yaws_deg"):
+            return tuple(float(value) for value in camera["view_yaws_deg"])
+    return None
+
+
 def _local_goal(goal: np.ndarray, state: np.ndarray) -> tuple[float, float, float]:
     dx, dy = goal[0] - state[0], goal[1] - state[1]
     cos_yaw, sin_yaw = np.cos(state[2]), np.sin(state[2])
@@ -53,7 +62,13 @@ def _local_goal(goal: np.ndarray, state: np.ndarray) -> tuple[float, float, floa
     )
 
 
-def diagnose(data_path: Path) -> dict:
+def diagnose(data_path: Path, view_yaws_deg: tuple[float, ...] | None = None) -> dict:
+    """诊断 BEV 输入质量。
+
+    ``view_yaws_deg`` 给出实际相机视角；缺省读数据集 ``task_meta.dataset.camera``，
+    再缺省按单前视（0°）处理。**注意**：若数据是环视配置，"目标在视野外"这一项
+    必须按各视角分别判断，用单视角半视场去判定会把环视误报成视野外。
+    """
     data = DatasetGenerator.load(data_path)
     bevs = np.asarray(data["bevs"])
     channels = [str(name) for name in np.asarray(data["bev_meta"]["channels"])]
@@ -61,12 +76,15 @@ def diagnose(data_path: Path) -> dict:
     goals = np.asarray(data["goals"])
     camera = _camera()
 
+    if view_yaws_deg is None:
+        view_yaws_deg = _views_from_metadata(data) or (0.0,)
+
     target = bevs[:, channels.index("target")]
     non_zero = (target != 0).reshape(len(target), -1).sum(axis=1)
     height = bevs[:, channels.index("height")]
     density = bevs[:, channels.index("density")]
 
-    half_fov = np.arctan(640.0 / 2.0 / 400.0)  # 水平半视场（弧度）
+    half_fov = np.arctan(640.0 / 2.0 / 400.0)  # 单视角水平半视场（弧度）
     azimuths: list[float] = []
     visible_goal: list[bool] = []
     projected_corners_in: list[int] = []
@@ -75,7 +93,16 @@ def diagnose(data_path: Path) -> dict:
         gx, gy, gyaw = _local_goal(goals[index], states[index])
         azimuth = float(np.arctan2(gy, gx))
         azimuths.append(azimuth)
-        visible_goal.append(bool(abs(azimuth) <= half_fov and gx > 0.0))
+        # 环视下"能被看到"= 至少一个视角的目标在前方且在水平视场内。
+        sees = False
+        for view_yaw in view_yaws_deg:
+            theta = np.deg2rad(view_yaw)
+            view_x = float(np.cos(theta) * gx + np.sin(theta) * gy)
+            view_y = float(-np.sin(theta) * gx + np.cos(theta) * gy)
+            if view_x > 0.0 and abs(np.arctan2(view_y, view_x)) <= half_fov:
+                sees = True
+                break
+        visible_goal.append(sees)
         cos_y, sin_y = np.cos(gyaw), np.sin(gyaw)
         inside = 0
         for sx, sy in ((length / 2, width / 2), (length / 2, -width / 2),
@@ -133,10 +160,12 @@ def diagnose(data_path: Path) -> dict:
             "height_unique_values": sorted(float(v) for v in np.unique(height)),
             "density_unique_values": sorted(float(v) for v in np.unique(density)),
         },
+        "camera_views_deg": [float(value) for value in view_yaws_deg],
+        "horizontal_full_fov_per_view_deg": float(np.degrees(2.0 * half_fov)),
         "conclusion": (
-            "target 缺失由两类原因共同造成：视野外（相机水平半视场 "
-            f"{float(np.degrees(half_fov)):.1f}°）与视野内截断；"
-            "height 通道无高度信息，属输入表征缺陷"
+            "target 缺失按视角配置判定：单前视（77.3°）下主因是视野不够；"
+            "环视（多视角）下应看 empty_rate 与 in_view_but_empty_samples。"
+            "height 通道无高度信息属输入表征缺陷"
         ),
     }
     return report

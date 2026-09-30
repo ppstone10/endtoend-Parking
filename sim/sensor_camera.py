@@ -1,7 +1,12 @@
 """模拟相机传感器。
 
-通过相机模型将泊车位目标区域渲染到图像平面，生成 CameraFrame。
-车位区域以全局坐标矩形表示，投影到图像后填充为高亮目标区域。
+通过相机模型把泊车位目标区域渲染到图像平面，生成 CameraFrame。
+
+**环视配置**：自动泊车需要的目标既可能在正前方，也可能在侧面或车后
+（实测 val 集 58.3% 的目标方位角 ≥90°）。默认按 4 个正交视角
+（前 / 左 / 右 / 后，`view_yaws_deg=(0, 90, -90, 180)`）渲染并叠加到同一张
+图像上，等效水平全视场 360°；每个视角仍用同一套针孔 + 单应几何，
+`Camera2BEV` 的反投影口径因此不变。
 """
 
 from __future__ import annotations
@@ -13,13 +18,16 @@ from .camera_model import CameraModel
 from .environment import ParkingEnvironment
 from .noise import NoiseLevel, NoiseProfile, get_noise_profile
 
+# 默认环视视角（车体坐标系下相机朝向，0° 为车前，逆时针为正）。
+DEFAULT_VIEW_YAWS_DEG = (0.0, 90.0, -90.0, 180.0)
+
 
 class SimulatedCamera:
-    """基于相机模型的模拟相机。
+    """基于相机模型的模拟环视相机。
 
     intrinsics 为相机内参，image 尺寸为 (width, height)，height/pitch 为相机
     位姿参数（见 CameraModel）。parking_area 为 (length, width) 米，目标区域
-    以此为边长绘制在当前车辆前方视野内的图像中。
+    以此为边长绘制。view_yaws_deg 为各视角相机朝向（度）。
     """
 
     def __init__(
@@ -32,9 +40,15 @@ class SimulatedCamera:
         *,
         noise: NoiseLevel | str | NoiseProfile = NoiseLevel.CLEAN,
         seed: int = 0,
+        view_yaws_deg: tuple[float, ...] = DEFAULT_VIEW_YAWS_DEG,
     ) -> None:
         self.env = env
         self.intrinsics = intrinsics
+        self.height = float(height)
+        self.pitch = float(pitch)
+        self.view_yaws_deg = tuple(float(value) for value in view_yaws_deg)
+        if not self.view_yaws_deg:
+            raise ValueError("环视相机至少需要一个视角")
         self.model = CameraModel(intrinsics, height=height, pitch=pitch)
         self.parking_area = parking_area
         self.noise_profile = get_noise_profile(noise)
@@ -44,7 +58,7 @@ class SimulatedCamera:
         """采集一帧图像。
 
         将环境中的第一个泊车位目标区域投影到图像并填充为白色（255），
-        其余像素为黑色。图像为灰度单通道。
+        其余像素为黑色。图像为灰度单通道。多个视角渲染到同一张图像。
         """
         w = self.intrinsics.image_width
         h = self.intrinsics.image_height
@@ -58,21 +72,21 @@ class SimulatedCamera:
         if self.env.parking_spots and not missed:
             goal = self.env.parking_spots[0]
             rect = self._parking_rectangle(goal)
-            # 先把目标矩形变换到车辆局部系并按"相机前方"裁剪，再投影填充。
-            # 旧实现"任一角点投影失败即整帧丢弃"会把部分可见的目标一起清空；
-            # 只取可见角点凸包又在跨相机平面时丢点（可能剩不到 3 个），
-            # 故对局部多边形做近距离裁剪后再投影。
-            local_rect = [
-                self._to_local(px, py, x, y, yaw) for px, py in rect
-            ]
-            visible = self._clip_to_camera_front(local_rect)
-            pixels = []
-            for point in visible:
-                proj = self.model.project(float(point[0]), float(point[1]))
-                if proj is not None:
-                    pixels.append(proj)
-            if len(pixels) >= 3:
-                self._fill_polygon(image, self._convex_hull(pixels), 255)
+            for view_yaw in self.view_yaws_deg:
+                # 各视角相机朝向 view_yaw；渲染时先旋到该视角的局部坐标系，
+                # 再按该视角的相机平面对多边形做裁剪并投影填充。
+                local_rect = [
+                    self._to_view_local(px, py, x, y, yaw, view_yaw)
+                    for px, py in rect
+                ]
+                visible = self._clip_to_camera_front(local_rect)
+                pixels = []
+                for point in visible:
+                    proj = self.model.project(float(point[0]), float(point[1]))
+                    if proj is not None:
+                        pixels.append(proj)
+                if len(pixels) >= 3:
+                    self._fill_polygon(image, self._convex_hull(pixels), 255)
 
         if config.false_positive_rate > 0.0 and self.rng.random() < config.false_positive_rate:
             self._add_false_positive(image)
@@ -118,6 +132,20 @@ class SimulatedCamera:
             [cos_yaw * dx + sin_yaw * dy, -sin_yaw * dx + cos_yaw * dy]
         )
 
+    def _to_view_local(
+        self, px: float, py: float, x: float, y: float, yaw: float, view_yaw_deg: float
+    ) -> np.ndarray:
+        """全局坐标变换到某个视角相机的局部系（X 为该相机前向）。"""
+        base = self._to_local(px, py, x, y, yaw)
+        theta = np.deg2rad(view_yaw_deg)
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        return np.array(
+            [
+                cos_t * base[0] + sin_t * base[1],
+                -sin_t * base[0] + cos_t * base[1],
+            ]
+        )
+
     def _clip_to_camera_front(
         self, polygon: list[np.ndarray], *, eps: float = 1e-3
     ) -> list[tuple[float, float]]:
@@ -126,8 +154,8 @@ class SimulatedCamera:
         相机斜向下看时，车辆后方约 0.87m 以外的地面点落在相机平面之后。此处对
         这些边求与相机平面的交点并插值，使跨越相机平面的目标仍能渲染可见部分。
         """
-        cos_p, sin_p = np.cos(self.model.pitch), np.sin(self.model.pitch)
-        offset = self.model.height * sin_p
+        cos_p, sin_p = np.cos(self.pitch), np.sin(self.pitch)
+        offset = self.height * sin_p
 
         def depth(point: np.ndarray) -> float:
             return cos_p * float(point[0]) + offset

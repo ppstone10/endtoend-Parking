@@ -16,13 +16,16 @@ from sim import ParkingEnvironment
 from sim.sensor_camera import SimulatedCamera
 
 
-def _camera() -> SimulatedCamera:
+def _camera(*, single_view: bool = True) -> SimulatedCamera:
+    """默认单前视（便于验证可见性边界）；需要环视时传 single_view=False。"""
+    views = (0.0,) if single_view else (0.0, 90.0, -90.0, 180.0)
     return SimulatedCamera(
         ParkingEnvironment(world_size=60.0, obstacles=[]),
         CameraIntrinsics(
             fx=400.0, fy=400.0, cx=320.0, cy=240.0, image_width=640, image_height=480
         ),
         parking_area=(6.0, 3.0),
+        view_yaws_deg=views,
     )
 
 
@@ -33,12 +36,37 @@ class TestCameraVisibility(unittest.TestCase):
         image = camera.capture(0.0, 0.0, 0.0).image
         self.assertGreater(int(np.count_nonzero(image)), 0)
 
-    def test_goal_behind_is_not_rendered(self):
-        """目标在车后：全部角点深度为负 → 图像应为空（物理正确）。"""
+    def test_goal_behind_is_not_rendered_by_single_front_view(self):
+        """单前视：目标在车后 → 全部角点深度为负 → 图像为空（物理正确）。"""
         camera = _camera()
         camera.env.parking_spots = [GoalPose(-6.0, 0.0, 0.0)]
         image = camera.capture(0.0, 0.0, 0.0).image
         self.assertEqual(int(np.count_nonzero(image)), 0)
+
+    def test_surround_view_sees_goal_behind(self):
+        """环视：同一目标在车后也应变可见（这是本轮改造的主目的）。"""
+        camera = _camera(single_view=False)
+        camera.env.parking_spots = [GoalPose(-6.0, 0.0, 0.0)]
+        image = camera.capture(0.0, 0.0, 0.0).image
+        self.assertGreater(int(np.count_nonzero(image)), 0)
+
+    def test_surround_view_sees_goal_on_the_left(self):
+        camera = _camera(single_view=False)
+        camera.env.parking_spots = [GoalPose(0.0, 6.0, 0.0)]
+        image = camera.capture(0.0, 0.0, 0.0).image
+        self.assertGreater(int(np.count_nonzero(image)), 0)
+
+    def test_single_front_view_sees_less_than_surround_on_the_left(self):
+        """侧方目标：单前视只能看到一小条（或完全看不到），环视应看到明显更多。"""
+        goal = GoalPose(0.0, 6.0, 0.0)
+        single = _camera()
+        single.env.parking_spots = [goal]
+        surround = _camera(single_view=False)
+        surround.env.parking_spots = [goal]
+        single_pixels = int(np.count_nonzero(single.capture(0.0, 0.0, 0.0).image))
+        surround_pixels = int(np.count_nonzero(surround.capture(0.0, 0.0, 0.0).image))
+        self.assertGreater(surround_pixels, single_pixels)
+        self.assertGreater(surround_pixels, 0)
 
     def test_partially_behind_goal_renders_visible_part(self):
         """跨相机平面的目标：远处角点仍可见，应渲染裁剪后的可见部分。"""
