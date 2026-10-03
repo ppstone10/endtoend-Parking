@@ -113,13 +113,23 @@ class MineParkingNetV1(_VariableTrajectoryMixin, nn.Module):
         dt: float = 0.1,
         hidden_dim: int = 128,
         stop_threshold: float = 0.5,
+        target_channel: str = "image",
+        height_mode: str = "installation",
     ) -> None:
         super().__init__()
         if not 0.0 < stop_threshold < 1.0:
             raise ValueError("stop_threshold 必须在 (0,1) 内")
+        if target_channel not in {"image", "geometry"}:
+            raise ValueError("target_channel 必须是 image 或 geometry")
+        if height_mode not in {"installation", "semantic"}:
+            raise ValueError("height_mode 必须是 installation 或 semantic")
         self.max_horizon = int(max_horizon)
         self.dt = float(dt)
         self.stop_threshold = float(stop_threshold)
+        # BEV 输入契约：随 checkpoint 一起持久化，运行时据此校验感知链路一致，
+        # 避免"用几何 target 训练的模型被喂相机 target"这类静默错配。
+        self.target_channel = str(target_channel)
+        self.height_mode = str(height_mode)
         self.bev_encoder = nn.Sequential(
             nn.Conv2d(bev_channels, 32, 3, stride=2, padding=1),
             nn.ReLU(inplace=True),
@@ -188,15 +198,24 @@ class MineParkingNetV2(_VariableTrajectoryMixin, nn.Module):
         base_channels: int = 32,
         attention_heads: int = 4,
         stop_threshold: float = 0.5,
+        target_channel: str = "image",
+        height_mode: str = "installation",
     ) -> None:
         super().__init__()
         if hidden_dim % attention_heads != 0:
             raise ValueError("hidden_dim 必须能被 attention_heads 整除")
         if not 0.0 < stop_threshold < 1.0:
             raise ValueError("stop_threshold 必须在 (0,1) 内")
+        if target_channel not in {"image", "geometry"}:
+            raise ValueError("target_channel 必须是 image 或 geometry")
+        if height_mode not in {"installation", "semantic"}:
+            raise ValueError("height_mode 必须是 installation 或 semantic")
         self.max_horizon = int(max_horizon)
         self.dt = float(dt)
         self.stop_threshold = float(stop_threshold)
+        # BEV 输入契约：随 checkpoint 持久化，运行时据此校验感知链路一致。
+        self.target_channel = str(target_channel)
+        self.height_mode = str(height_mode)
         self.enc1 = _ConvBlock(bev_channels, base_channels)
         self.enc2 = _ConvBlock(base_channels, base_channels * 2)
         self.bottleneck = _ConvBlock(base_channels * 2, base_channels * 4)

@@ -10,6 +10,7 @@ import numpy as np
 from interfaces import LiDARFrame
 from .environment import ParkingEnvironment
 from .noise import NoiseLevel, NoiseProfile, get_noise_profile
+from .obstacle_height import normalized_height
 
 
 class SimulatedLiDAR:
@@ -59,7 +60,8 @@ class SimulatedLiDAR:
 
         points = np.empty((len(kept_angles), 4), dtype=np.float32)
         for i, angle in enumerate(kept_angles):
-            dist = self.env.raycast(origin, float(angle), effective_range)
+            hit_kinds: list[str] = []
+            dist = self.env.raycast(origin, float(angle), effective_range, hit_kinds)
             hit = dist < effective_range
             if config.range_std > 0.0:
                 dist = float(np.clip(
@@ -67,6 +69,11 @@ class SimulatedLiDAR:
                 ))
             points[i, 0] = x + dist * np.cos(angle)
             points[i, 1] = y + dist * np.sin(angle)
-            points[i, 2] = self.z
+            # z 语义：命中障碍时给该障碍的**归一化语义高度**（代表"需要多高才挡住
+            # 这条光束"），未命中取安装高度。平面的二维 raycast 本身不含高度信息，
+            # 语义高度使 height 通道携带障碍类别，而不是恒为安装高度。
+            points[i, 2] = (
+                normalized_height(hit_kinds[0]) if hit_kinds else self.z
+            )
             points[i, 3] = 1.0 if hit else 0.0
         return LiDARFrame(points=points)

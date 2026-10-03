@@ -14,6 +14,7 @@ import numpy as np
 
 from controller import MPCController
 from dataset import DatasetGenerator, build_task_components
+from dataset.components import assert_pipeline_matches_contract
 from interfaces import GoalPose, VehicleState
 from metrics import EpisodeResult, summarize
 from planner import RectangleFootprintCollisionChecker
@@ -245,7 +246,10 @@ def run_dataset_network_evaluation(
         if not np.allclose(stored_goal[:2], actual_goal[:2], atol=1e-7) or abs(yaw_delta) > 1e-7:
             raise ValueError(f"样本 {index} 的 goals 数组与 selected_goal 不一致")
 
-        planner, pipeline = build_task_components(restored.task, vehicle)
+        planner, pipeline = build_task_components(
+            restored.task, vehicle, model_config=loaded.model_config
+        )
+        assert_pipeline_matches_contract(pipeline, loaded.model_config)
         stored_bev = data["bev_meta"]
         if (
             not np.isclose(pipeline.bev_config.resolution, float(stored_bev["resolution"]))

@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from dataset import DatasetGenerator, build_task_components
+from dataset import DatasetGenerator, build_planner_and_pipeline
 from dataset.generator import TrainingSample
 from experiments.closed_loop_evaluation import (
     load_dataset_manifest,
@@ -65,6 +65,7 @@ def rebuild(
     data_path: Path,
     output_path: Path,
     *,
+    target_channel: str,
     view_yaws_deg: tuple[float, ...],
     limit: int = 0,
 ) -> dict:
@@ -94,8 +95,11 @@ def rebuild(
         except ValueError as exc:
             skipped.append({"index": index, "reason": f"任务无法复原：{exc}"})
             continue
-        planner, pipeline = build_task_components(restored.task, vehicle)
-        pipeline.camera_sensor.view_yaws_deg = view_yaws_deg
+        planner, pipeline = build_planner_and_pipeline(
+            restored.task, vehicle, target_channel=target_channel
+        )
+        if hasattr(pipeline, "camera_sensor"):
+            pipeline.camera_sensor.view_yaws_deg = view_yaws_deg
         try:
             goal = _plan_selected_goal(planner, restored.task)
         except RuntimeError as exc:
@@ -106,12 +110,19 @@ def rebuild(
         bev = pipeline.capture_bev(state.x, state.y, state.yaw)
         task_meta = dict(metadata[index])
         dataset_meta = dict(task_meta.get("dataset") or {})
-        dataset_meta["camera"] = {
-            "view_yaws_deg": list(view_yaws_deg),
-            "num_views": len(view_yaws_deg),
-            "height_m": pipeline.camera_sensor.height,
-            "pitch_deg": float(np.degrees(pipeline.camera_sensor.pitch)),
-        }
+        camera_config: dict = {"target_channel": target_channel}
+        if target_channel == "geometry":
+            camera_config["target_source"] = "geometry_rasterization"
+        else:
+            camera_config.update(
+                {
+                    "view_yaws_deg": list(view_yaws_deg),
+                    "num_views": len(view_yaws_deg),
+                    "height_m": pipeline.camera_sensor.height,
+                    "pitch_deg": float(np.degrees(pipeline.camera_sensor.pitch)),
+                }
+            )
+        dataset_meta["camera"] = camera_config
         task_meta["dataset"] = dataset_meta
         samples.append(
             TrainingSample(
@@ -136,6 +147,7 @@ def rebuild(
         "requested": len(indices),
         "rebuilt": len(samples),
         "skipped": skipped,
+        "target_channel": target_channel,
         "view_yaws_deg": list(view_yaws_deg),
         "elapsed_sec": time.perf_counter() - started,
     }
@@ -149,9 +161,15 @@ def main() -> None:
     )
     parser.add_argument("--output", required=True)
     parser.add_argument(
+        "--target-channel",
+        choices=["geometry", "image"],
+        default="geometry",
+        help="target 通道来源：geometry=车位矩形几何真值（默认）；image=相机渲染+反投影（旧口径）",
+    )
+    parser.add_argument(
         "--views",
         default=",".join(str(value) for value in DEFAULT_VIEW_YAWS_DEG),
-        help="环视视角（度，逗号分隔）；默认 0,90,-90,180",
+        help="环视视角（度，逗号分隔），仅 target-channel=image 时生效",
     )
     parser.add_argument("--limit", type=int, default=0, help=">0 时只重建前 N 条（小样本验证）")
     parser.add_argument("--report", default="")
@@ -161,6 +179,7 @@ def main() -> None:
     report = rebuild(
         Path(args.data).resolve(),
         Path(args.output).resolve(),
+        target_channel=args.target_channel,
         view_yaws_deg=views,
         limit=args.limit,
     )

@@ -54,26 +54,41 @@ class ParkingEnvironment:
         """批量判断点序列是否发生碰撞（越界或进入 forbidden 障碍物）。"""
         return not np.all([self.is_free(float(x), float(y)) for x, y in zip(xs, ys)])
 
-    def raycast(self, origin: np.ndarray, angle: float, max_range: float) -> float:
+    def raycast(
+        self,
+        origin: np.ndarray,
+        angle: float,
+        max_range: float,
+        hit_kinds: list[str] | None = None,
+    ) -> float:
         """解析射线投射：返回射线遇到（emits_points）障碍物或出界的距离。
 
         与障碍物边界/地图边界的求交均为解析解，无步进量化误差；
         射线穿过非 emits_points 障碍（如悬崖）。用于模拟 LiDAR。
+
+        传入 ``hit_kinds`` 时把命中障碍的 ``kind`` 追加进去（未命中障碍不追加），
+        供上层把语义高度写入 height 通道。
         """
         ox, oy = float(origin[0]), float(origin[1])
         dx, dy = math.cos(angle), math.sin(angle)
         best = self._world_exit_distance(ox, oy, dx, dy)
+        best_kind: str | None = None
         if best <= 0.0:
             return 0.0  # 起点在地图外
         for obs in self.obstacles:
             if not obs.emits_points:
                 continue
             if obs.contains_point(ox, oy):
+                if hit_kinds is not None:
+                    hit_kinds.append(obs.kind)
                 return 0.0  # 起点在障碍物内
             t = obs.ray_entry_distance(ox, oy, dx, dy)
             if t is not None and t < best:
                 best = t
+                best_kind = obs.kind
         if best < max_range:
+            if hit_kinds is not None and best_kind is not None:
+                hit_kinds.append(best_kind)
             return float(best)
         return float(max_range)
 

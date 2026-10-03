@@ -26,18 +26,17 @@ import numpy as np
 
 from interfaces import BEVConfig, BEVTensor, GoalPose
 from metrics.bev_fidelity import (
+    rasterize_ground_truth_height,
     rasterize_ground_truth_occupancy,
-    rasterize_ground_truth_target,
 )
+from .target_bev import rasterize_goal_target
 
 __all__ = [
     "GroundTruthBEVPipeline",
     "ground_truth_vehicle_outline",
 ]
 
-# 几何真值没有逐障碍高度场：模拟 LiDAR 的安装高度为 1.0m，故占用栅格取该值，
-# 与生产 height 通道（点云 z 最大值）在障碍高度量级上保持一致。
-GT_OCCUPANCY_HEIGHT_M = 1.0
+# 几何真值的 density 通道没有可比的物理量（几何上处处"密度相同"），占用处取 1。
 GT_DENSITY_VALUE = 1.0
 
 
@@ -88,6 +87,26 @@ class GroundTruthBEVPipeline:
             bev_config, self.vehicle_length, self.vehicle_width
         )
 
+    @classmethod
+    def from_scene(
+        cls,
+        env,
+        bev_config: BEVConfig,
+        *,
+        vehicle_length: float,
+        vehicle_width: float,
+        goals: list[GoalPose],
+    ) -> "GroundTruthBEVPipeline":
+        """便捷构造：直接给定目标列表，用于中小规模数据重建。"""
+        pipeline = cls(
+            env,
+            bev_config,
+            vehicle_length=vehicle_length,
+            vehicle_width=vehicle_width,
+        )
+        pipeline.set_target_goals(goals)
+        return pipeline
+
     def set_target_goals(self, goals: list[GoalPose]) -> None:
         """设置当前目标（渲染到 target 通道）。"""
         self._goals = list(goals)
@@ -96,11 +115,12 @@ class GroundTruthBEVPipeline:
         """在指定位姿生成一帧 GT BEV。"""
         config = self.bev_config
         occupancy = rasterize_ground_truth_occupancy(self.env, x, y, yaw, config)
-        height = np.where(occupancy > 0.0, GT_OCCUPANCY_HEIGHT_M, 0.0).astype(np.float32)
+        height_map = rasterize_ground_truth_height(self.env, x, y, yaw, config)
+        height = np.where(occupancy > 0.0, height_map, 0.0).astype(np.float32)
         density = np.where(occupancy > 0.0, GT_DENSITY_VALUE, 0.0).astype(np.float32)
         target = np.zeros_like(occupancy)
         for goal in self._goals:
-            rasterized = rasterize_ground_truth_target(
+            rasterized = rasterize_goal_target(
                 goal,
                 self.vehicle_length,
                 self.vehicle_width,

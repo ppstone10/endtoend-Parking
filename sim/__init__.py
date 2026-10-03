@@ -23,6 +23,12 @@ from .obstacles import (
     PolygonObstacle,
     RectangleObstacle,
 )
+from .obstacle_height import (
+    KIND_HEIGHT_M,
+    MAX_SEMANTIC_HEIGHT_M,
+    normalized_height,
+    semantic_height,
+)
 from .sensor_camera import SimulatedCamera
 from .sensor_sim import SimulatedLiDAR
 from .tasks import (
@@ -67,6 +73,10 @@ __all__ = [
     "KIND_VEHICLE",
     "KIND_EQUIPMENT",
     "KIND_LINE",
+    "KIND_HEIGHT_M",
+    "MAX_SEMANTIC_HEIGHT_M",
+    "normalized_height",
+    "semantic_height",
     "CameraModel",
     "SimulatedCamera",
     "SimulatedLiDAR",

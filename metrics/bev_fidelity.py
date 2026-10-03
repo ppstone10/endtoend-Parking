@@ -22,6 +22,7 @@ import numpy as np
 from interfaces import BEVConfig, BEVTensor, GoalPose
 from sensor2bev import LiDAR2BEV
 from sim.environment import ParkingEnvironment
+from sim.obstacle_height import normalized_height
 from sim.sensor_sim import SimulatedLiDAR
 
 
@@ -42,22 +43,21 @@ class BEVFidelityMetrics:
         return asdict(self)
 
 
-def rasterize_ground_truth_occupancy(
+def _rasterize_geometry(
     env: ParkingEnvironment,
     x: float,
     y: float,
     yaw: float,
     bev_config: BEVConfig,
     *,
-    max_range: float | None = None,
+    heights: bool,
 ) -> np.ndarray:
-    """把场景 emits_points 障碍栅格化为车辆中心局部 BEV 真值 occupancy（几何上限）。
+    """把 emits_points 障碍栅格化到车辆中心局部 BEV。
 
-    只把阻挡 LiDAR 射线的障碍（emits_points=True）计入真值占用：悬崖禁入但
-    不产生点云、地面标线可通行，二者都不应在 LiDAR 源 occupancy 中出现。
-    地图边界本身不视为障碍（边界外的点不存在点云）。
+    ``heights=False`` 返回 0/1 占用；``heights=True`` 返回该栅格内最高障碍的
+    **语义高度归一化值**（见 ``sim.obstacle_height``），未被占用处为 0。
+    语义高度来自障碍 ``kind``，不是伪造的测距值。
     """
-    del max_range  # 几何真值覆盖整个局部 BEV 范围，不随传感器量程裁剪
     config = BEVConfig(resolution=bev_config.resolution, extent=bev_config.extent)
     h, w = config.shape
     front, back, left, right = config.extent
@@ -76,6 +76,9 @@ def rasterize_ground_truth_occupancy(
     for obs in env.obstacles:
         if not obs.emits_points:
             continue
+        value = normalized_height(obs.kind) if heights else 1.0
+        if value <= 0.0:
+            continue
         x_min, x_max, y_min, y_max = obs.bbox
         in_box = (
             (global_x >= x_min)
@@ -86,8 +89,38 @@ def rasterize_ground_truth_occupancy(
         rr, cc = np.nonzero(in_box)
         for r, c in zip(rr.tolist(), cc.tolist()):
             if obs.contains_point(float(global_x[r, c]), float(global_y[r, c])):
-                truth[r, c] = 1.0
+                truth[r, c] = max(truth[r, c], value)
     return truth
+
+
+def rasterize_ground_truth_occupancy(
+    env: ParkingEnvironment,
+    x: float,
+    y: float,
+    yaw: float,
+    bev_config: BEVConfig,
+    *,
+    max_range: float | None = None,
+) -> np.ndarray:
+    """把场景 emits_points 障碍栅格化为车辆中心局部 BEV 真值 occupancy（几何上限）。
+
+    只把阻挡 LiDAR 射线的障碍（emits_points=True）计入真值占用：悬崖禁入但
+    不产生点云、地面标线可通行，二者都不应在 LiDAR 源 occupancy 中出现。
+    地图边界本身不视为障碍（边界外的点不存在点云）。
+    """
+    del max_range  # 几何真值覆盖整个局部 BEV 范围，不随传感器量程裁剪
+    return _rasterize_geometry(env, x, y, yaw, bev_config, heights=False)
+
+
+def rasterize_ground_truth_height(
+    env: ParkingEnvironment,
+    x: float,
+    y: float,
+    yaw: float,
+    bev_config: BEVConfig,
+) -> np.ndarray:
+    """把场景障碍的**语义高度**栅格化为 truth height 通道（供对照与诊断）。"""
+    return _rasterize_geometry(env, x, y, yaw, bev_config, heights=True)
 
 
 def rasterize_lidar_truth_occupancy(
@@ -246,6 +279,7 @@ __all__ = [
     "aggregate_bev_fidelity",
     "compute_bev_fidelity_metrics",
     "rasterize_ground_truth_occupancy",
+    "rasterize_ground_truth_height",
     "rasterize_ground_truth_target",
     "rasterize_lidar_truth_occupancy",
 ]

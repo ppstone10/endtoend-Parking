@@ -1,0 +1,30 @@
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../runs/validation/rebuild-train/train-smoke200.npz
+  val: ../../runs/validation/rebuild-val/val-final.npz
+  batch_size: 8
+training:
+  epochs: 1
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 1.0
+  teacher_forcing_decay_epochs: 1
+  early_stopping_start_epoch: 0
+output:
+  directory: ../../runs/training/v12-bev-fixed/net-v1-smoke

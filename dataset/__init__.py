@@ -8,7 +8,12 @@ from .calibration import (
     build_calibration_cases,
     run_calibration,
 )
-from .components import build_task_components
+from .components import (
+    assert_pipeline_matches_contract,
+    bev_contract_from_checkpoint,
+    build_planner_and_pipeline,
+    build_task_components,
+)
 from .generator import DatasetGenerator, TaskGenerationError, TrainingSample
 from .gt_bev import GroundTruthBEVPipeline, ground_truth_vehicle_outline
 from .recovery import (
@@ -45,6 +50,9 @@ __all__ = [
     "build_calibration_cases",
     "run_calibration",
     "build_task_components",
+    "build_planner_and_pipeline",
+    "bev_contract_from_checkpoint",
+    "assert_pipeline_matches_contract",
     "build_task_plan",
     "expert_maneuvers",
     "generate_with_retries",

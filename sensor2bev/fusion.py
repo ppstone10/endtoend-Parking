@@ -17,21 +17,40 @@ class BEVFusion:
     """传感器级 BEV 后融合。
 
     将 LiDAR BEV 与 Camera BEV 按通道拼接；可选绘制车辆轮廓通道。
+    ``target_override`` 非空时用给定栅格替换 Camera 提供的 target 通道，
+    用于"其余感知链路不变、只把目标通道换成几何栅格化"的对照口径。
     """
 
     def __init__(self, vehicle_length: float = 4.0, vehicle_width: float = 2.0) -> None:
         self.vehicle_length = vehicle_length
         self.vehicle_width = vehicle_width
 
-    def fuse(self, lidar_bev: BEVTensor, camera_bev: BEVTensor) -> BEVTensor:
+    def fuse(
+        self,
+        lidar_bev: BEVTensor,
+        camera_bev: BEVTensor,
+        *,
+        target_override: np.ndarray | None = None,
+    ) -> BEVTensor:
         """融合两路 BEV，输出叠加通道的统一张量。"""
         if lidar_bev.resolution != camera_bev.resolution:
             raise ValueError("融合要求两路 BEV 分辨率一致")
         if lidar_bev.extent != camera_bev.extent:
             raise ValueError("融合要求两路 BEV 覆盖范围一致")
 
-        data = np.concatenate([lidar_bev.data, camera_bev.data], axis=0)
-        channels = list(lidar_bev.channels) + list(camera_bev.channels)
+        camera_data = np.asarray(camera_bev.data)
+        camera_channels = list(camera_bev.channels)
+        if target_override is not None:
+            if "target" not in camera_channels:
+                raise ValueError("target_override 需要 Camera BEV 含 target 通道")
+            override = np.asarray(target_override, dtype=np.float32)
+            if override.shape != camera_data.shape[1:]:
+                raise ValueError("target_override 形状必须与 BEV 空间一致")
+            camera_data = camera_data.copy()
+            camera_data[camera_channels.index("target")] = override
+
+        data = np.concatenate([lidar_bev.data, camera_data], axis=0)
+        channels = list(lidar_bev.channels) + camera_channels
         vehicle = self._vehicle_outline(lidar_bev)
         if vehicle is not None:
             data = np.concatenate([data, vehicle], axis=0)
