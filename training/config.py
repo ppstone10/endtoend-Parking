@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from .closed_loop_selection import ClosedLoopSelectionConfig
 from .trainer import TrainerConfig
 
 
@@ -24,6 +25,7 @@ class TrainingRunConfig:
     output_dir: Path
     resume_from: Path | None = None
     initialize_from: Path | None = None
+    closed_loop_selection: ClosedLoopSelectionConfig | None = None
 
 
 def load_training_run_config(path: str | Path) -> TrainingRunConfig:
@@ -43,7 +45,15 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
     root = _mapping(raw, "根配置")
     _reject_unknown(
         root,
-        {"model", "data", "training", "output", "resume_from", "initialize_from"},
+        {
+            "model",
+            "data",
+            "training",
+            "output",
+            "resume_from",
+            "initialize_from",
+            "closed_loop_selection",
+        },
         "根配置",
     )
     model = _required_mapping(root, "model")
@@ -98,6 +108,8 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
     if resume_from is not None and initialize_from is not None:
         raise ValueError("resume_from 与 initialize_from 不得同时指定")
 
+    selection = _load_closed_loop_selection(root.get("closed_loop_selection"), source.parent)
+
     return TrainingRunConfig(
         source=source,
         model_name=model_name,
@@ -109,7 +121,32 @@ def load_training_run_config(path: str | Path) -> TrainingRunConfig:
         output_dir=output_dir,
         resume_from=resume_from,
         initialize_from=initialize_from,
+        closed_loop_selection=selection,
     )
+
+
+def _load_closed_loop_selection(
+    value: Any, base: Path
+) -> ClosedLoopSelectionConfig | None:
+    """解析可选的 `closed_loop_selection` 段；缺省返回 None（不启用）。"""
+    if value is None:
+        return None
+    section = _mapping(value, "closed_loop_selection")
+    allowed = set(ClosedLoopSelectionConfig.__dataclass_fields__)
+    unknown = sorted(set(section) - allowed)
+    if unknown:
+        raise ValueError(f"closed_loop_selection 含未知字段：{', '.join(unknown)}")
+    payload = dict(section)
+    data_value = payload.get("data")
+    if isinstance(data_value, str) and data_value:
+        resolved = _resolve_path(base, data_value)
+        if not resolved.is_file():
+            raise ValueError(f"closed_loop_selection.data 不存在：{resolved}")
+        payload["data"] = str(resolved)
+    try:
+        return ClosedLoopSelectionConfig(**payload)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"closed_loop_selection 配置无效：{exc}") from exc
 
 
 def _mapping(value: Any, location: str) -> Mapping[str, Any]:

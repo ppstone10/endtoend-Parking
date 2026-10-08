@@ -13,7 +13,8 @@ from dataset import DatasetGenerator
 from metrics.open_loop import evaluate_open_loop
 from metrics.prediction_analysis import collect_open_loop_predictions
 from model import build_model
-from training.checkpoint import initialize_model_from_checkpoint
+from .checkpoint import initialize_model_from_checkpoint
+from .closed_loop_selection import ClosedLoopSelector
 
 from .config import TrainingRunConfig, load_training_run_config
 from .data import (
@@ -104,7 +105,71 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         initialization=initialization,
     )
 
+    # 闭环选型：按"闭环成功率"另存 best_closed_loop.pt，并据此早停/部署。
+    selector = None
+    selection_state: dict[str, Any] = {
+        "enabled": False,
+        "best_score": None,
+        "best_epoch": None,
+        "stale_epochs": 0,
+        "stopped_early": False,
+        "history": [],
+    }
+    if config.closed_loop_selection is not None and config.closed_loop_selection.enabled:
+        selection_config = config.closed_loop_selection
+        selector = ClosedLoopSelector(
+            selection_config,
+            data_path=(selection_config.data or str(config.val_data)),
+            device=config.trainer.device,
+        )
+        selection_state["enabled"] = True
+        selection_state["data"] = str(selector.data_path)
+        selection_state["selected_indices"] = selector.selected_indices
+
     def record_progress(epoch: int, history: TrainingHistory) -> None:
+        """每轮记录进度；启用闭环选型时按闭环成功率决定 best 与早停。"""
+        if selector is not None:
+            selection_config = config.closed_loop_selection
+            assert selection_config is not None
+            should_evaluate = (
+                (epoch + 1) % selection_config.every_epochs == 0
+                or epoch + 1 == config.trainer.epochs
+            )
+            if should_evaluate:
+                metrics = selector.evaluate(trainer.model)
+                selection_state["history"].append({"epoch": epoch, **metrics})
+                score = float(metrics["score"])
+                best = selection_state["best_score"]
+                if best is None or score > float(best):
+                    selection_state["best_score"] = score
+                    selection_state["best_epoch"] = epoch
+                    selection_state["stale_epochs"] = 0
+                    trainer._save_checkpoint("best_closed_loop.pt", epoch, history)
+                else:
+                    selection_state["stale_epochs"] += 1
+                history.closed_loop_success_rate.append(score)
+                history.closed_loop_collision_rate.append(
+                    float(metrics["collision_rate"])
+                )
+                print(
+                    f"  [closed-loop] epoch {epoch + 1} 成功 {score:.1%} "
+                    f"碰撞 {metrics['collision_rate']:.1%} "
+                    f"位置 {metrics['final_pos_err_mean']:.2f}m "
+                    f"样本 {metrics['samples']} best {float(selection_state['best_score']):.1%}",
+                    flush=True,
+                )
+                if (
+                    selection_config.patience > 0
+                    and selection_state["stale_epochs"] >= selection_config.patience
+                ):
+                    # 标记即可：训练循环会在本轮结束后按标记停止，避免抛异常中断报告生成。
+                    selection_state["stopped_early"] = True
+                    history.closed_loop_stopped_early = True
+                    print(
+                        f"  [closed-loop] 连续 {selection_state['stale_epochs']} 次未提升，"
+                        "按闭环指标早停",
+                        flush=True,
+                    )
         atomic_write_json(config.output_dir / "history.json", history.to_dict())
         stop_rate = history.val_stop_found_rate[-1]
         stop_summary = (
@@ -135,6 +200,12 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
     best_checkpoint = config.output_dir / "best.pt"
     if not best_checkpoint.is_file():
         raise RuntimeError("训练结束但 best checkpoint 不存在")
+    # 启用闭环选型且已产出结果时，部署用闭环最优权重而非 val_loss 最优。
+    selected_by_closed_loop = False
+    closed_loop_checkpoint = config.output_dir / "best_closed_loop.pt"
+    if selection_state["enabled"] and closed_loop_checkpoint.is_file():
+        best_checkpoint = closed_loop_checkpoint
+        selected_by_closed_loop = True
     trainer.load_checkpoint(best_checkpoint)
     deployment_checkpoint = best_checkpoint
     calibration: dict[str, Any] = {"status": "not_applicable"}
@@ -188,6 +259,14 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         },
         "history": history.to_dict(),
         "metrics": metrics.to_dict(),
+        "closed_loop_selection": {
+            **{key: value for key, value in selection_state.items() if key != "history"},
+            "selected_checkpoint": (
+                str(closed_loop_checkpoint) if selected_by_closed_loop else str(config.output_dir / "best.pt")
+            ),
+            "selected_by_closed_loop": selected_by_closed_loop,
+            "evaluations": selection_state["history"],
+        },
         "calibration": calibration,
         "checkpoints": {
             "best": str(best_checkpoint),

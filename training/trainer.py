@@ -153,6 +153,10 @@ class TrainingHistory:
     val_stop_found_rate: list[float | None] = field(default_factory=list)
     val_predicted_length_mae_points: list[float | None] = field(default_factory=list)
     early_stopping_active: list[bool] = field(default_factory=list)
+    #: 闭环选型指标（仅在启用 closed_loop_selection 时逐评估轮记录）。
+    closed_loop_success_rate: list[float] = field(default_factory=list)
+    closed_loop_collision_rate: list[float] = field(default_factory=list)
+    closed_loop_stopped_early: bool = False
     best_epoch: int = -1
     best_val_loss: float = math.inf
     stopped_early: bool = False

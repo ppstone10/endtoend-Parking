@@ -1,0 +1,39 @@
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../runs/validation/v8-train-smoke/all.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 1
+  samples: 12
+  patience: 0
+  max_steps: 300
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 2
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 1.0
+  teacher_forcing_decay_epochs: 1
+  early_stopping_start_epoch: 0
+output:
+  directory: ../../runs/training/closed-loop-selection-smoke/net-v1
