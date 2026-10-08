@@ -1,0 +1,30 @@
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../runs/validation/rebuild-v7-geo/train.npz
+  val: ../../runs/validation/rebuild-v7-geo/val.npz
+  batch_size: 8
+training:
+  epochs: 30
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 15
+  early_stopping_start_epoch: 15
+output:
+  directory: ../../runs/training/v15-v7data-geo/net-v1
