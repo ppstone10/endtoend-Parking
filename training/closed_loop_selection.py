@@ -20,29 +20,17 @@ from typing import Any
 
 import numpy as np
 
-from controller import MPCController
-from dataset import DatasetGenerator, build_task_components
-from experiments.closed_loop_evaluation import (
-    load_dataset_manifest,
-    reconstruct_dataset_task,
-)
 from interfaces import VehicleState
-from metrics import summarize
-from planner import RectangleFootprintCollisionChecker
-from runtime import (
-    ClosedLoopEngine,
-    FootprintTrajectorySafetyChecker,
-    HierarchicalPlanningSource,
-    NetworkSource,
-    ReplanningExpertSource,
-    SafetyShieldSource,
-    TerminalChecker,
-)
-from sim import DifferentialDriveModel, VehicleConfig
 
 from .checkpoint import load_model_checkpoint
 
 __all__ = ["ClosedLoopSelectionConfig", "ClosedLoopSelector"]
+
+# 说明：本模块的重型依赖（dataset / experiments / runtime / controller / planner / sim）
+# 全部在函数内延迟导入。原因：`training.config` 需要在导入期引用
+# `ClosedLoopSelectionConfig`，而 `dataset.gt_bev` 又经 `metrics` → `training.trainer`
+# 形成链式导入；若此处顶层导入 `experiments.closed_loop_evaluation`（其依赖 dataset），
+# 会产生 “dataset → metrics → training → experiments → dataset” 的循环导入。
 
 
 @dataclass(frozen=True)
@@ -58,6 +46,10 @@ class ClosedLoopSelectionConfig:
     samples: int = 60
     #: 闭环失败后不再提升的容忍轮数；<=0 表示不据此早停。
     patience: int = 6
+    #: 每 N 轮另存一份 `epochXXXX.pt` 快照（>0 时启用）。
+    #: 用途：训练后对候选 checkpoint 做离线闭环排序，用于**测量配方上界**，
+    #: 而不是只在训练中选一个。快照会占用磁盘（约 2.8MB/份）。
+    snapshot_every_epochs: int = 0
     max_steps: int = 600
     replan_every: int = 10
     control_seed: int = 0
@@ -70,6 +62,7 @@ class ClosedLoopSelectionConfig:
             "every_epochs": self.every_epochs,
             "samples": self.samples,
             "patience": self.patience,
+            "snapshot_every_epochs": self.snapshot_every_epochs,
             "max_steps": self.max_steps,
             "replan_every": self.replan_every,
             "control_seed": self.control_seed,
@@ -81,6 +74,8 @@ class ClosedLoopSelectionConfig:
             raise ValueError("closed_loop_selection.every_epochs 必须为正")
         if self.samples < 0:
             raise ValueError("closed_loop_selection.samples 不能为负")
+        if self.snapshot_every_epochs < 0:
+            raise ValueError("closed_loop_selection.snapshot_every_epochs 不能为负")
         if self.max_steps <= 0 or self.replan_every <= 0:
             raise ValueError("closed_loop_selection 的 max_steps/replan_every 必须为正")
         if self.safety_mode not in {"none", "expert_fallback", "hierarchical"}:
@@ -125,6 +120,13 @@ class ClosedLoopSelector:
     def _ensure_episodes(self) -> list[_Episode]:
         if self._episodes is not None:
             return self._episodes
+        from dataset import DatasetGenerator
+        from experiments.closed_loop_evaluation import (
+            load_dataset_manifest,
+            reconstruct_dataset_task,
+        )
+        from sim import VehicleConfig
+
         data = DatasetGenerator.load(self.data_path)
         metadata = data.get("task_meta")
         if int(data.get("schema_version", -1)) != 2 or not isinstance(metadata, list):
@@ -168,9 +170,17 @@ class ClosedLoopSelector:
 
     def evaluate(self, model) -> dict[str, Any]:
         """用给定模型的**副本**跑闭环，返回选型分数与附带指标。"""
+        from controller import MPCController
+        from dataset import build_task_components
+        from metrics import summarize
+        from planner import RectangleFootprintCollisionChecker
+        from runtime import ClosedLoopEngine, TerminalChecker
+        from sim import DifferentialDriveModel
+
         episodes = self._ensure_episodes()
         assert self.vehicle is not None
         vehicle = self.vehicle
+        model_config = getattr(model, "model_config", None)
         working = copy.deepcopy(model)
         working.eval()
         try:
@@ -182,7 +192,7 @@ class ClosedLoopSelector:
         planning_failures = 0
         for episode in episodes:
             planner, pipeline = build_task_components(
-                episode.task, vehicle, model_config=getattr(model, "model_config", None)
+                episode.task, vehicle, model_config=model_config
             )
             source, expert_source = _build_source(self.config.safety_mode, pipeline, planner, working)
             collision_checker = RectangleFootprintCollisionChecker(
@@ -252,6 +262,14 @@ def _stratified_indices(metadata, indices: list[int], samples: int) -> list[int]
 
 def _build_source(safety_mode: str, pipeline, planner, model):
     """按安全模式构造轨迹源；显式传入模型，避免依赖 checkpoint 文件。"""
+    from runtime import (
+        FootprintTrajectorySafetyChecker,
+        HierarchicalPlanningSource,
+        NetworkSource,
+        ReplanningExpertSource,
+        SafetyShieldSource,
+    )
+
     network_source = NetworkSource(pipeline, model)
     if safety_mode == "none":
         return network_source, None

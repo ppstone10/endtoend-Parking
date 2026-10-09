@@ -131,6 +131,9 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         if selector is not None:
             selection_config = config.closed_loop_selection
             assert selection_config is not None
+            snapshot_every = int(selection_config.snapshot_every_epochs)
+            if snapshot_every > 0 and (epoch + 1) % snapshot_every == 0:
+                trainer._save_checkpoint(f"epoch{epoch + 1:04d}.pt", epoch, history)
             should_evaluate = (
                 (epoch + 1) % selection_config.every_epochs == 0
                 or epoch + 1 == config.trainer.epochs
