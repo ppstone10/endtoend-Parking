@@ -443,7 +443,9 @@ def run_validation_experiment(
     overall.update(_aggregate_cycles(bundles))
     if spec.executor == "ideal_path":
         overall.update(_aggregate_ideal_executor(bundles))
-
+    # 门禁口径必须可核验"回退失败=0"与干预率；此前本套件未聚合安全统计，
+    # 导致判据里的这两项无法从报告中读出。
+    overall["safety_shield"] = _aggregate_safety_shield(results)
     report: dict[str, Any] = {
         "schema_version": 1,
         "status": "completed",
@@ -480,6 +482,45 @@ def run_validation_experiment(
     if output_path is not None:
         atomic_write_json(Path(output_path).resolve(), report)
     return report
+
+
+def _aggregate_safety_shield(results: list[Any]) -> dict[str, Any] | None:
+    """聚合专家回退门禁的统计，供"回退失败=0 / 碰撞≤5%"判据核验。
+
+    仅当轨迹源带门禁（回合 meta 里存在 ``safety_shield``）时返回统计，否则返回 None，
+    保证非门禁实验的报告结构与以往一致。
+    """
+    entries = [
+        result.meta["safety_shield"]
+        for result in results
+        if isinstance(result.meta.get("safety_shield"), dict)
+    ]
+    if not entries:
+        return None
+    checks = sum(int(entry.get("checks", 0)) for entry in entries)
+    transition_checks = sum(int(entry.get("transition_checks", 0)) for entry in entries)
+    interventions = sum(int(entry.get("interventions", 0)) for entry in entries)
+    prevented = sum(int(entry.get("prevented_transitions", 0)) for entry in entries)
+    reasons: defaultdict[str, int] = defaultdict(int)
+    for entry in entries:
+        for reason, count in (entry.get("reasons") or {}).items():
+            reasons[str(reason)] += int(count)
+    return {
+        "episodes_with_shield": len(entries),
+        "checks": checks,
+        "transition_checks": transition_checks,
+        "interventions": interventions,
+        "intervention_rate": interventions / checks if checks else 0.0,
+        "prevented_transitions": prevented,
+        "transition_prevention_rate": (
+            prevented / transition_checks if transition_checks else 0.0
+        ),
+        "fallback_failures": sum(
+            int(entry.get("fallback_failures", 0)) for entry in entries
+        ),
+        "safety_stops": sum(int(entry.get("safety_stops", 0)) for entry in entries),
+        "reasons": dict(sorted(reasons.items())),
+    }
 
 
 def _aggregate_cycles(bundles: list[EpisodeBundle]) -> dict[str, Any]:
