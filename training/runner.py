@@ -14,7 +14,7 @@ from metrics.open_loop import evaluate_open_loop
 from metrics.prediction_analysis import collect_open_loop_predictions
 from model import build_model
 from .checkpoint import initialize_model_from_checkpoint
-from .closed_loop_selection import ClosedLoopSelector
+from .closed_loop_selection import ClosedLoopSelector, select_best_checkpoint
 
 from .config import TrainingRunConfig, load_training_run_config
 from .data import (
@@ -127,13 +127,20 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
         selection_state["selected_indices"] = selector.selected_indices
 
     def record_progress(epoch: int, history: TrainingHistory) -> None:
-        """每轮记录进度；启用闭环选型时按闭环成功率决定 best 与早停。"""
+        """每轮记录进度；启用闭环选型时按闭环成功率决定 best 与早停。
+
+        注意：当 `final_selection_samples > 0` 时进入**训练后排序选型**模式——
+        本轮只保存周期快照，不再即时刷新 `best_closed_loop.pt`。
+        原因：即时选型是贪心的，实测会把 best 锁死在早期较差 epoch
+        （v17 锁在 epoch 4 的 25%），而事后排序能发现 epoch 24 的 35%。
+        """
         if selector is not None:
             selection_config = config.closed_loop_selection
             assert selection_config is not None
             snapshot_every = int(selection_config.snapshot_every_epochs)
             if snapshot_every > 0 and (epoch + 1) % snapshot_every == 0:
                 trainer._save_checkpoint(f"epoch{epoch + 1:04d}.pt", epoch, history)
+            deferred_selection = int(selection_config.final_selection_samples) > 0
             should_evaluate = (
                 (epoch + 1) % selection_config.every_epochs == 0
                 or epoch + 1 == config.trainer.epochs
@@ -147,7 +154,8 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
                     selection_state["best_score"] = score
                     selection_state["best_epoch"] = epoch
                     selection_state["stale_epochs"] = 0
-                    trainer._save_checkpoint("best_closed_loop.pt", epoch, history)
+                    if not deferred_selection:
+                        trainer._save_checkpoint("best_closed_loop.pt", epoch, history)
                 else:
                     selection_state["stale_epochs"] += 1
                 history.closed_loop_success_rate.append(score)
@@ -162,7 +170,8 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
                     flush=True,
                 )
                 if (
-                    selection_config.patience > 0
+                    not deferred_selection
+                    and selection_config.patience > 0
                     and selection_state["stale_epochs"] >= selection_config.patience
                 ):
                     # 标记即可：训练循环会在本轮结束后按标记停止，避免抛异常中断报告生成。
@@ -203,9 +212,37 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
     best_checkpoint = config.output_dir / "best.pt"
     if not best_checkpoint.is_file():
         raise RuntimeError("训练结束但 best checkpoint 不存在")
+    # 训练后排序选型：在全部候选快照上按闭环成功率排序，把最优权重的 model_state
+    # 写入 best_closed_loop.pt。修复"训练中贪心即时锁定"导致最优权重不被部署的问题。
+    closed_loop_checkpoint = config.output_dir / "best_closed_loop.pt"
+    if (
+        selector is not None
+        and int(config.closed_loop_selection.final_selection_samples) > 0
+    ):
+        selection_config = config.closed_loop_selection
+        print(
+            f"  [final-selection] 在候选 checkpoint 上排序"
+            f"（{selection_config.final_selection_samples} 样本）",
+            flush=True,
+        )
+        selection_state["final_selection"] = select_best_checkpoint(
+            config.output_dir,
+            data_path=(selection_config.data or str(config.val_data)),
+            samples=int(selection_config.final_selection_samples),
+            device=config.trainer.device,
+            max_steps=selection_config.max_steps,
+            replan_every=selection_config.replan_every,
+        )
+        selected = selection_state["final_selection"]["best"]
+        selection_state["best_score"] = selected["success_rate"]
+        selection_state["best_epoch"] = selected["epoch"]
+        print(
+            f"  [final-selection] 选定 {selected['checkpoint']}（epoch {selected['epoch']}）"
+            f" 成功 {selected['success_rate']:.1%} 碰撞 {selected['collision_rate']:.1%}",
+            flush=True,
+        )
     # 启用闭环选型且已产出结果时，部署用闭环最优权重而非 val_loss 最优。
     selected_by_closed_loop = False
-    closed_loop_checkpoint = config.output_dir / "best_closed_loop.pt"
     if selection_state["enabled"] and closed_loop_checkpoint.is_file():
         best_checkpoint = closed_loop_checkpoint
         selected_by_closed_loop = True

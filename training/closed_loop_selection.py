@@ -50,6 +50,10 @@ class ClosedLoopSelectionConfig:
     #: 用途：训练后对候选 checkpoint 做离线闭环排序，用于**测量配方上界**，
     #: 而不是只在训练中选一个。快照会占用磁盘（约 2.8MB/份）。
     snapshot_every_epochs: int = 0
+    #: >0 时启用**训练后排序选型**：训练结束在全部候选上按闭环成功率排序，
+    #: 把最优权重的 model_state 写入 `best_closed_loop.pt`。
+    #: 这是修复"训练中贪心锁定过早"的开关；启用后训练中不再即时锁定 best。
+    final_selection_samples: int = 0
     max_steps: int = 600
     replan_every: int = 10
     control_seed: int = 0
@@ -63,6 +67,7 @@ class ClosedLoopSelectionConfig:
             "samples": self.samples,
             "patience": self.patience,
             "snapshot_every_epochs": self.snapshot_every_epochs,
+            "final_selection_samples": self.final_selection_samples,
             "max_steps": self.max_steps,
             "replan_every": self.replan_every,
             "control_seed": self.control_seed,
@@ -76,6 +81,13 @@ class ClosedLoopSelectionConfig:
             raise ValueError("closed_loop_selection.samples 不能为负")
         if self.snapshot_every_epochs < 0:
             raise ValueError("closed_loop_selection.snapshot_every_epochs 不能为负")
+        if self.final_selection_samples < 0:
+            raise ValueError("closed_loop_selection.final_selection_samples 不能为负")
+        if self.final_selection_samples > 0 and self.snapshot_every_epochs <= 0:
+            raise ValueError(
+                "启用 final_selection_samples 时必须同时设置 snapshot_every_epochs>0，"
+                "否则没有候选可排序"
+            )
         if self.max_steps <= 0 or self.replan_every <= 0:
             raise ValueError("closed_loop_selection 的 max_steps/replan_every 必须为正")
         if self.safety_mode not in {"none", "expert_fallback", "hierarchical"}:
@@ -296,3 +308,105 @@ def _build_source(safety_mode: str, pipeline, planner, model):
 def load_contract_from_checkpoint(checkpoint_path: str | Path) -> dict:
     """读取 checkpoint 的输入契约（供外部对齐感知链路时使用）。"""
     return dict(load_model_checkpoint(checkpoint_path).model_config)
+
+
+def select_best_checkpoint(
+    run_dir: str | Path,
+    *,
+    data_path: str | Path,
+    samples: int,
+    device: str = "cpu",
+    max_steps: int = 600,
+    replan_every: int = 10,
+    destination_name: str = "best_closed_loop.pt",
+) -> dict:
+    """在全部候选 checkpoint 上做闭环排序，把最优权重落到 `destination_name`。
+
+    为什么需要它：训练中即时选型一旦刷新就立刻锁定（贪心），实测会把
+    `best_closed_loop.pt` 锁在早期较差 epoch（v17 锁在 epoch 4 的 25%），
+    而事后对全部候选排序能发现 epoch 24 的 35%。此函数把选型从"训练中贪心"
+    改为"训练后在固定 holdout 上排序"，是纯工程改动、不需要重训。
+
+    候选来源：`epoch*.pt` 周期快照 + `best.pt` + `last.pt`。
+    返回排序结果；最优权重的**模型状态**被写入 `destination_name`
+    （保留其原有 trainer_config 等元信息，只替换 model_state）。
+    """
+    import torch
+
+    run_path = Path(run_dir)
+    candidates = sorted(run_path.glob("epoch*.pt"))
+    for extra in ("best.pt", "last.pt"):
+        if (run_path / extra).is_file():
+            candidates.append(run_path / extra)
+    if not candidates:
+        raise ValueError(f"{run_path} 下没有可排序的 checkpoint")
+
+    selector = ClosedLoopSelector(
+        ClosedLoopSelectionConfig(
+            enabled=True,
+            samples=samples,
+            max_steps=max_steps,
+            replan_every=replan_every,
+        ),
+        data_path=data_path,
+        device=device,
+    )
+    selector._ensure_episodes()
+
+    ranking: list[dict] = []
+    best_payload: dict | None = None
+    best_row: dict | None = None
+    for path in candidates:
+        loaded = load_model_checkpoint(path, device=device)
+        setattr(loaded.model, "model_config", loaded.model_config)
+        metrics = selector.evaluate(loaded.model)
+        row = {
+            "checkpoint": path.name,
+            "epoch": loaded.epoch,
+            **metrics,
+        }
+        ranking.append(row)
+        if best_row is None or (
+            metrics["success_rate"],
+            -metrics["collision_rate"],
+        ) > (best_row["success_rate"], -best_row["collision_rate"]):
+            best_row = row
+            best_payload = torch.load(path, map_location="cpu", weights_only=False)
+        print(
+            f"  [final-selection] {path.name:20s} epoch {loaded.epoch:>3} "
+            f"成功 {metrics['success_rate']:6.1%} 碰撞 {metrics['collision_rate']:6.1%}",
+            flush=True,
+        )
+
+    assert best_payload is not None and best_row is not None
+    destination = run_path / destination_name
+    if destination.is_file():
+        previous = torch.load(destination, map_location="cpu", weights_only=False)
+        if isinstance(previous, dict) and isinstance(previous.get("model_state"), dict):
+            # 只替换权重，保持原 checkpoint 的 trainer/model 元信息与 schema 一致。
+            selected = dict(previous)
+            selected["model_state"] = best_payload["model_state"]
+            selected["epoch"] = best_payload.get("epoch", previous.get("epoch"))
+            selected["final_selection"] = {
+                "source_checkpoint": best_row["checkpoint"],
+                "candidates": len(ranking),
+                "samples": selector.config.samples,
+                "success_rate": best_row["success_rate"],
+            }
+            temporary = destination.with_name(f"{destination.name}.tmp")
+            torch.save(selected, temporary)
+            temporary.replace(destination)
+    else:
+        temporary = destination.with_name(f"{destination.name}.tmp")
+        torch.save(best_payload, temporary)
+        temporary.replace(destination)
+
+    ranking.sort(key=lambda row: (-row["success_rate"], row["collision_rate"]))
+    return {
+        "candidates": len(ranking),
+        "samples": selector.config.samples,
+        "selected_indices": selector.selected_indices,
+        "best": best_row,
+        "destination": str(destination),
+        "ranking": ranking,
+    }

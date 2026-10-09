@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -137,6 +139,50 @@ def endpoint_alignment_loss(
     per_point = pos_err + yaw_err
     denominator = tail_span.sum().clamp(min=1.0)
     return per_point.sum() / denominator
+
+
+def terminal_pose_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    yaw_weight: float = 10.0,
+) -> torch.Tensor:
+    """终点位姿损失：**只**监督预测轨迹的**最后一点**，并对航向加权。
+
+    为什么需要它：闭环成功判据是终点位姿落入 ``tol_pos``/``tol_yaw``（0.3m / 10°），
+    但通用逐点损失监督的是整条轨迹的平均误差，两者在近端可以完全脱钩——
+    实测失败样本"历史最小距目标中位仅 0.17m、终点航向误差中位 74–84°"，
+    即位置到了、航向没收住。`endpoint_alignment_loss` 把末端若干点一起压，
+    仍然稀释了对终点的要求；此处只压最后一点。
+
+    ``yaw_weight`` 的取舍（以"位置偏差 0.3m"为锚）：
+    位置项是``米²``、航向项是``弧度²``，直接相加时航向被淹没
+    （``0.3² = 0.09`` vs ``10°² = 0.030``，仅差 3 倍）。
+    默认 ``10.0`` 时的等效关系：``0.1 rad ≈ 5.7°`` 的航向偏差
+    与 ``0.3m`` 的位置偏差贡献相当（``10 × 0.01 = 0.1`` vs ``0.09``）。
+    这**不是**"让两者数值同量级"——那会要求权重约 0.33，
+    使 3° 的航向偏差就等于 0.3m 的位置偏差，对航向过度苛刻。
+    因此本实现选择"以位置容差为锚、让 5.7° 航向与 0.3m 位置等价"。
+
+    监督对象是专家轨迹 ``target`` 的末点（而非目标位姿），避免强制轨迹塌缩到终点。
+    """
+    if pred.ndim != 3 or pred.shape[-1] != 3 or target.ndim != 3 or target.shape != pred.shape:
+        raise ValueError("terminal_pose_loss 要求 pred/target=(B,T,3) 且形状一致")
+    if mask.shape != pred.shape[:2]:
+        raise ValueError("terminal_pose_loss batch/mask 形状不一致")
+    if not math.isfinite(yaw_weight) or yaw_weight < 0.0:
+        raise ValueError("yaw_weight 必须为有限非负数")
+    lengths = mask.sum(dim=1).long()
+    if bool((lengths <= 0).any()):
+        raise ValueError("terminal_pose_loss 要求每条样本至少有一个有效点")
+    steps = torch.arange(pred.shape[1], device=pred.device).unsqueeze(0)
+    final_index = (lengths - 1).clamp(min=0).unsqueeze(1)
+    terminal_pred = pred.gather(1, final_index.unsqueeze(-1).expand(-1, 1, 3)).squeeze(1)
+    terminal_target = target.gather(1, final_index.unsqueeze(-1).expand(-1, 1, 3)).squeeze(1)
+    pos_err = (terminal_pred[..., :2] - terminal_target[..., :2]).pow(2).sum(-1)
+    yaw_err = (terminal_pred[..., 2] - terminal_target[..., 2]).pow(2)
+    return (pos_err + yaw_weight * yaw_err).mean()
 
 
 def variable_loss_fn(

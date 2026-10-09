@@ -39,6 +39,28 @@ class TestClosedLoopSelectionConfig(unittest.TestCase):
         self.assertEqual(payload["every_epochs"], 3)
         self.assertTrue(payload["enabled"])
 
+    def test_rejects_negative_snapshot_interval(self):
+        with self.assertRaises(ValueError):
+            ClosedLoopSelectionConfig(enabled=True, snapshot_every_epochs=-1)
+
+    def test_rejects_negative_final_selection_samples(self):
+        with self.assertRaises(ValueError):
+            ClosedLoopSelectionConfig(enabled=True, final_selection_samples=-1)
+
+    def test_final_selection_requires_snapshots(self):
+        """启用训练后排序却没有候选快照，属于必然失败的配置，应显式拒绝。"""
+        with self.assertRaisesRegex(ValueError, "snapshot_every_epochs"):
+            ClosedLoopSelectionConfig(
+                enabled=True, final_selection_samples=30, snapshot_every_epochs=0
+            )
+
+    def test_final_selection_with_snapshots_is_accepted(self):
+        config = ClosedLoopSelectionConfig(
+            enabled=True, final_selection_samples=30, snapshot_every_epochs=2
+        )
+        self.assertEqual(config.final_selection_samples, 30)
+        self.assertEqual(config.to_dict()["final_selection_samples"], 30)
+
 
 class _TinyModel(torch.nn.Module):
     """最小模型替身：只有一层，便于逐位比较权重。"""

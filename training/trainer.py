@@ -47,6 +47,11 @@ class TrainerConfig:
     balance_recovery_batches: bool = False
     endpoint_alignment_weight: float = 0.0
     endpoint_alignment_tail_points: int = 8
+    #: 终点位姿损失权重（>0 启用）：只监督预测轨迹**最后一点**，对准闭环成功判据。
+    terminal_pose_weight: float = 0.0
+    #: 终点位姿损失中的航向项权重。位置项以米²计、航向项以弧度²计，
+    #: 默认 10.0 的等效关系：0.1rad(≈5.7°) 航向偏差 ≈ 0.3m 位置偏差。
+    terminal_yaw_weight: float = 10.0
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -124,6 +129,10 @@ class TrainerConfig:
             or self.endpoint_alignment_tail_points <= 0
         ):
             raise ValueError("endpoint_alignment_tail_points 必须为正整数")
+        if not math.isfinite(self.terminal_pose_weight) or self.terminal_pose_weight < 0.0:
+            raise ValueError("terminal_pose_weight 必须为有限非负数")
+        if not math.isfinite(self.terminal_yaw_weight) or self.terminal_yaw_weight < 0.0:
+            raise ValueError("terminal_yaw_weight 必须为有限非负数")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -255,6 +264,15 @@ class Trainer:
                 tail_points=self.config.endpoint_alignment_tail_points,
             )
             total = total + self.config.endpoint_alignment_weight * endpoint_loss
+        if self.config.terminal_pose_weight > 0.0:
+            from model import terminal_pose_loss
+
+            total = total + self.config.terminal_pose_weight * terminal_pose_loss(
+                points,
+                target,
+                mask,
+                yaw_weight=self.config.terminal_yaw_weight,
+            )
         return total, collision_loss
 
     def _run_epoch(
@@ -419,6 +437,8 @@ class Trainer:
             "balance_recovery_batches",
             "endpoint_alignment_weight",
             "endpoint_alignment_tail_points",
+            "terminal_pose_weight",
+            "terminal_yaw_weight",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)
