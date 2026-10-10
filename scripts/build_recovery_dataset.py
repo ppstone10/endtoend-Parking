@@ -22,6 +22,7 @@ from dataset import (
     build_task_components,
     select_recovery_candidates_with_diagnostics,
 )
+from dataset.inspection import audit_maneuver_consistency
 from experiments.closed_loop_evaluation import (
     load_dataset_manifest,
     reconstruct_dataset_task,
@@ -30,10 +31,29 @@ from experiments.closed_loop_evaluation import (
 from interfaces import VehicleState
 from planner import RectangleFootprintCollisionChecker
 from runtime import ClosedLoopEngine, NetworkSource, TerminalChecker
-from sim import DifferentialDriveModel, VehicleConfig
+from sim import DifferentialDriveModel, Maneuver, VehicleConfig
 from training.checkpoint import load_model_checkpoint
 from training.data import validate_model_dataset
 from training.reporting import atomic_write_json
+
+
+def _candidate_maneuver(
+    candidate, goal, planner
+) -> Maneuver | None:
+    """在正式构建样本前判定该候选的主导机动；无法判定或规划失败时返回 None。
+
+    与 `dataset.recovery.build_recovery_sample` 的判定口径一致（比较前进/倒车的
+    请求距离占比），目的是在配额裁剪时不必承担构建完整样本的开销。
+    """
+    try:
+        trajectory = planner.plan(candidate.state, goal)
+    except (RuntimeError, ValueError):
+        return None
+    forward = audit_maneuver_consistency(trajectory.points, Maneuver.FORWARD)
+    reverse = audit_maneuver_consistency(trajectory.points, Maneuver.REVERSE)
+    if forward.requested_distance_ratio >= reverse.requested_distance_ratio:
+        return Maneuver.FORWARD if forward.consistent else None
+    return Maneuver.REVERSE if reverse.consistent else None
 
 
 def _checkpoint_digest(path: Path) -> str:
@@ -186,7 +206,25 @@ def main() -> None:
     parser.add_argument("--min-deviation", type=float, default=0.25)
     parser.add_argument("--min-yaw-deviation-deg", type=float, default=5.0)
     parser.add_argument("--max-recoveries-per-task", type=int, default=2)
+    parser.add_argument(
+        "--max-recoveries-per-maneuver",
+        type=int,
+        default=0,
+        help=(
+            "每个源任务每类机动（前进/倒车）的恢复样本上限；0 表示不限制。"
+            "用于修复恢复集被单一机动主导的问题：实测默认参数下 218 条 4 场景恢复样本中"
+            "90.8% 为前进（原始训练集是前进/倒车 50/50），会给网络带来前进偏好并显著抬高碰撞率"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260830)
+    parser.add_argument(
+        "--scenes",
+        default="",
+        help=(
+            "逗号分隔的场景白名单；限定采集范围。用于定向补采特定场景的碰撞状态"
+            "（实测 S4 卸载区碰撞率 64.3%、S6 装载面 46.7%，全局均匀采集对其覆盖不足）"
+        ),
+    )
     parser.add_argument(
         "--priority-from",
         help="从上一轮恢复输出/检查点自动补采碰撞或超时且零恢复的任务",
@@ -239,9 +277,31 @@ def main() -> None:
         ):
             raise ValueError("优先任务证据与当前数据计划或策略 checkpoint 不一致")
     else:
-        indices = select_evaluation_indices(
-            metadata, samples=args.samples, strategy=args.selection
-        )
+        scene_filter = {
+            value.strip() for value in args.scenes.split(",") if value.strip()
+        }
+        if scene_filter:
+            pool = [
+                index
+                for index, item in enumerate(metadata)
+                if str(item.get("scene_name")) in scene_filter
+            ]
+            known = {str(item.get("scene_name")) for item in metadata}
+            unknown = sorted(scene_filter - known)
+            if unknown:
+                raise ValueError(f"--scenes 含未知场景：{unknown}")
+            if not pool:
+                raise ValueError(f"--scenes 过滤后没有样本：{sorted(scene_filter)}")
+            local = select_evaluation_indices(
+                [metadata[index] for index in pool],
+                samples=args.samples,
+                strategy=args.selection,
+            )
+            indices = [pool[position] for position in local]
+        else:
+            indices = select_evaluation_indices(
+                metadata, samples=args.samples, strategy=args.selection
+            )
     if any(index < 0 or index >= len(metadata) for index in indices):
         raise ValueError("优先任务检查点与当前训练集索引不兼容")
     args.base_recovery_identity = None
@@ -268,6 +328,7 @@ def main() -> None:
     failure_reasons: Counter[str] = Counter()
     selection_totals: Counter[str] = Counter()
     recovered_trigger_totals: Counter[str] = Counter()
+    recovered_maneuver_totals: Counter[str] = Counter()
 
     for ordinal, index in enumerate(indices, start=1):
         part_path = checkpoint_dir / f"part-{index:05d}.npz"
@@ -333,25 +394,38 @@ def main() -> None:
         candidates = selection.candidates
         recovered = []
         planner_failures = 0
+        maneuver_quota_skips = 0
+        maneuver_counts: Counter[str] = Counter()
         part_failure_reasons: Counter[str] = Counter()
         for candidate in candidates:
             if len(recovered) >= args.max_recoveries_per_task:
                 break
+            # 按机动配额裁剪：候选按回滚步长从回合早期开始，若只按每任务上限取，
+            # 恢复集会几乎全被前进段占满，破坏原始训练集的前进/倒车平衡。
+            if args.max_recoveries_per_maneuver > 0:
+                maneuver = _candidate_maneuver(candidate, restored.goal, planner)
+                if maneuver is None:
+                    maneuver_quota_skips += 1
+                    continue
+                if maneuver_counts[maneuver.value] >= args.max_recoveries_per_maneuver:
+                    maneuver_quota_skips += 1
+                    continue
             try:
-                recovered.append(
-                    build_recovery_sample(
-                        candidate,
-                        source_index=index,
-                        source_metadata=metadata[index],
-                        goal=restored.goal,
-                        planner=planner,
-                        pipeline=pipeline,
-                        checkpoint_identity=identity["checkpoint_sha256"],
-                    )
+                sample = build_recovery_sample(
+                    candidate,
+                    source_index=index,
+                    source_metadata=metadata[index],
+                    goal=restored.goal,
+                    planner=planner,
+                    pipeline=pipeline,
+                    checkpoint_identity=identity["checkpoint_sha256"],
                 )
             except (RuntimeError, ValueError) as exc:
                 planner_failures += 1
                 part_failure_reasons[str(exc)] += 1
+                continue
+            recovered.append(sample)
+            maneuver_counts[str(sample.task_meta["difficulty"]["maneuver"])] += 1
         if recovered:
             _save_part(recovered, generator, part_path)
         atomic_write_json(
@@ -368,19 +442,26 @@ def main() -> None:
                 "recovered_triggers": dict(
                     sorted(Counter(item.task_meta["recovery"]["trigger"] for item in recovered).items())
                 ),
+                "maneuver_quota_skips": maneuver_quota_skips,
+                "recovered_maneuvers": dict(sorted(maneuver_counts.items())),
             },
         )
         stats["source_completed"] += 1
         stats["recovery_samples"] += len(recovered)
         stats["planner_failures"] += planner_failures
+        stats["maneuver_quota_skips"] = stats.get("maneuver_quota_skips", 0) + maneuver_quota_skips
         failure_reasons.update(part_failure_reasons)
         selection_totals.update(selection.diagnostics)
         recovered_trigger_totals.update(
             item.task_meta["recovery"]["trigger"] for item in recovered
         )
+        recovered_maneuver_totals.update(
+            str(item.task_meta["difficulty"]["maneuver"]) for item in recovered
+        )
         print(
             f"[{ordinal}/{len(indices)}] {restored.task.task_id} "
-            f"候选={len(candidates)} 恢复={len(recovered)} 规划失败={planner_failures}",
+            f"候选={len(candidates)} 恢复={len(recovered)} 规划失败={planner_failures} "
+            f"机动={dict(sorted(maneuver_counts.items()))} 配额跳过={maneuver_quota_skips}",
             flush=True,
         )
 
@@ -426,6 +507,11 @@ def main() -> None:
         "planner_failure_reasons": dict(sorted(failure_reasons.items())),
         "selection_diagnostics": dict(sorted(selection_totals.items())),
         "recovered_triggers": dict(sorted(recovered_trigger_totals.items())),
+        "recovered_maneuvers": dict(sorted(recovered_maneuver_totals.items())),
+        "maneuver_quota": {
+            "max_recoveries_per_maneuver": args.max_recoveries_per_maneuver,
+            "quota_skips": stats.get("maneuver_quota_skips", 0),
+        },
         "collision_selection_ablation": {
             "fixed_stride": _coverage("stride_collision_events_covered"),
             "immediate_pre_collision": _coverage(
