@@ -90,6 +90,9 @@ class SweptFootprintLoss(nn.Module):
         mode: str = "occupancy_max",
         goal_exempt_radius_m: float = 0.0,
         goal_exempt_weight: float = 0.0,
+        contact_weight: float = 4.0,
+        near_weight: float = 1.0,
+        aggregation_power: float = 4.0,
     ) -> None:
         super().__init__()
         if not math.isfinite(extra_margin_m) or extra_margin_m < 0.0:
@@ -100,8 +103,10 @@ class SweptFootprintLoss(nn.Module):
             raise ValueError("max_swept_substeps 必须为正整数")
         if not math.isfinite(out_of_bounds_weight) or out_of_bounds_weight < 0.0:
             raise ValueError("out_of_bounds_weight 必须为有限非负数")
-        if mode not in {"occupancy_max", "clearance_field"}:
-            raise ValueError("mode 必须为 occupancy_max 或 clearance_field")
+        if mode not in {"occupancy_max", "clearance_field", "tiered_clearance"}:
+            raise ValueError(
+                "mode 必须为 occupancy_max、clearance_field 或 tiered_clearance"
+            )
         if not math.isfinite(goal_exempt_radius_m) or goal_exempt_radius_m < 0.0:
             raise ValueError("goal_exempt_radius_m 必须为有限非负数")
         if (
@@ -109,6 +114,12 @@ class SweptFootprintLoss(nn.Module):
             or not 0.0 <= goal_exempt_weight <= 1.0
         ):
             raise ValueError("goal_exempt_weight 必须为 [0,1] 内有限数")
+        if not math.isfinite(contact_weight) or contact_weight < 0.0:
+            raise ValueError("contact_weight 必须为有限非负数")
+        if not math.isfinite(near_weight) or near_weight < 0.0:
+            raise ValueError("near_weight 必须为有限非负数")
+        if not math.isfinite(aggregation_power) or aggregation_power < 1.0:
+            raise ValueError("aggregation_power 必须为 >=1 的有限数")
         self.geometry = geometry
         self.extra_margin_m = float(extra_margin_m)
         self.sample_spacing_m = float(sample_spacing_m)
@@ -117,6 +128,9 @@ class SweptFootprintLoss(nn.Module):
         self.mode = mode
         self.goal_exempt_radius_m = float(goal_exempt_radius_m)
         self.goal_exempt_weight = float(goal_exempt_weight)
+        self.contact_weight = float(contact_weight)
+        self.near_weight = float(near_weight)
+        self.aggregation_power = float(aggregation_power)
         self.required_clearance_m = geometry.collision_margin_m + self.extra_margin_m
         footprint = self._build_footprint_samples()
         self.register_buffer("footprint_samples", footprint, persistent=False)
@@ -132,6 +146,9 @@ class SweptFootprintLoss(nn.Module):
             "required_clearance_m": self.required_clearance_m,
             "goal_exempt_radius_m": self.goal_exempt_radius_m,
             "goal_exempt_weight": self.goal_exempt_weight,
+            "contact_weight": self.contact_weight,
+            "near_weight": self.near_weight,
+            "aggregation_power": self.aggregation_power,
         }
 
     def forward(
@@ -198,6 +215,62 @@ class SweptFootprintLoss(nn.Module):
             denominator = swept_mask.sum().clamp_min(1.0)
             return (per_pose * swept_mask).sum() / denominator
 
+        if self.mode == "tiered_clearance":
+            # 分层净空：以连续净空场判断"接触/近障/安全"三档，并对时刻取 power-mean，
+            # 让最危险的扫掠位姿主导梯度（平均聚合会把 100 点轨迹里 2 个危险点的
+            # 梯度稀释到约 2%，实测这是净空损失长期无法降低碰撞的直接原因）。
+            if clearance_field is None:
+                raise ValueError("tiered_clearance 模式要求预计算净空场")
+            if clearance_field.shape != occupancy.shape:
+                raise ValueError("净空场必须与 occupancy 形状一致")
+            clearance = clearance_field.to(dtype=points.dtype, device=points.device)
+            sampled_clearance = F.grid_sample(
+                clearance,
+                grid.reshape(grid.shape[0], grid.shape[1] * grid.shape[2], 1, 2),
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            ).reshape(grid.shape[:3])
+            # 车体位姿到障碍的距离取外廓采样点上的**最小值**：任一采样点贴近障碍
+            # 即代表该位姿可操作空间不足。
+            pose_clearance = sampled_clearance.amin(dim=-1)
+            scale = max(self.required_clearance_m, self.geometry.bev_resolution_m)
+            # 档位都用"归一化的净空缺口"，保证**导数有界**：
+            # 平方形式对穿透深度无界，实测会让训练在首个 epoch 内出现 NaN（梯度爆炸）。
+            # near 缺口：净空从 required 降到 0 时由 0 升到 1；接触时钳到 1，
+            # 由 contact 项承担"已接触"的额外权重。
+            near_gap = torch.relu(self.required_clearance_m - pose_clearance) / scale
+            near = near_gap.clamp(max=1.0)
+            contact = torch.relu(-pose_clearance) / scale
+            per_pose = self.contact_weight * contact + self.near_weight * near
+            overflow_x = torch.maximum(
+                torch.maximum(sample_x - front, -back - sample_x),
+                torch.zeros_like(sample_x),
+            )
+            overflow_y = torch.maximum(
+                torch.maximum(sample_y - left, -right - sample_y),
+                torch.zeros_like(sample_y),
+            )
+            boundary_risk = (
+                torch.maximum(overflow_x, overflow_y) / scale
+            ).square().amax(dim=-1)
+            per_pose = per_pose + self.out_of_bounds_weight * boundary_risk
+            per_pose = self._apply_goal_exemption(per_pose, poses, goal)
+            # 最危险位姿主导：前向取 max，反向只把梯度给 argmax 位姿（直通）。
+            # 不用 power-mean：p=4 时幂运算与 1e-12 下限会放大浮点误差，
+            # 实测训练首个 epoch 内即出现 NaN。硬 max 语义相同但数值稳定。
+            masked = torch.where(
+                swept_mask > 0,
+                per_pose,
+                torch.full_like(per_pose, float("-inf")),
+            )
+            if not bool(torch.isfinite(masked).any()):
+                return torch.zeros((), dtype=points.dtype, device=points.device)
+            # 先取 argmax，再从**原张量**按索引取值：反向梯度只经选中的位姿。
+            selected = masked.argmax(dim=1, keepdim=True)
+            worst = per_pose.gather(1, selected).squeeze(1)
+            return worst.mean()
+
         dilation_cells = max(
             0,
             int(math.ceil(self.extra_margin_m / self.geometry.bev_resolution_m)),
@@ -220,8 +293,7 @@ class SweptFootprintLoss(nn.Module):
         denominator = swept_mask.sum().clamp_min(1.0)
         return (per_pose * swept_mask).sum() / denominator
 
-    def _apply_goal_exemption(
-        self,
+    def _apply_goal_exemption(        self,
         per_pose: torch.Tensor,
         poses: torch.Tensor,
         goal: torch.Tensor | None,

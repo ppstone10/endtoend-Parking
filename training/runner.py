@@ -69,7 +69,7 @@ def run_training(config: TrainingRunConfig) -> dict[str, Any]:
             goal_exempt_radius_m=config.trainer.safety_goal_exempt_radius_m,
             goal_exempt_weight=config.trainer.safety_goal_exempt_weight,
         )
-        if config.trainer.safety_loss_mode == "clearance_field":
+        if config.trainer.safety_loss_mode in {"clearance_field", "tiered_clearance"}:
             train_clearance = build_clearance_fields(
                 train_data["bevs"],
                 train_geometry,

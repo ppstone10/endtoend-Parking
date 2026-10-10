@@ -109,8 +109,14 @@ class TrainerConfig:
             or self.safety_max_swept_substeps <= 0
         ):
             raise ValueError("safety_max_swept_substeps 必须为正整数")
-        if self.safety_loss_mode not in {"occupancy_max", "clearance_field"}:
-            raise ValueError("safety_loss_mode 必须为 occupancy_max 或 clearance_field")
+        if self.safety_loss_mode not in {
+            "occupancy_max",
+            "clearance_field",
+            "tiered_clearance",
+        }:
+            raise ValueError(
+                "safety_loss_mode 必须为 occupancy_max、clearance_field 或 tiered_clearance"
+            )
         for name, value in (
             ("safety_goal_exempt_radius_m", self.safety_goal_exempt_radius_m),
             ("safety_goal_exempt_weight", self.safety_goal_exempt_weight),

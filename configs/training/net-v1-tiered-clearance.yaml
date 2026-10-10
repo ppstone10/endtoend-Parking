@@ -1,0 +1,62 @@
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v25_dagger_s46/train-balanced.npz
+  val: ../../runs/validation/slice-4scenes/val-4scenes.npz
+  batch_size: 8
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 2
+  samples: 60
+  patience: 3
+  snapshot_every_epochs: 2
+  final_selection_samples: 60
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 30
+  learning_rate: 0.0003
+  # 分层净空损失的聚合让"最危险位姿"主导梯度，单步梯度上界高于逐点平均形式；
+  # 实测无裁剪时首轮即出现 NaN，故启用梯度裁剪作为数值保护。
+  gradient_clip_norm: 1.0
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  # 分层净空损失：连续净空场 + 接触/近障分档 + power-mean 聚合（最危险时刻主导）
+  collision_loss_weight: 0.1
+  safety_loss_mode: tiered_clearance
+  # 阈值回到车辆真实碰撞余量 0.2m：几何检查显示 δ=0.2 时四场景 100% 可规划且
+  # 100% 专家示范可行；δ=0.3 时 S4 有 42% 专家示范被判违规，属过度限制
+  safety_extra_margin_m: 0.0
+  safety_sample_spacing_m: 0.5
+  safety_max_swept_substeps: 16
+  safety_out_of_bounds_weight: 0.1
+  # 必要路径豁免：目标附近必然贴障碍（车位本身就在障碍之间），
+  # 按"只要不发生实际碰撞即视为无碰撞"降低该区域的净空惩罚
+  safety_goal_exempt_radius_m: 3.0
+  safety_goal_exempt_weight: 0.1
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 15
+  early_stopping_start_epoch: 15
+output:
+  directory: ../../runs/training/v28-tiered-clearance/net-v1
