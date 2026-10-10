@@ -241,6 +241,9 @@ class ClosedLoopEngine:
         safety_stats = getattr(self.source, "safety_stats", None)
         if callable(safety_stats):
             result_meta["safety_shield"] = safety_stats()
+        filter_stats = getattr(self.source, "filter_stats", None)
+        if callable(filter_stats):
+            result_meta["trajectory_filter"] = filter_stats()
         return EpisodeResult(
             success=success,
             failure=failure,

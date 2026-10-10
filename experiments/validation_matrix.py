@@ -54,11 +54,13 @@ from runtime import (
     ClosedLoopEngine,
     ExpertSource,
     FootprintTrajectorySafetyChecker,
+    GeometricFilterSource,
     HierarchicalPlanningSource,
     IdealPathExecutor,
     NetworkSource,
     ReplanningExpertSource,
     SafetyShieldSource,
+    SweptFootprintProjector,
     TerminalChecker,
 )
 from sim import DifferentialDriveModel, VehicleConfig
@@ -69,7 +71,21 @@ from training.reporting import atomic_write_json
 VALID_BEV_SOURCES = ("sensor", "gt")
 VALID_TRAJECTORY_SOURCES = ("expert", "expert_replan", "network")
 VALID_EXECUTORS = ("mpc_vehicle", "ideal_path")
-VALID_SAFETY_MODES = ("none", "expert_fallback", "hierarchical")
+VALID_SAFETY_MODES = ("none", "expert_fallback", "hierarchical", "filter")
+
+#: 轨迹级几何过滤要求的净空（米）。0 表示"只消除真实接触"；取正值即要求过滤后的
+#: 参考轨迹至少保留该净空，用余量吸收执行误差。
+#:
+#: 实测（v26 deployment.pt，136 条可复原共享场景，见 docs/closed_loop_geometric_filter.md）：
+#: 这个值必须**大于实际执行偏差**才有意义。取 0.15（≈跟踪误差量级）时参考轨迹已全部
+#: 无碰撞，闭环碰撞率却只从 26.5% 降到 16.9%——误差把余量吃光了；取 0.3~0.4 才把
+#: 碰撞压到 10% 以下。同时它是**触发判据**：值越大干预越频繁，靠"计划保持"兜住
+#: 成功率（纯截断停车会把碰撞换成振荡）。
+FILTER_REQUIRED_MARGIN_M = 0.4
+#: 单次过滤允许的最大侧移（米）与迭代轮数上限。实测放大到 2.0m/15 轮并不更好
+#: （E3 碰撞 5.9%→8.8%），故保持"最小干预"的较小上界。
+FILTER_MAX_OFFSET_M = 1.0
+FILTER_MAX_ROUNDS = 10
 
 
 @dataclass(frozen=True)
@@ -176,6 +192,22 @@ EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
         safety_mode="expert_fallback",
         description="E5 安全门禁口径",
     ),
+    "E3f": ExperimentSpec(
+        name="E3f",
+        bev_source="gt",
+        trajectory_source="network",
+        executor="mpc_vehicle",
+        safety_mode="filter",
+        description="E3 轨迹级几何过滤口径",
+    ),
+    "E5f": ExperimentSpec(
+        name="E5f",
+        bev_source="sensor",
+        trajectory_source="network",
+        executor="mpc_vehicle",
+        safety_mode="filter",
+        description="E5 轨迹级几何过滤口径",
+    ),
 }
 
 
@@ -221,6 +253,7 @@ def _build_source(
     model,
     *,
     hierarchical_lookahead: float,
+    filter_projector: SweptFootprintProjector | None = None,
 ):
     """按 trajectory_source 与 safety_mode 构造轨迹源。"""
     if spec.trajectory_source == "expert":
@@ -242,7 +275,44 @@ def _build_source(
             lookahead=hierarchical_lookahead,
             safety_checker=FootprintTrajectorySafetyChecker(planner._collision_checker),
         )
+    if spec.safety_mode == "filter":
+        if filter_projector is None:
+            raise ValueError("filter 模式要求提供轨迹过滤器")
+        return GeometricFilterSource(network_source, filter_projector)
     return network_source
+
+
+def build_filter_projector(
+    env,
+    vehicle: VehicleConfig,
+    *,
+    required_margin_m: float = FILTER_REQUIRED_MARGIN_M,
+    max_offset_m: float = FILTER_MAX_OFFSET_M,
+    max_rounds: int = FILTER_MAX_ROUNDS,
+) -> SweptFootprintProjector:
+    """构造轨迹过滤器：要求净空用 ``required_margin_m``，真实接触用 0 余量。
+
+    两个自由空间的区别只在**当前位姿及其第一段扫掠**——车辆已经在哪儿不可更改，
+    过滤器只要求它不再真正接触障碍；从第一个预测点起一律恢复要求的净空。
+    """
+    return SweptFootprintProjector(
+        RectangleFootprintCollisionChecker(
+            env,
+            vehicle_length=vehicle.length,
+            vehicle_width=vehicle.width,
+            collision_margin=required_margin_m,
+            resolution=vehicle.collision_check_resolution,
+        ),
+        contact=RectangleFootprintCollisionChecker(
+            env,
+            vehicle_length=vehicle.length,
+            vehicle_width=vehicle.width,
+            collision_margin=0.0,
+            resolution=vehicle.collision_check_resolution,
+        ),
+        max_offset_m=max_offset_m,
+        max_rounds=max_rounds,
+    )
 
 
 def _cycles_from_record(
@@ -293,6 +363,9 @@ def run_validation_experiment(
     ideal_steps_per_point: float | None = None,
     ideal_point_spacing_m: float | None = None,
     hierarchical_lookahead: float = 3.0,
+    filter_required_margin: float = FILTER_REQUIRED_MARGIN_M,
+    filter_max_offset: float = FILTER_MAX_OFFSET_M,
+    filter_max_rounds: int = FILTER_MAX_ROUNDS,
     progress: Callable[[int, int, EpisodeBundle], None] | None = None,
 ) -> dict[str, Any]:
     """按实验组合执行闭环评测并返回报告。"""
@@ -358,6 +431,17 @@ def run_validation_experiment(
             pipeline,
             loaded.model if loaded is not None else None,
             hierarchical_lookahead=hierarchical_lookahead,
+            filter_projector=(
+                build_filter_projector(
+                    restored.task.scene.env,
+                    vehicle,
+                    required_margin_m=filter_required_margin,
+                    max_offset_m=filter_max_offset,
+                    max_rounds=filter_max_rounds,
+                )
+                if spec.safety_mode == "filter"
+                else None
+            ),
         )
         collision_checker = RectangleFootprintCollisionChecker(
             restored.task.scene.env,
@@ -446,6 +530,9 @@ def run_validation_experiment(
     # 门禁口径必须可核验"回退失败=0"与干预率；此前本套件未聚合安全统计，
     # 导致判据里的这两项无法从报告中读出。
     overall["safety_shield"] = _aggregate_safety_shield(results)
+    # 轨迹级几何过滤的干预强度与失败模式必须可核验：只看成功率/碰撞率无法区分
+    # "过滤器没被触发"与"过滤器触发后把轨迹拉坏了"。
+    overall["trajectory_filter"] = _aggregate_trajectory_filter(results)
     report: dict[str, Any] = {
         "schema_version": 1,
         "status": "completed",
@@ -471,6 +558,15 @@ def run_validation_experiment(
             ),
             "hierarchical_lookahead": (
                 hierarchical_lookahead if spec.safety_mode == "hierarchical" else None
+            ),
+            "filter_required_margin_m": (
+                filter_required_margin if spec.safety_mode == "filter" else None
+            ),
+            "filter_max_offset_m": (
+                filter_max_offset if spec.safety_mode == "filter" else None
+            ),
+            "filter_max_rounds": (
+                filter_max_rounds if spec.safety_mode == "filter" else None
             ),
         },
         "vehicle_model": vehicle.to_metadata(),
@@ -519,6 +615,51 @@ def _aggregate_safety_shield(results: list[Any]) -> dict[str, Any] | None:
             int(entry.get("fallback_failures", 0)) for entry in entries
         ),
         "safety_stops": sum(int(entry.get("safety_stops", 0)) for entry in entries),
+        "reasons": dict(sorted(reasons.items())),
+    }
+
+
+def _aggregate_trajectory_filter(results: list[Any]) -> dict[str, Any] | None:
+    """聚合轨迹级几何过滤的统计；未启用过滤时返回 None，保持旧报告结构。"""
+    entries = [
+        result.meta["trajectory_filter"]
+        for result in results
+        if isinstance(result.meta.get("trajectory_filter"), dict)
+    ]
+    if not entries:
+        return None
+    checks = sum(int(entry.get("checks", 0)) for entry in entries)
+    unmodified = sum(int(entry.get("unmodified", 0)) for entry in entries)
+    repaired = sum(int(entry.get("repaired", 0)) for entry in entries)
+    truncated = sum(int(entry.get("truncated", 0)) for entry in entries)
+    persisted = sum(int(entry.get("persisted", 0)) for entry in entries)
+    held = sum(int(entry.get("held", 0)) for entry in entries)
+    reasons: defaultdict[str, int] = defaultdict(int)
+    for entry in entries:
+        for reason, count in (entry.get("reasons") or {}).items():
+            reasons[str(reason)] += int(count)
+    return {
+        "episodes_with_filter": len(entries),
+        "checks": checks,
+        "unmodified": unmodified,
+        "repaired": repaired,
+        "persisted": persisted,
+        "truncated": truncated,
+        "held": held,
+        "safety_stops": sum(int(entry.get("safety_stops", 0)) for entry in entries),
+        "intervention_rate": (checks - unmodified) / checks if checks else 0.0,
+        "blocked_poses": sum(int(entry.get("blocked_poses", 0)) for entry in entries),
+        "residual_blocked_poses": sum(
+            int(entry.get("residual_blocked_poses", 0)) for entry in entries
+        ),
+        "mean_offset_m": (
+            sum(float(entry.get("offset_m_sum", 0.0)) for entry in entries) / checks
+            if checks
+            else 0.0
+        ),
+        "max_offset_m": max(
+            (float(entry.get("max_offset_m", 0.0)) for entry in entries), default=0.0
+        ),
         "reasons": dict(sorted(reasons.items())),
     }
 

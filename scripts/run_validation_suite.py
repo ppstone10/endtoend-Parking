@@ -298,6 +298,13 @@ def _run_suite(args: argparse.Namespace, output: Path) -> dict[str, dict]:
                     flush=True,
                 )
 
+            filter_kwargs = {}
+            if args.filter_margin is not None:
+                filter_kwargs["filter_required_margin"] = args.filter_margin
+            if args.filter_max_offset is not None:
+                filter_kwargs["filter_max_offset"] = args.filter_max_offset
+            if args.filter_max_rounds is not None:
+                filter_kwargs["filter_max_rounds"] = args.filter_max_rounds
             report = run_validation_experiment(
                 spec,
                 data_path=data_path,
@@ -312,6 +319,7 @@ def _run_suite(args: argparse.Namespace, output: Path) -> dict[str, dict]:
                 ideal_steps_per_point=args.ideal_steps_per_point,
                 ideal_point_spacing_m=args.ideal_point_spacing,
                 progress=progress,
+                **filter_kwargs,
             )
             if label is not None:
                 report["model_label"] = label
@@ -484,6 +492,14 @@ def main() -> None:
         default=None,
         help="理想执行的标称点距（米）；默认 0.5，用于推进速度敏感性对照",
     )
+    parser.add_argument(
+        "--filter-margin",
+        type=float,
+        default=None,
+        help="轨迹级几何过滤要求的净空（米）；不指定用 experiments.validation_matrix 的默认值",
+    )
+    parser.add_argument("--filter-max-offset", type=float, default=None)
+    parser.add_argument("--filter-max-rounds", type=int, default=None)
     parser.add_argument("--output", default="runs/validation")
     args = parser.parse_args()
 

@@ -12,7 +12,7 @@
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
 | 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元；Task 驱动生成经机动与可行性双门禁保存 schema v2；`recovery.py` 从学习器闭环偏离状态生成重新审计的专家恢复样本，碰撞时完整回溯最近的规划安全余量状态；构建脚本按源任务原子续建、从失败检查点派生困难补采并去重合并既有恢复集和原训练集 |
-| 闭环运行时 | `runtime/` | `engine.py` 执行轨迹源→MPC→车辆并在状态更新前调用转移门禁，再以完整矩形连续扫掠判碰撞；`sources.py` 提供 Expert/Network、当前安全状态专家重规划、专用安全停止和门禁组合；`safety.py` 定义场景无关的轨迹审查接口与干预统计 |
+| 闭环运行时 | `runtime/` | `engine.py` 执行轨迹源→MPC→车辆并在状态更新前调用转移门禁，再以完整矩形连续扫掠判碰撞；`sources.py` 提供 Expert/Network、当前安全状态专家重规划、专用安全停止、门禁组合与轨迹级几何过滤组合；`safety.py` 定义场景无关的轨迹审查接口与干预统计；`trajectory_repair.py` 把预测轨迹中不可行的部分按"可达锥"侧向投影回可行域（只做侧移，不改航向与训练目标），失败时由包装源退化为计划保持或安全截断 |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较；预测诊断层保留逐样本误差与终止长度，按场景、任务、方向、噪声和相邻占用聚合 |
 | 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图与分组开环图；专家验收图和预测叠加图使用“前方 x、车体左方 y”右手局部系，将正 Left 显示在画面左侧，并把连续零位移航向变化汇总为从旋转前航向出发的有符号旋转弧 |
 | 批量实验 | `experiments/` | 配置驱动专家 runner；`closed_loop_evaluation.py` 从 schema v2 NPZ/manifest 确定性复原任务场景并加载 Trainer deployment，输出网络闭环整体、分组与逐回合 JSON |
@@ -59,7 +59,8 @@ BEVTensor + VehicleState + GoalPose → 模型注册表（net-v0/v1/v2）→ Tra
 Trajectory + VehicleState → MPCController → ControlCmd[v, omega] → 平台执行器
 ClosedLoopEngine：TrajectorySource(Expert/Network) → MPC → 车辆模型滚动循环
   → 可选 SafetyShieldSource（完整扫掠审查 → 当前安全状态专家回退 → 每控制转移执行前复核）
-  → 终止（到达双阈值/完整矩形连续扫掠碰撞/安全停止/超时/振荡）→ EpisodeResult（含轨迹/转移干预统计）
+  → 可选 GeometricFilterSource（完整扫掠审查 → 不可行段按可达锥侧向投影 → 计划保持 → 安全截断）
+  → 终止（到达双阈值/完整矩形连续扫掠碰撞/安全停止/超时/振荡）→ EpisodeResult（含轨迹/转移干预统计与过滤统计）
 schema v2 NPZ + manifest + deployment checkpoint → 闭环评测编排
   → 复原 scene/occupancy/noise/BEV/selected goal → NetworkSource（目标通道随回合更新）→ 分组 JSON
   → 学习器闭环状态（固定步长偏离；碰撞时完整回溯最近的规划安全余量状态）→ 专家重规划与重新审计

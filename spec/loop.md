@@ -54,6 +54,20 @@
 - 结果：返回 (全局坐标 Trajectory, 耗时 ms)。
 - 验收：`tests/test_runtime.py::TestNetworkSourcePlumbing` 通过（局部→全局坐标变换正确性）。
 
+### `LOOP-FILTER-001`：推理侧轨迹级几何过滤
+
+- 前置：包装一个主轨迹源与一个 `SweptFootprintProjector`（要求净空 `M`、真实接触净空 0、
+  幅值上限、可达锥斜率上限）；车辆位姿与预测轨迹均为全局坐标。
+- 行为：主源输出轨迹后，按"完整矩形位姿 + 相邻位姿连续扫掠"审查；可行则**逐位不变**放行；
+  不可行则对该部分做**最小侧向平移**并迭代（位移场投影到 `|Δ侧移| ≤ slope × Δ弧长` 的可达锥上），
+  收敛后复核；仍不可行时按两级退化——① 继续跟随上一条已验证可行参考的尾段（计划保持），
+  ② 截断到最后一个可行位姿（必要时原地保持）。任何路径都**不放行不可行轨迹**，也不使用专家回退。
+- 结果：返回过滤后的全局轨迹；触发原因、干预次数与幅度写入 `meta["trajectory_filter"]`。
+- 异常与恢复：轨迹形状非法或含非有限值时以 `SafetyStopError` 结束当前回合（不静默放行）；
+  非 `SafetyStopError` 的异常保持向上传播。
+- 验收：`tests/test_trajectory_repair.py`（14 项）通过；`experiments/validation_matrix.py`
+  的 `E3f`/`E5f` 在 136 条共享场景上可复现。
+
 ### `LOOP-GROUND-001`：地基基线（M1 出口判据）
 
 - 前置：专家轨迹源 + CEM-MPC（collision_margin=0.15），矿卡 6×3m，随机采样无碰撞位姿对（距离 3~12m）。
@@ -78,6 +92,7 @@
 | `LOOP-TERM-001` | 双阈值判定 | `tests/test_runtime.py::TestTerminalChecker` | `runtime/termination.py::TerminalChecker` | unittest 通过 | ✅ |
 | `LOOP-FAIL-001` | 失败分类 | `tests/test_runtime.py` 各失败用例 | `runtime/termination.py::classify_oscillation`、`runtime/engine.py` | unittest 通过 | ✅ |
 | `LOOP-SRC-001` | 轨迹源接口 | `tests/test_runtime.py::TestNetworkSourcePlumbing` | `runtime/sources.py` | unittest 通过 | ✅ |
+| `LOOP-FILTER-001` | 可行轨迹逐位不变；不可行段侧向投影；失败退化为计划保持/安全截断且不放行不可行轨迹 | `tests/test_trajectory_repair.py`；`scripts/run_validation_suite.py --experiment E3f --experiment E5f` | `runtime/trajectory_repair.py::SweptFootprintProjector`、`runtime/sources.py::GeometricFilterSource` | 14 项 unittest 通过；136 条共享场景 E3 76.5%/5.9%、E5 73.5%/4.4%（原 69.9%/26.5%、72.1%/23.5%） | ✅ |
 | `LOOP-GROUND-001` | 专家+MPC ≥95% | `experiments/run_experiment.py` ground_baseline | 引擎全链路 | 197/200 成功（98.5%） | ✅ |
 | `LOOP-EVAL-001` | 当前 deployment 在原始任务场景中可复现闭环并输出分组报告 | `tests/test_closed_loop_evaluation.py`；`scripts/run_closed_loop.py --source network ...` | `experiments/closed_loop_evaluation.py`、`runtime/sources.py::NetworkSource`、`scripts/run_closed_loop.py` | 600/600 任务身份复原；263 项全量测试通过；34 val + 30 S9 分层闭环报告完成 | ✅ |
 

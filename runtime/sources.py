@@ -13,6 +13,7 @@ import numpy as np
 
 from interfaces import GoalPose, Trajectory, VehicleState
 from .safety import SafetyShieldStats, TrajectorySafetyChecker
+from .trajectory_repair import GeometricFilterStats, SweptFootprintProjector
 
 
 class SafetyStopError(RuntimeError):
@@ -254,6 +255,82 @@ class SafetyShieldSource:
 
     def safety_stats(self) -> dict:
         return self.stats.to_dict()
+
+
+class GeometricFilterSource:
+    """推理侧轨迹级几何过滤：只修正预测轨迹中不可行的部分。
+
+    与 ``SafetyShieldSource``（不可行就整条切到可信回退）的区别在于干预粒度：
+    本包装源把进入碰撞的部分**投影回可行域**，其余部分原样交给执行器，
+    因此不牺牲网络在可行区段的能力，也不需要回退规划器。
+
+    修不好时按两级退化，**都不放行不可行轨迹**：
+
+    1. **计划保持**：继续跟随上一条已被验证可行的参考的尾段。实测中"修不好"
+       绝大多数发生在车辆已经贴着障碍、近端净空无法再抬高的时刻，此时继续沿
+       上一条可行轨迹前进比原地停车安全，也不会把碰撞换成一堆停车振荡。
+    2. **安全截断**：没有可保持的参考时，截断到最后一个可行位姿（必要时原地保持）。
+    """
+
+    def __init__(self, primary, projector: SweptFootprintProjector) -> None:
+        self.primary = primary
+        self.projector = projector
+        self.stats = GeometricFilterStats()
+        self._last_feasible: Trajectory | None = None
+
+    def begin(self, start: VehicleState, goal: GoalPose) -> None:
+        self.stats = GeometricFilterStats()
+        self._last_feasible = None
+        self.primary.begin(start, goal)
+
+    def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
+        trajectory, elapsed_ms = self.primary.next_trajectory(state)
+        start_pose = np.asarray([state.x, state.y, state.yaw], dtype=np.float64)
+        try:
+            outcome = self.projector.repair(
+                start_pose, np.asarray(trajectory.points, dtype=np.float64)
+            )
+        except ValueError as exc:
+            # 网络给出形状错误或非有限值：明确拒绝，不静默放行。
+            self.stats.record_unusable_trajectory("unusable_prediction")
+            raise SafetyStopError(f"预测轨迹无法过滤：{exc}") from exc
+
+        if outcome.truncated:
+            persisted = self._persist(start_pose, trajectory)
+            if persisted is not None:
+                self.stats.record(outcome, persisted=True)
+                self._last_feasible = persisted
+                return persisted, elapsed_ms
+            self.stats.record(outcome)
+            return Trajectory(outcome.points, dt=trajectory.dt), elapsed_ms
+
+        self.stats.record(outcome)
+        if not outcome.modified:
+            self._last_feasible = trajectory
+            return trajectory, elapsed_ms
+        repaired = Trajectory(outcome.points, dt=trajectory.dt)
+        self._last_feasible = repaired
+        return repaired, elapsed_ms
+
+    def _persist(
+        self, start_pose: np.ndarray, fallback_shape_source: Trajectory
+    ) -> Trajectory | None:
+        """上一条可行参考中仍然可执行的那一段；不可用返回 None。"""
+        if self._last_feasible is None:
+            return None
+        tail = self.projector.feasible_tail(
+            start_pose, np.asarray(self._last_feasible.points, dtype=np.float64)
+        )
+        if tail is None:
+            return None
+        return Trajectory(tail, dt=fallback_shape_source.dt)
+
+    def filter_stats(self) -> dict:
+        return self.stats.to_dict()
+
+    def record_safety_stop(self) -> None:
+        """与 SafetyShieldSource 接口对齐：引擎在 SafetyStopError 路径上会回调。"""
+        self.stats.safety_stops += 1
 
 
 class NetworkSource:
