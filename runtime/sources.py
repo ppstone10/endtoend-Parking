@@ -20,6 +20,25 @@ class SafetyStopError(RuntimeError):
     """门禁无法提供安全控制时请求以 safety_stop 结束当前回合。"""
 
 
+def _plan_or_infeasible(planner, start: VehicleState, goal: GoalPose) -> Trajectory:
+    """调用规划器，并把"无可行轨迹"归一为 ``ValueError``（回合内不可行）。
+
+    规划器用 ``ValueError`` 表达"起点/目标与障碍冲突"，用 ``RuntimeError`` 表达
+    "搜索耗尽 / 找不到可行轨迹"（见 `planner/hybrid_astar.py`）。对引擎而言两者
+    都是**该回合不可行**，只有非规划类异常才是模型级故障：引擎按 ``ValueError``
+    做回合内归因，按 ``RuntimeError`` 判为模型级故障并向上传播。
+
+    不归一化时，一个难解任务会中断整批评测——实测在 V8 全场景协议上复现
+    （``E1r`` 专家滚动重规划在紧场景抛 ``RuntimeError`` 导致整批中止）。
+    ``HierarchicalPlanningSource`` 与 ``SafetyShieldSource`` 早已按
+    ``(RuntimeError, ValueError)`` 处理同一类失败，此处与其保持一致。
+    """
+    try:
+        return planner.plan(start, goal)
+    except RuntimeError as exc:
+        raise ValueError(f"专家规划无可行轨迹：{exc}") from exc
+
+
 class TrajectorySource(Protocol):
     """轨迹源接口：begin 初始化回合，next_trajectory 供给参考轨迹。"""
 
@@ -31,17 +50,25 @@ class TrajectorySource(Protocol):
 
 
 class ExpertSource:
-    """专家规划轨迹源：回合开始时规划一次，之后复用。"""
+    """专家规划轨迹源：首次取轨迹时规划一次，之后复用。
+
+    规划**延迟到** ``next_trajectory``：``begin`` 不在引擎的失败归因保护区内，
+    在 ``begin`` 里规划会让"某个任务专家无解"直接中断整批评测。
+    """
 
     def __init__(self, planner) -> None:
         self.planner = planner
         self._traj: Trajectory | None = None
+        self._goal: GoalPose | None = None
 
     def begin(self, start: VehicleState, goal: GoalPose) -> None:
-        self._traj = self.planner.plan(start, goal)
+        self._traj = None
+        self._goal = goal
 
     def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
-        assert self._traj is not None, "begin 未调用"
+        if self._traj is None:
+            assert self._goal is not None, "begin 未调用"
+            self._traj = _plan_or_infeasible(self.planner, state, self._goal)
         return self._traj, 0.0
 
 
@@ -60,7 +87,7 @@ class ReplanningExpertSource:
 
         assert self._goal is not None, "begin 未调用"
         started = time.perf_counter()
-        trajectory = self.planner.plan(state, self._goal)
+        trajectory = _plan_or_infeasible(self.planner, state, self._goal)
         return trajectory, (time.perf_counter() - started) * 1000.0
 
 

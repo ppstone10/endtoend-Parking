@@ -15,9 +15,15 @@ import numpy as np
 from controller import MPCController
 from interfaces import GoalPose, Trajectory, VehicleState
 from metrics import EpisodeResult
-from runtime import ClosedLoopEngine, TerminalChecker
+from planner import HybridAStarPlanner
+from runtime import (
+    ClosedLoopEngine,
+    ExpertSource,
+    ReplanningExpertSource,
+    TerminalChecker,
+)
 from runtime.termination import FAILURE_PLANNING, FAILURE_TIMEOUT
-from sim import MINING_DRILL_RIG, DifferentialDriveModel
+from sim import MINING_DRILL_RIG, DifferentialDriveModel, ParkingEnvironment, RectangleObstacle
 
 
 class _FailingSource:
@@ -111,6 +117,48 @@ class TestTrajectorySourceFailureHandling(unittest.TestCase):
             _engine(_BrokenSource()).run(
                 VehicleState(0.0, 0.0, 0.0), GoalPose(5.0, 0.0, 0.0)
             )
+
+
+class _UnreachablePlanner:
+    """规划器能构造、但任何目标都找不到可行轨迹（搜索耗尽）。"""
+
+    def plan(self, start, goal):
+        raise RuntimeError("Hybrid A* 未能找到可行轨迹")
+
+
+class TestExpertPlannerInfeasibility(unittest.TestCase):
+    """回归背景：规划器用 RuntimeError 表达"搜索耗尽/无可行轨迹"，与 ValueError 的
+    "起点或目标在障碍内"同属**回合内不可行**。旧实现让这个 RuntimeError 穿透整批
+    评测，在 V8 全场景协议的 E1r 上实测中断全部 300 条。"""
+
+    def test_expert_source_attributes_infeasible_plan_per_episode(self):
+        result = _engine(ExpertSource(_UnreachablePlanner())).run(
+            VehicleState(0.0, 0.0, 0.0), GoalPose(5.0, 0.0, 0.0)
+        )
+        self.assertIsInstance(result, EpisodeResult)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure, FAILURE_PLANNING)
+        self.assertIn("专家规划无可行轨迹", result.meta["planning_failure"])
+
+    def test_replanning_expert_source_attributes_infeasible_replan(self):
+        source = ReplanningExpertSource(_UnreachablePlanner())
+        source.begin(VehicleState(0.0, 0.0, 0.0), GoalPose(5.0, 0.0, 0.0))
+        with self.assertRaisesRegex(ValueError, "专家规划无可行轨迹"):
+            source.next_trajectory(VehicleState(0.0, 0.0, 0.0))
+
+    def test_real_planner_in_a_blocked_start_still_aborts_per_episode(self):
+        """真规划器 + 起点在障碍内：仍按回合归档为 planning_failure，不抛异常。"""
+        env = ParkingEnvironment(
+            world_size=20.0,
+            obstacles=[RectangleObstacle(-5.0, 5.0, -5.0, 5.0)],
+        )
+        planner = HybridAStarPlanner(env=env, vehicle_length=4.0, vehicle_width=2.0)
+        result = _engine(ExpertSource(planner)).run(
+            VehicleState(0.0, 0.0, 0.0), GoalPose(5.0, 0.0, 0.0)
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.failure, FAILURE_PLANNING)
+        self.assertIn("planning_failure", result.meta)
 
 
 if __name__ == "__main__":
