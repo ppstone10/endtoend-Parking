@@ -1,0 +1,57 @@
+# 第二轮廉价先导：改两处 —— ① 暖启动换成 v26（而不是 v22），② 恢复集补上 S4。
+#
+# 第一轮先导（net-v1-7scenes-dagger-pilot.yaml）结论：
+#   整体成功 45.0% → 57.7%、碰撞 52.3% → 41.3%，S5 0%→45.5%、S6 38.6%→86.4% —— 机制有效；
+#   但 S4 从 42.0% 掉到 22.0%，而先导的 S4 恰好等于暖启动源 v22 的 S4（22.0%）。
+#   → S4 的损失来自**初始化选择**，不是数据；本轮改为从 v26（S4 42.0%）暖启动。
+#   → 同时把 S4 纳入定向采集，数据侧也补上当前最大碰撞簇。
+#
+# 判定口径同第一轮：runs/validation/v34-protocol（300 条 / 7 场景）。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v36_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v26-targeted-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 4
+  samples: 100
+  patience: 3
+  snapshot_every_epochs: 4
+  final_selection_samples: 100
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/v36-pilot2-7scenes-dagger/net-v1

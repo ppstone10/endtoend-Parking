@@ -147,13 +147,22 @@ def _index_scene_names(indices: list[int], data_path: Path) -> dict[str, str]:
     return {str(index): str(metadata[index].get("scene_name")) for index in indices}
 
 
-def _load_protocol(output: Path) -> dict:
+def _load_protocol(output: Path, indices_file: str = "") -> dict:
     """在输出目录或其上级目录中查找已冻结的协议文件。
 
     冒烟/分批执行常把产物写到子目录（如 ``runs/validation/smoke``），
     此时复用上一级 ``runs/validation/protocol.json``，保证索引集一致。
+
+    **``--indices-file`` 指向的协议优先**：索引与数据集必须来自同一份协议。
+    否则把新协议的索引套在旧协议的数据上时，样本会因"无法复原"被静默丢弃，
+    产出一份条数变少、场景缺项、但看起来完全合理的报告（实测发生过一次：
+    300 条协议只剩 183 条、7 场景只剩 4 场景，S3/S5/S8 整段消失）。
     """
-    for candidate in (output, *list(output.parents)[:2]):
+    candidates: list[Path] = []
+    if indices_file:
+        candidates.append(Path(indices_file).resolve().parent)
+    candidates.extend([output, *list(output.parents)[:2]])
+    for candidate in candidates:
         path = candidate / "protocol.json"
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
@@ -248,13 +257,21 @@ def _screening_candidates(protocol: dict) -> list[dict]:
 
 
 def _run_suite(args: argparse.Namespace, output: Path) -> dict[str, dict]:
-    protocol = _load_protocol(output)
+    protocol = _load_protocol(output, args.indices_file)
     indices = (
         _load_indices(args.indices_file)
         if args.indices_file
         else _select_indices(protocol, smoke=args.smoke, screen=args.screen_samples)
     )
     data_path = protocol["data"]
+    # 把"用哪份协议、哪个数据集、多少条索引"打在每次运行开头：口径错配时
+    # 报告会安静地少掉一批样本，只有把这三项打出来才看得出来。
+    print(
+        f"协议数据：{data_path}\n"
+        f"评测索引：{len(indices)} 条（{Path(args.indices_file).name if args.indices_file else '协议内'}"
+        f"{'' if not args.smoke else f'，smoke {args.smoke}'}）",
+        flush=True,
+    )
     overrides = _parse_model_overrides(args.model_override, _PARSER)
     if args.screen_candidates:
         overrides = {

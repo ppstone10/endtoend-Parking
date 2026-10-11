@@ -1,0 +1,57 @@
+# 廉价先导：验证"补 S3/S5/S8 的 DAgger 恢复样本"能否把这三个零样本场景救回来。
+#
+# 与 v26 / v22 的关系：
+#   - 损失与超参抄 v26（终点位姿损失 1.0/10.0、endpoint alignment 0.5、累计停止监督）；
+#   - 数据换成 v8 七场景原始训练集 + 本轮定向采集的 S3/S5/S8 恢复集（合并端已按机动裁剪）；
+#   - 从 v22（已是七场景底座）暖启动，只训 15 epoch —— 这是"先导"相对"完整重训"的全部区别。
+#
+# 判定口径：新协议 runs/validation/v34-protocol（tracked_pivot_v8_3000/val.npz，300 条 / 7 场景）。
+# 先导只回答一个问题：S3/S5/S8 的成功率能否离开 0%。能则再启动完整场景扩充（30 epoch、从头训）。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v35_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v22-7scenes-no-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 3
+  samples: 80
+  patience: 3
+  snapshot_every_epochs: 3
+  final_selection_samples: 80
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 15
+  learning_rate: 0.0003
+  patience: 4
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 8
+  early_stopping_start_epoch: 8
+output:
+  directory: ../../runs/training/v35-pilot-7scenes-dagger/net-v1
