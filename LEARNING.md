@@ -120,3 +120,14 @@
 - **原因：** v34 协议 E5s 实测，同一模型、同一批 300 条、专家能力完全不变，仅把该分支从"终止回合"改为"最小风险降级"后：门禁由 78.3%/0.0%/回退失败 2 变为 **89.0%/0.0%/回退失败 0**，S3 **36.5%→80.8%**、S8 **45.5%→72.7%**。原先那些"安全停止"回合并非无解，只是安全层**提前放弃**：原地保持≤1 秒后在下一次重规划重新尝试，网络/专家往往就能给出可行轨迹。增益不是拖时间换的——时间/距离比 1.87→1.86、跟踪 RMS 不变、碰撞仍 0.0%，终点误差反而 1.00→0.59m。
 - **推论：** ① 专家单独跑得慢（E1r 在 S3 是 36/52 超时、0 碰撞）与"门禁上限"是两件事，别把前者当作后者的解释；② 记账必须把**专家能力缺口**（`expert_fallback_unavailable`/`_rejected`）与**退化发生次数**（`minimal_risk_reuses`/`_holds`）分开，否则改语义就等于掩盖缺口；③ `safety_stop` 只应保留为最后兜底。
 - **实现与契约：** `runtime/sources.py::SafetyShieldSource._minimal_risk_trajectory/_safe_tail/_hold_trajectory/minimal_risk_trajectory/transition_is_safe`、`runtime/safety.py::SafetyShieldStats`、`runtime/engine.py::ClosedLoopEngine.run`、`tests/test_runtime_safety.py`；见 `SAFE-SHIELD-003`（`spec/safety_training.md`）、`docs/acceptance_ledger.md` §2.8、`runs/validation/v34-protocol/gate-p0a2/`。
+
+## 输入分辨率不是学习式轨迹精度的下限成因；先分清"看不看得见"与"会不会累积"
+
+- **触发：** 闭环碰撞率高，且轨迹预测误差（ADE 0.27–0.47m）与要通过的间隙（0.232–0.30m）同量级。此时很容易把原因归到"BEV 0.25m/格 vs 0.232m 间隙""特征单元 2m""解码 320 步看不见障碍"这三条代码事实上，并据此去重建高分辨率数据集（1–2 天）或改造解码器输入。
+- **规则：** 在投入重建之前，先用两个**廉价且能否证**的探针分辨机制的归属：
+  - **误差–净空相关性**：若真是"看不见细几何"，误差必须随局部净空变小而**放大**；
+  - **反向粗化**：把输入分辨率**降低**若干倍再训同一配方。若"精度受输入细节限制"，粗化**必须**变差。
+  再按轨迹**相对位置**分箱看误差，若随推进单调上升而中位数平坦，则主因是**自回归复合（exposure bias）**，与分辨率、净空都无关。
+- **原因：** 先导1（E3 57.7%）在 v8 val 上实测：Spearman(净空, 误差) = **−0.012**（净空 0.2→1.0m 时误差中位反而 0.098→0.185m）；输入由 0.25m/格**粗化到 0.5m/格**（细节少 75%）后 ADE/FDE 由 0.3002/0.4411 变为 **0.2772/0.2577，更好**。而按相对位置分箱：误差均值 **0.197→0.251→0.275→0.359→0.490m**、P90 **0.319→1.008m**，中位数平坦 0.14–0.19m。**误差最大处正是终点段**，即任务精度要求最严处（S4 离墙 0.3m、S8 台心 ±0.2m）。这一条同时解释了此前所有现象：四种净空损失失败（只约束局部）、几何过滤只能把"撞"换成"停"（只修几何）、数据配比只能让能力换位（不改变复合速率）、专家几乎不碰撞（Hybrid A\* 不逐步展开，没有复合）。
+- **推论：** ① **粗化是比升采样更便宜的证伪方向**——`net-v1` 用 `AdaptiveAvgPool2d` 与空间尺寸无关的全连接，结构不用改、checkpoint 能直接暖启动，只需对既有 `bevs` 做池化，不必重建场景管线；② 判据不能只看总体 ADE，必须**同时看误差沿时域的斜率**，否则近端的好成绩会掩盖远端重尾；③ 对应的修法是输出参数化（相对位移/样条）、非自回归/并行解码、teacher forcing 退火到 0、多模态输出、缩短有效预测时域——而不是提高分辨率。
+- **实现与证据：** `runs/diagnostics/probe_error_vs_clearance.py`（0a）、`runs/diagnostics/build_coarse_bev.py`（0b 数据）、`configs/training/probe0b-{control025,coarse050}.yaml`（两组只差分辨率）；见 `docs/probe_representation_vs_precision.md`、`docs/acceptance_ledger.md` §2.9、`runs/training/probe0b-{control025,coarse050}/net-v1/`。

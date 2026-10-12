@@ -1,0 +1,47 @@
+# 探针 0b · 对照组：0.25m/格（既有数据），与粗化组只差 BEV 分辨率。
+#
+# 目的：判断"输入格子尺寸是否在限制轨迹精度"。粗化组把输入降为 0.5m/格，
+# 其余（初始化、数据量、配方、seed、epoch 数）与本法完全一致，因此两者的
+# 自由滚动 ADE 之差可归因到分辨率。
+#
+# 关闭闭环选型：本探针的判据是开环 ADE（训练过程中每轮的
+# history.val_rollout_ade_m），不需要闭环选型，省时并避免与分辨率相关的额外风险。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v35_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v35-pilot-7scenes-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: false
+training:
+  epochs: 15
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/probe0b-control025/net-v1
