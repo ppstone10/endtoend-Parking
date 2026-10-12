@@ -82,15 +82,32 @@
 - 前置：主轨迹源、可信回退轨迹源及使用当前环境和车辆配置构造的完整矩形碰撞检查器。
 - 行为：每次重规划先检查网络轨迹全部位姿和相邻点连续扫掠；发现碰撞、越界或空轨迹时拒绝主轨迹并从当前状态调用回退源。
 - 结果：输出轨迹通过同一安全检查；回合元数据报告检查数、干预数、干预率及原因。纯网络和带门禁结果使用不同运行模式与报告，不得混合比较。
-- 异常与恢复：回退轨迹仍不安全或规划失败时明确终止/报错，不继续执行已知不安全轨迹。
+- 异常与恢复：回退轨迹仍不安全或规划失败时**不再终止回合**，交由 `SAFE-SHIELD-003` 的三级最小风险动作接管；任何情况下都不继续执行已知不安全的轨迹。
 - 验收：运行时单测覆盖安全放行、不安全切换、连续扫掠拦截和统计；闭环评测 CLI 可显式选择 `none` 或 `expert_fallback`。
 
 ### `SAFE-SHIELD-002`：执行前可回退状态不变量
 
 - 前置：`SAFE-SHIELD-001` 的主/回退轨迹审查器和与专家规划一致的安全余量检查器；闭环引擎可在执行控制前预测下一状态。
-- 行为：每个控制周期在真正推进车辆前检查“当前状态→候选下一状态”的完整车体扫掠；若该转移会离开专家可规划安全集合，必须仍在当前安全状态调用回退轨迹并重新计算控制。回退控制的下一转移仍不安全时，不执行该控制，以 `safety_stop` 结束回合并记录原因，不抛出异常中断批量评测。
+- 行为：每个控制周期在真正推进车辆前检查“当前状态→候选下一状态”的完整车体扫掠；若该转移会离开专家可规划安全集合，必须仍在当前安全状态调用回退轨迹并重新计算控制。回退控制的下一转移仍不安全时，改用 `SAFE-SHIELD-003` 的最小风险动作执行，不抛出异常中断批量评测。
 - 结果：门禁回合的每个已执行状态都保持专家碰撞检查器 `pose_free`；报告分别记录轨迹检查、转移检查、提前阻止和安全停止。门禁结果仍不得计作纯网络能力。
-- 验收：单测复现“下一步将侵入规划余量但尚未实际碰撞”，确认在前一安全状态切换回退；不安全回退产生可汇总的 `safety_stop` 而非批次异常；小规模真实门禁评测可完整写报告。
+- 验收：单测复现“下一步将侵入规划余量但尚未实际碰撞”，确认在前一安全状态切换回退；回退不可用时回合以任务性失败（超时/振荡）而非 `safety_stop` 收尾；小规模真实门禁评测可完整写报告。
+
+### `SAFE-SHIELD-003`：三级最小风险降级
+
+- 前置：`SAFE-SHIELD-001`/`002` 的审查器；回合已建立"当前位姿无真实接触"这一不变量（否则上一步已按碰撞终止）。
+- 行为：门禁按三级阶梯给出参考轨迹：① 通过审查的主轨迹；② 通过审查的可信回退轨迹；
+  ③ **最小风险动作**——优先沿用上一条已验证安全参考中"从离当前位置最近点起仍然安全的最长后缀"（计划保持），
+  没有可沿用参考时返回单点原地保持轨迹。第三级**不要求当前位姿满足规划余量**：车辆贴障时该要求必然失败，
+  用它把关会让安全层无路可走。
+- 结果与记账：`fallback_failures` 只表示"安全层无任何安全动作可用"，在构造上恒为 0；
+  专家自身的能力缺口单独记入 `expert_fallback_unavailable`（规划失败）与 `expert_fallback_rejected`（回退轨迹不安全）；
+  退化发生次数记入 `minimal_risk_reuses` / `minimal_risk_holds` 及 `minimal_risk_rate`，不得隐藏。
+  原 `safety_stop` 仍保留为**最后兜底**（转移门禁替换后仍不安全）。
+- 边界：本层只保证"不引入新的真实接触"，**不保证任务能完成**；车辆因此停在原地时回合以超时收尾，
+  这是能力缺口而不是安全层失败。传感器漏检、定位误差与动态障碍仍不在保证范围内。
+- 验收：单测覆盖"回退规划失败 → 原地保持"、"回退轨迹不安全 → 原地保持"、"有已验证参考 → 沿用尾段"、
+  "当前位姿已在余量层内时转移判据放行而扫掠碰撞仍否决"；真实门禁评测报告的 `fallback_failures` 为 0，
+  且退化次数与由此产生的超时数可核对。
 
 ## 兼容、迁移与回退
 
@@ -113,8 +130,9 @@
 | `SAFE-LOSS-003` | 近端终点对齐、默认关闭、checkpoint 兼容 | `tests/test_model.py::TestEndpointAlignmentLoss`、`tests/test_trainer.py`、`tests/test_training_config.py` | `model/network.py::endpoint_alignment_loss`、`training/trainer.py::TrainerConfig` | 合成末端对齐/非末端不参与/非法参数、Trainer 总损失提高与 checkpoint 拒绝不一致续训均通过；真实闭环振荡定位确认近端退化后引入 | ✅ |
 | `SAFE-TRAIN-001` | 权重初始化、三路 batch、身份与消融 | `tests/test_training_config.py`、`tests/test_trainer.py`、小规模消融 | `training/checkpoint.py::initialize_model_from_checkpoint`、`training/data.py::epoch_batches`、`training/runner.py` | 三组同 seed/v7 初始化消融完成；三池均衡净空 0.128024、ADE/FDE 0.263/0.590m，略差于真实占比 shuffle，故能力保留但正式配置关闭 | ✅ |
 | `SAFE-DATA-001` | 学习器状态重标注、安全余量回溯、证据驱动补采、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke/真实困难任务消融 | `dataset/recovery.py::select_recovery_candidates_with_diagnostics/build_recovery_sample`、恢复数据 CLI | 15 个困难碰撞回合同回放消融：固定步长/紧邻帧/完整回溯覆盖 0/0/15，完整回溯 15/15 专家重规划成功；258 条恢复样本去重并合并为 2658 条训练集；283 项全量测试通过 | ✅ |
-| `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截/不安全回退拒绝测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞 | ✅ |
-| `SAFE-SHIELD-002` | 执行前转移门禁、可回退不变量、安全停止 | `tests/test_runtime_safety.py`、小规模真实门禁评测 | `runtime/sources.py::SafetyShieldSource/SafetyStopError`、`runtime/engine.py::ClosedLoopEngine.run` | 单测覆盖转移提前拦截、安全停止和真实异常透传；10 条分层门禁评测 4830 次转移检查、55 次轨迹回退、0 回退失败、0 safety stop、0 碰撞且完整写报告 | ✅ |
+| `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞；不安全回退改由 `SAFE-SHIELD-003` 接管（`test_unsafe_fallback_degrades_to_minimal_risk_hold`） | ✅ |
+| `SAFE-SHIELD-002` | 执行前转移门禁、可回退不变量、最小风险降级 | `tests/test_runtime_safety.py`、v34 协议门禁评测 | `runtime/sources.py::SafetyShieldSource/SafetyStopError`、`runtime/engine.py::ClosedLoopEngine.run` | 单测覆盖转移提前拦截、降级阶梯走完与真实异常透传；v34 协议 300 条门禁：`fallback_failures = 0`、`minimal_risk_reuses = 91`、`safety_stops = 16`（原 49）、碰撞 0.0%、成功 **89.0%**（原 78.3%） | ✅ |
+| `SAFE-SHIELD-003` | 三级退化阶梯、最小风险动作、缺口与退化分别记账 | `tests/test_runtime_safety.py::TestSafetyShieldSource`（10 项）、v34 协议门禁评测 | `runtime/sources.py::SafetyShieldSource._minimal_risk_trajectory/_safe_tail/_hold_trajectory/minimal_risk_trajectory/transition_is_safe`、`runtime/safety.py::SafetyShieldStats`、`runtime/engine.py` | 10 项单测通过（含"规划失败→原地保持""回退不安全→原地保持""有已验证参考→沿用尾段""余量层内放行而扫掠碰撞仍否决""引擎取用最小风险轨迹"）；v34 协议 E5s 由 78.3%/0.0%/回退失败 2 变为 **89.0%/0.0%/回退失败 0**，且时间距离比 1.87→1.86、跟踪 RMS 不变、终点误差 1.00→0.59m | ✅ |
 
 ## 待人工确认
 

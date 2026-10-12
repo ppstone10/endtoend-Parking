@@ -161,9 +161,24 @@ class ClosedLoopEngine:
                     if not self.source.transition_is_safe(
                         previous_state, proposed_state
                     ):
-                        self.source.record_safety_stop()
-                        safety_stop = True
-                        break
+                        # 替换参考通过轨迹审查，但控制器实际推进仍离开安全集合：
+                        # 按 SAFE-SHIELD-003 继续退到最小风险动作。不具备该能力的
+                        # 源保持原有的安全停止语义。
+                        minimal_risk = getattr(
+                            self.source, "minimal_risk_trajectory", None
+                        )
+                        if callable(minimal_risk):
+                            traj = minimal_risk(previous_state)
+                            self.executor.begin_trajectory(traj)
+                            proposed_state = self.executor.propose(
+                                previous_state, traj, self.mpc.dt
+                            )
+                        if not self.source.transition_is_safe(
+                            previous_state, proposed_state
+                        ):
+                            self.source.record_safety_stop()
+                            safety_stop = True
+                            break
             state = proposed_state
             collision = self._check_collision(previous_state, state)
             record.log(state, self.executor.last_cmd, traj, traj, collision)
