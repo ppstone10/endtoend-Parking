@@ -1,0 +1,57 @@
+# 隔离实验：只改 A（全场景恢复样本），容量与暖启动都保持。
+#
+# 背景：A+B 一起跑（v37 全场景恢复 + hidden_dim 256 从头训）失败——
+#   开环 ADE 0.4475 超过 0.40 准入线、闭环选型得分 14%/47%、推理 15.45ms 超出 NFR-05 的 <10ms。
+#   但那次同时改了"数据"和"容量+从头训练"两个变量，无法归因。
+#
+# 本 run 只改数据：hidden_dim 保持 128，从先导1（当前最佳，E3 57.7%）暖启动，
+# 用 v37 全场景恢复集训练 20 epoch。与前两轮先导的唯一差别是**恢复样本覆盖全部 7 个场景**，
+# 因此可以直接回答"场景间挤占是否源于恢复集只覆盖部分场景"。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v37_dagger_allscenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v35-pilot-7scenes-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 4
+  samples: 100
+  patience: 3
+  snapshot_every_epochs: 4
+  final_selection_samples: 100
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/v38-allscenes-warm128/net-v1

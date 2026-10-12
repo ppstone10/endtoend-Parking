@@ -1,0 +1,60 @@
+# A+B 路线：全场景恢复样本 + 提高模型容量，从头训练。
+#
+# 相对两轮先导的两处改动（其余配方严格不动）：
+#   A. 数据：恢复样本改为**全部 7 个场景**一起采（先导只补了 S3/S5/S8 或再加 S4），
+#      目标是消除"场景间能力挤占"——两轮先导在 S1/S2/S3/S5/S6 与 S4 上互有胜负，
+#      没有一个支配另一个，指向恢复集只覆盖部分场景导致的行为偏置。
+#   B. 容量：hidden_dim 128 → 256。该参数同时控制 CNN 最深特征层宽度、GRU 隐状态
+#      与全部解码投影（model/variants.py::MineParkingNetV1），所以是实打实的加容量。
+#
+# 注意：容量变了就不能暖启动（initialize_model_from_checkpoint 要求 model_config 完全一致），
+# 因此本run **从头训练**，用 30 epoch（v22 从零训练用的就是 30）。
+# 这也是交接文档"加网络层从未需要"这一结论的**首次正面检验**——该结论建立在
+# 4 场景问题上；7 场景时容量是否成为约束，正是本run要回答的。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 256
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v37_dagger_allscenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 5
+  samples: 100
+  patience: 3
+  snapshot_every_epochs: 5
+  final_selection_samples: 100
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+training:
+  epochs: 30
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 15
+  early_stopping_start_epoch: 15
+output:
+  directory: ../../runs/training/v37-full-7scenes-h256/net-v1
