@@ -48,7 +48,7 @@ from experiments.closed_loop_evaluation import (
 )
 from interfaces import GoalPose, Trajectory, VehicleState
 from metrics import EpisodeResult, summarize
-from metrics.rollout import CycleTracker, analyze_cycle_samples
+from metrics.rollout import CycleTracker, analyze_cycle_samples, cycles_from_record
 from planner import RectangleFootprintCollisionChecker
 from runtime import (
     ClosedLoopEngine,
@@ -318,34 +318,11 @@ def build_filter_projector(
 def _cycles_from_record(
     result: EpisodeResult, tracker: CycleTracker, *, reference_dt: float
 ) -> None:
-    """用引擎逐步记录重建重规划周期序列。
+    """兼容包装：实现已上移到 ``metrics.rollout.cycles_from_record``。
 
-    引擎的 ``EpisodeRecord`` 已逐步保存状态与当前参考轨迹快照，重规划点即
-    "参考轨迹快照发生变化"的步；据此把过程证据按周期切开，不需要引擎改动。
+    上移原因：闭环选型也需要同一套周期切分规则，规则必须唯一。
     """
-    record = result.record
-    if record is None or not record.states:
-        return
-    previous_plan: np.ndarray | None = None
-    cumulative = 0.0
-    previous_xy: tuple[float, float] | None = None
-    for step, (state, plan) in enumerate(zip(record.states, record.plans)):
-        if previous_xy is not None:
-            cumulative += float(
-                np.hypot(state.x - previous_xy[0], state.y - previous_xy[1])
-            )
-        previous_xy = (state.x, state.y)
-        changed = (
-            previous_plan is None
-            or plan.shape != previous_plan.shape
-            or not np.array_equal(plan, previous_plan)
-        )
-        if changed:
-            tracker.start_cycle(
-                state, Trajectory(np.array(plan, copy=True), dt=reference_dt)
-            )
-            previous_plan = plan
-        tracker.sample(state, path_length=cumulative, time_s=0.1 * step)
+    cycles_from_record(result, tracker, reference_dt=reference_dt)
 
 
 def run_validation_experiment(

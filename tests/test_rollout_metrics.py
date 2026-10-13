@@ -27,6 +27,50 @@ class TestLinearSlope(unittest.TestCase):
         self.assertIsNone(linear_slope([1.0]))
 
 
+class TestForwardFlipRate(unittest.TestCase):
+    """行进方向抖动率：2026-10-13 实测确认的失效机制签名。
+
+    成功回合 0–5%、振荡失败回合 30–38%，且在同一 checkpoint 内部即可分开成功与振荡。
+    """
+
+    def _run(self, per_cycle_delta: list[float]) -> dict:
+        goal = GoalPose(0.0, 0.0, 0.0)
+        tracker = CycleTracker()
+        tracker.begin(goal, _State(20.0, 0.0))
+        trajectory = Trajectory(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]), dt=0.2)
+        x = 20.0
+        path = 0.0
+        step = 0
+        for delta in per_cycle_delta:
+            tracker.start_cycle(_State(x, 0.0), trajectory)
+            for _ in range(2):
+                x -= delta  # delta<0 即远离目标（倒退）
+                path += abs(delta)
+                step += 1
+                tracker.sample(_State(x, 0.0), path_length=path, time_s=0.1 * step)
+        return analyze_cycle_samples(tracker)
+
+    def test_monotone_progress_never_flips(self):
+        report = self._run([1.0, 1.0, 1.0, 1.0])
+        self.assertEqual(report["forward_flip_rate"], 0.0)
+        self.assertEqual(report["backward_cycle_ratio"], 0.0)
+
+    def test_alternating_direction_flips_every_cycle(self):
+        report = self._run([1.0, -1.0, 1.0, -1.0])
+        self.assertAlmostEqual(report["forward_flip_rate"], 1.0)
+        self.assertAlmostEqual(report["backward_cycle_ratio"], 0.5)
+
+    def test_partial_alternative_gives_half(self):
+        report = self._run([1.0, 1.0, -1.0, -1.0])
+        # 相邻对符号序列 +,+,-,- → 1 次翻转 / 3 对
+        self.assertAlmostEqual(report["forward_flip_rate"], 1.0 / 3.0, places=4)
+
+    def test_zero_motion_cycles_are_excluded_from_pairs(self):
+        report = self._run([1.0, 0.0, 1.0])
+        # 中间周期净前进为 0，两对都不可比 → 无可用对
+        self.assertIsNone(report["forward_flip_rate"])
+
+
 class TestCycleTracker(unittest.TestCase):
     """目标固定在原点：状态 x 即距目标距离（x>0 表示在目标前方）。"""
 

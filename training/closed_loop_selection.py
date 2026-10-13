@@ -58,6 +58,12 @@ class ClosedLoopSelectionConfig:
     replan_every: int = 10
     control_seed: int = 0
     safety_mode: str = "none"
+    #: 选型判据。``success`` = 闭环成功率（历史行为，0/1 且样本少时方差大）；
+    #: ``flip_rate`` = 行进方向抖动率（连续量）。依据：2026-10-13 实测同一 checkpoint 内
+    #: 成功回合的前进翻转率为 0–5%、振荡失败回合为 30–38%，且各 checkpoint 的均值
+    #: （5.4% 对 12.4–18.7%）与闭环成绩有序对应；而成功率只有 0/1 取值，
+    #: 在 80–100 条样本上会出现相邻 checkpoint 0%↔65% 的跳变。
+    score_mode: str = "success"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +78,7 @@ class ClosedLoopSelectionConfig:
             "replan_every": self.replan_every,
             "control_seed": self.control_seed,
             "safety_mode": self.safety_mode,
+            "score_mode": self.score_mode,
         }
 
     def __post_init__(self) -> None:
@@ -93,6 +100,10 @@ class ClosedLoopSelectionConfig:
         if self.safety_mode not in {"none", "expert_fallback", "hierarchical"}:
             raise ValueError(
                 "closed_loop_selection.safety_mode 必须是 none/expert_fallback/hierarchical"
+            )
+        if self.score_mode not in {"success", "flip_rate"}:
+            raise ValueError(
+                "closed_loop_selection.score_mode 必须是 success 或 flip_rate"
             )
 
 
@@ -185,6 +196,11 @@ class ClosedLoopSelector:
         from controller import MPCController
         from dataset import build_task_components
         from metrics import summarize
+        from metrics.rollout import (
+            CycleTracker,
+            analyze_cycle_samples,
+            cycles_from_record,
+        )
         from planner import RectangleFootprintCollisionChecker
         from runtime import ClosedLoopEngine, TerminalChecker
         from sim import DifferentialDriveModel
@@ -199,8 +215,11 @@ class ClosedLoopSelector:
             working.to(self.device)
         except (AttributeError, RuntimeError):
             pass
+        # 周期切分需要参考轨迹的 dt；net-v1 把它持久化在模型属性上。
+        reference_dt = float(getattr(working, "dt", 0.0))
 
         results = []
+        cycle_reports: list[dict[str, Any]] = []
         planning_failures = 0
         for episode in episodes:
             planner, pipeline = build_task_components(
@@ -229,17 +248,38 @@ class ClosedLoopSelector:
                 **vehicle.collision_kwargs(),
             )
             result = engine.run(episode.state, episode.goal)
+            tracker = CycleTracker()
+            tracker.begin(episode.goal, episode.state)
+            cycles_from_record(result, tracker, reference_dt=reference_dt)
+            cycle_reports.append(analyze_cycle_samples(tracker))
             result.record = None
             if result.meta.get("planning_failure"):
                 planning_failures += 1
             results.append(result)
 
         summary = summarize(results)
+        success_rate = float(summary["success_rate"])
+        flip_rates = [
+            report["forward_flip_rate"]
+            for report in cycle_reports
+            if report.get("forward_flip_rate") is not None
+        ]
+        forward_flip_rate_mean = (
+            float(np.mean(flip_rates)) if flip_rates else None
+        )
+        if self.config.score_mode == "flip_rate":
+            # 翻转率越小越好；score 统一保持"越大越好"的语义。
+            # 无可用周期数据时取 -1.0（等价于"一直在抖"），即最差。
+            score = -forward_flip_rate_mean if forward_flip_rate_mean is not None else -1.0
+        else:
+            score = success_rate
         return {
-            "score": float(summary["success_rate"]),
+            "score": score,
+            "score_mode": self.config.score_mode,
             "samples": summary["episodes"],
-            "success_rate": float(summary["success_rate"]),
+            "success_rate": success_rate,
             "collision_rate": float(summary["collision_rate"]),
+            "forward_flip_rate_mean": forward_flip_rate_mean,
             "final_pos_err_mean": float(summary["final_pos_err_mean"]),
             "final_yaw_err_mean": float(summary["final_yaw_err_mean"]),
             "tracking_rms_mean": float(summary["tracking_rms_mean"]),
@@ -318,6 +358,7 @@ def select_best_checkpoint(
     device: str = "cpu",
     max_steps: int = 600,
     replan_every: int = 10,
+    score_mode: str = "success",
     destination_name: str = "best_closed_loop.pt",
 ) -> dict:
     """在全部候选 checkpoint 上做闭环排序，把最优权重落到 `destination_name`。
@@ -347,6 +388,7 @@ def select_best_checkpoint(
             samples=samples,
             max_steps=max_steps,
             replan_every=replan_every,
+            score_mode=score_mode,
         ),
         data_path=data_path,
         device=device,
@@ -367,14 +409,15 @@ def select_best_checkpoint(
         }
         ranking.append(row)
         if best_row is None or (
-            metrics["success_rate"],
+            metrics["score"],
             -metrics["collision_rate"],
-        ) > (best_row["success_rate"], -best_row["collision_rate"]):
+        ) > (best_row["score"], -best_row["collision_rate"]):
             best_row = row
             best_payload = torch.load(path, map_location="cpu", weights_only=False)
         print(
             f"  [final-selection] {path.name:20s} epoch {loaded.epoch:>3} "
-            f"成功 {metrics['success_rate']:6.1%} 碰撞 {metrics['collision_rate']:6.1%}",
+            f"成功 {metrics['success_rate']:6.1%} 碰撞 {metrics['collision_rate']:6.1%} "
+            f"抖动 {metrics['forward_flip_rate_mean'] if metrics['forward_flip_rate_mean'] is None else format(metrics['forward_flip_rate_mean'], '.1%')}",
             flush=True,
         )
 
@@ -391,7 +434,10 @@ def select_best_checkpoint(
                 "source_checkpoint": best_row["checkpoint"],
                 "candidates": len(ranking),
                 "samples": selector.config.samples,
+                "score_mode": selector.config.score_mode,
+                "score": best_row["score"],
                 "success_rate": best_row["success_rate"],
+                "forward_flip_rate_mean": best_row.get("forward_flip_rate_mean"),
             }
             temporary = destination.with_name(f"{destination.name}.tmp")
             torch.save(selected, temporary)
@@ -401,10 +447,11 @@ def select_best_checkpoint(
         torch.save(best_payload, temporary)
         temporary.replace(destination)
 
-    ranking.sort(key=lambda row: (-row["success_rate"], row["collision_rate"]))
+    ranking.sort(key=lambda row: (-row["score"], row["collision_rate"]))
     return {
         "candidates": len(ranking),
         "samples": selector.config.samples,
+        "score_mode": selector.config.score_mode,
         "selected_indices": selector.selected_indices,
         "best": best_row,
         "destination": str(destination),

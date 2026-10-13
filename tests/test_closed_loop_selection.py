@@ -39,6 +39,19 @@ class TestClosedLoopSelectionConfig(unittest.TestCase):
         self.assertEqual(payload["every_epochs"], 3)
         self.assertTrue(payload["enabled"])
 
+    def test_score_mode_defaults_to_success_and_rejects_unknown(self):
+        """选型判据：默认保持历史行为（成功率），非法值必须拒绝。"""
+        self.assertEqual(ClosedLoopSelectionConfig().score_mode, "success")
+        self.assertEqual(
+            ClosedLoopSelectionConfig(score_mode="flip_rate").score_mode, "flip_rate"
+        )
+        with self.assertRaises(ValueError):
+            ClosedLoopSelectionConfig(enabled=True, score_mode="magic")
+
+    def test_to_dict_includes_score_mode(self):
+        payload = ClosedLoopSelectionConfig(score_mode="flip_rate").to_dict()
+        self.assertEqual(payload["score_mode"], "flip_rate")
+
     def test_rejects_negative_snapshot_interval(self):
         with self.assertRaises(ValueError):
             ClosedLoopSelectionConfig(enabled=True, snapshot_every_epochs=-1)

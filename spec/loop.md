@@ -84,6 +84,22 @@
 - 兼容与回退：专家随机基线入口保持可用；旧的无 manifest 网络命令不再被视为可信场景评测。回退只需恢复脚本，数据、权重和运行时公共接口不迁移。
 - 安全与隐私：只运行本地二维仿真，不授权实车控制；T5 动态事件注入仍不属于本条范围，报告必须保留任务标签但不得把静态闭环结果描述为动态避障验证。
 
+### `LOOP-SELECT-001`：行进方向抖动指标与闭环选型判据
+
+- 前置：`LOOP-EVAL-001` 的闭环评测；`metrics.rollout` 的逐周期过程记录（每次重规划一个周期）。
+- 行为：逐周期分析必须给出两个方向类指标——**前进翻转率**（相邻重规划周期"净前进量"符号翻转的频率，
+  只统计两端都非零的相邻对，避免把原地不动计成翻转）与**倒退周期比**（净前进量为负的周期占比）。
+  闭环选型配置提供 `score_mode`：`success`（闭环成功率，历史默认）或 `flip_rate`（翻转率，
+  取负以保持"越大越好"的统一语义）。周期切分规则由 `metrics.rollout.cycles_from_record` 唯一定义，
+  评测与选型共用同一实现。
+- 结果：选型报告同时给出成功率、碰撞率与平均翻转率，并把 `score_mode` 写入报告元数据以便追溯；
+  排序在同分时按碰撞率升序打破平局。
+- 边界：默认仍为 `success`，不改变既有行为；翻转率**不是验收判据**，只用于选型与诊断。
+- 依据：2026-10-13 实测同一 checkpoint 内成功回合的前进翻转率为 0–5%、振荡失败回合为 30–38%，
+  且各 checkpoint 的均值（5.4% 对 12.4–18.7%）与闭环成绩有序对应；成功率只有 0/1 取值。
+- 验收：`tests/test_rollout_metrics.py::TestForwardFlipRate` 覆盖单调、交替、部分交替与零位移排除；
+  `tests/test_closed_loop_selection.py` 覆盖 `score_mode` 的默认值、合法值与非法值拒绝。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -95,6 +111,7 @@
 | `LOOP-FILTER-001` | 可行轨迹逐位不变；不可行段侧向投影；失败退化为计划保持/安全截断且不放行不可行轨迹 | `tests/test_trajectory_repair.py`；`scripts/run_validation_suite.py --experiment E3f --experiment E5f` | `runtime/trajectory_repair.py::SweptFootprintProjector`、`runtime/sources.py::GeometricFilterSource` | 14 项 unittest 通过；136 条共享场景 E3 76.5%/5.9%、E5 73.5%/4.4%（原 69.9%/26.5%、72.1%/23.5%） | ✅ |
 | `LOOP-GROUND-001` | 专家+MPC ≥95% | `experiments/run_experiment.py` ground_baseline | 引擎全链路 | 197/200 成功（98.5%） | ✅ |
 | `LOOP-EVAL-001` | 当前 deployment 在原始任务场景中可复现闭环并输出分组报告 | `tests/test_closed_loop_evaluation.py`；`scripts/run_closed_loop.py --source network ...` | `experiments/closed_loop_evaluation.py`、`runtime/sources.py::NetworkSource`、`scripts/run_closed_loop.py` | 600/600 任务身份复原；263 项全量测试通过；34 val + 30 S9 分层闭环报告完成 | ✅ |
+| `LOOP-SELECT-001` | 前进翻转率/倒退周期比可复算；`score_mode` 可选且默认不变 | `tests/test_rollout_metrics.py::TestForwardFlipRate`（4 项）、`tests/test_closed_loop_selection.py`（2 项）、`runs/diagnostics/verify_flip_rate_selection.py` | `metrics/rollout.py::analyze_cycle_samples/cycles_from_record`、`training/closed_loop_selection.py::ClosedLoopSelectionConfig/evaluate/select_best_checkpoint` | 新增 6 项单测通过；全仓 498 项无回归；4 个 checkpoint × 样本量 {20,40,60} 实测两种判据在三种样本量下选中同一 checkpoint（epoch0009，抖动 2.3%/3.5%/5.3% 对次优 12.4–18.7%） | ✅ |
 
 ## 待人工确认
 

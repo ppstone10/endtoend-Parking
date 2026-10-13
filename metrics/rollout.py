@@ -27,6 +27,7 @@ __all__ = [
     "CycleSample",
     "CycleTracker",
     "analyze_cycle_samples",
+    "cycles_from_record",
     "linear_slope",
 ]
 
@@ -198,6 +199,45 @@ def linear_slope(values: list[float]) -> float | None:
     return float(np.sum((x - x.mean()) * (y - y.mean())) / denominator)
 
 
+def cycles_from_record(
+    result: Any, tracker: CycleTracker, *, reference_dt: float
+) -> None:
+    """用引擎逐步记录重建重规划周期序列。
+
+    引擎的 ``EpisodeRecord`` 已逐步保存状态与当前参考轨迹快照，重规划点即
+    "参考轨迹快照发生变化"的步；据此把过程证据按周期切开，不需要引擎改动。
+
+    归属说明：本函数原先私有于 ``experiments.validation_matrix``，但闭环选型
+    （``training.closed_loop_selection``）也需要同一套切分规则。规则必须唯一，
+    否则两处的"周期"定义会漂移，故上移到本模块作为公共实现。
+    """
+    from interfaces import Trajectory
+
+    record = result.record
+    if record is None or not record.states:
+        return
+    previous_plan: np.ndarray | None = None
+    cumulative = 0.0
+    previous_xy: tuple[float, float] | None = None
+    for step, (state, plan) in enumerate(zip(record.states, record.plans)):
+        if previous_xy is not None:
+            cumulative += float(
+                np.hypot(state.x - previous_xy[0], state.y - previous_xy[1])
+            )
+        previous_xy = (state.x, state.y)
+        changed = (
+            previous_plan is None
+            or plan.shape != previous_plan.shape
+            or not np.array_equal(plan, previous_plan)
+        )
+        if changed:
+            tracker.start_cycle(
+                state, Trajectory(np.array(plan, copy=True), dt=reference_dt)
+            )
+            previous_plan = plan
+        tracker.sample(state, path_length=cumulative, time_s=0.1 * step)
+
+
 def analyze_cycle_samples(tracker: CycleTracker) -> dict[str, Any]:
     """汇总过程证据为滚动一致性报告。"""
     cycles = tracker.cycles()
@@ -220,6 +260,18 @@ def analyze_cycle_samples(tracker: CycleTracker) -> dict[str, Any]:
     monotonic = sum(1 for value in net_forwards if value > 0.0)
     net_headings = [c["net_heading_deg"] for c in cycles]
     heading_monotonic = sum(1 for value in net_headings if value > 0.0)
+    # 行进方向抖动：相邻重规划周期里"净前进量"符号翻转的频率。
+    # 这是 2026-10-13 实测确认的失效机制签名——成功回合 0–5%、振荡失败回合 30–38%，
+    # 且在同一 checkpoint 内部就能把两者分开（航向类指标做不到）。
+    # 只统计两端都非零的相邻对，避免把"原地不动"计成一次翻转。
+    flips = 0
+    comparable = 0
+    for previous, current in zip(net_forwards, net_forwards[1:]):
+        if previous == 0.0 or current == 0.0:
+            continue
+        comparable += 1
+        if (previous > 0.0) != (current > 0.0):
+            flips += 1
     progress = [c["progress_eff"] for c in cycles if c["progress_eff"] is not None]
     d_goal_series = [tracker.samples[0].d_goal_m] + [c["d_goal_end_m"] for c in cycles]
     yaw_series = [round(float(np.degrees(tracker.samples[0].yaw_err_rad)), 3)] + [
@@ -241,6 +293,10 @@ def analyze_cycle_samples(tracker: CycleTracker) -> dict[str, Any]:
         "goal_approach_monotonic_ratio": round(monotonic / len(cycles), 4),
         "heading_divergence_events": len(heading_divergences),
         "heading_approach_monotonic_ratio": round(heading_monotonic / len(cycles), 4),
+        "forward_flip_rate": (round(flips / comparable, 4) if comparable else None),
+        "backward_cycle_ratio": round(
+            sum(1 for value in net_forwards if value < 0.0) / len(cycles), 4
+        ),
         "progress_eff_median": (
             round(float(np.median(progress)), 4) if progress else None
         ),
