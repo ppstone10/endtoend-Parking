@@ -349,6 +349,32 @@ class TestTrainer(unittest.TestCase):
         # target=1、预测=0 时，末端加权 target 模仿应提高总损失
         self.assertGreater(total_on.item(), total_off.item())
 
+    def test_rejects_negative_progress_weight(self):
+        with self.assertRaisesRegex(ValueError, "progress_weight"):
+            TrainerConfig(
+                epochs=1, patience=1, checkpoint_dir="runs/x", progress_weight=-0.1
+            )
+
+    def test_checkpoint_rejects_changed_progress_semantics(self):
+        """单调逼近损失改变了监督语义，续训必须拒绝不一致的配置。"""
+        with tempfile.TemporaryDirectory() as temp:
+            Trainer(
+                _TinyVariableModel(),
+                TrainerConfig(
+                    epochs=1, patience=1, checkpoint_dir=temp, progress_weight=0.5
+                ),
+                model_name="same",
+            ).fit([_batch_with_goal(5.0)], [_batch_with_goal(5.0)])
+            changed = Trainer(
+                _TinyVariableModel(),
+                TrainerConfig(
+                    epochs=2, patience=1, checkpoint_dir=temp, progress_weight=1.0
+                ),
+                model_name="same",
+            )
+            with self.assertRaisesRegex(RuntimeError, "训练超参数"):
+                changed.load_checkpoint(Path(temp, "last.pt"))
+
     def test_checkpoint_rejects_changed_endpoint_alignment_semantics(self):
         with tempfile.TemporaryDirectory() as temp:
             config = TrainerConfig(

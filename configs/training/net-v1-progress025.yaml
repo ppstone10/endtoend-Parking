@@ -1,0 +1,66 @@
+# 训练侧改造第一轮：加入"目标单调逼近损失"，其余与先导1 完全一致。
+#
+# 依据（2026-10-13 实测）：
+# - 专家示范在"到目标距离"上 **100% 单调**（2476 训练 + 300 验证，逐点与按 1.0s 分段的
+#   趋近/远离交替次数全为 0）；
+# - 同一量正是闭环失效签名：成功回合的符号翻转率 0–5%，振荡失败回合 30–38%，
+#   且各 checkpoint 的均值（5.4% 对 12.4–18.7%）与闭环成绩有序对应。
+# → 惩罚"到目标距离反而变大"的步是**照抄示范结构**，不是强加先验。
+#
+# 与四种失败的净空损失的关键区别：本损失只要目标位姿，而它是网络输入之一，
+# 因此被约束的量**完全可观测**。
+#
+# 对照基线：先导1（同数据、同配方、无本损失）在 v34 协议上 E3 57.7%/41.3%，
+# 其出厂 checkpoint（epoch0009）的闭环抖动率 5.4%。判据是这两项是否同时改善。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v35_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v35-pilot-7scenes-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 5
+  samples: 80
+  patience: 3
+  snapshot_every_epochs: 5
+  final_selection_samples: 80
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+  score_mode: success
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  progress_weight: 0.25
+  progress_step_scale_m: 0.1
+  progress_tolerance_m: 0.005
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/v39-progress025/net-v1

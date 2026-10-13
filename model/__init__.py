@@ -4,6 +4,7 @@ from .network import (
     MineParkingNet,
     endpoint_alignment_loss,
     loss_fn,
+    progress_monotonicity_loss,
     terminal_pose_loss,
     variable_loss_fn,
 )
@@ -22,4 +23,5 @@ __all__ = [
     "variable_loss_fn",
     "endpoint_alignment_loss",
     "terminal_pose_loss",
+    "progress_monotonicity_loss",
 ]

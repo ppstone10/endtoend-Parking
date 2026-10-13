@@ -59,8 +59,32 @@
 - 兼容：默认权重 0，旧 YAML 无需任何改动；`endpoint_alignment_tail_points` 必须为正整数。
 - 验收：合成 pred/target/mask 覆盖末端对齐生效、非末端点不参与、非法 tail_points 拒绝；Trainer 合成 batch 验证启用权重后总损失提高；checkpoint 兼容字段拒绝权重不一致的续训。
 
-### `SAFE-TRAIN-001`：恢复状态安全微调
+### `SAFE-LOSS-004`：目标单调逼近监督
 
+- 前置：schema v2 数据集（提供局部坐标系下的目标位姿）与 Trainer schema v1。
+- 行为：可选损失项，权重 `training.progress_weight` 默认 0（不改变既有行为）。启用后，对预测轨迹
+  的相邻有效点计算"到目标距离"的变化量，对**距离变大**的步施加惩罚：`relu(Δd − tolerance)/reference_step`，
+  按有效相邻对取均值。`progress_step_scale_m` 默认 0.1（专家轨迹等弧长间距实测中位 0.0996m），
+  `progress_tolerance_m` 默认 0.005 用于吸收终点附近距离趋零时的数值噪声。
+- 依据：专家示范在"到目标距离"上 **100% 单调**——2476 条训练 + 300 条验证轨迹，无论逐点统计
+  还是按 1.0s 分段（对齐闭环重规划周期）统计，趋近/远离的符号交替次数**全部为 0**；
+  而同一量正是闭环失效签名（成功回合符号翻转率 0–5%、振荡失败回合 30–38%）。
+  因此该损失是**照抄示范结构**而非强加先验。
+- 边界：本损失只依赖**目标位姿**，而目标本就是网络输入之一，故被约束的量对网络完全可观测——
+  这是它与净空类损失（`SAFE-LOSS-001/002`，要求网络遵守其观测不到的几何）的本质区别；
+  本损失只用于训练，不改变闭环验收判据。
+- **实测结论（2026-10-13，权重 0.25，与先导1 同数据同配方暖启动）**：该损失**惰性**。
+  网络预测的后退步占比本来就只有 **0.76–3.02%**（专家 0%），加损失后为 0.76–2.95%，
+  与基线 0.79–3.02% **无差别**；闭环成功率亦未改善（最好 22.5% 对基线 52.5%）。
+  → 说明**跨重规划抖动不是"计划不单调"造成的**（单个计划已合格），因此**任何计划内损失都无法修它**；
+  该损失保留为可选能力，默认关闭，不作为推荐配方。
+- 兼容与回退：默认权重 0 等价于旧训练；启用后写入 trainer 兼容字段，权重或尺度不一致的续训被拒绝。
+- 验收：`tests/test_model.py::TestProgressMonotonicityLoss` 覆盖单调轨迹零损失、后退步被罚且随距离单调、
+  步长归一化（后退 0.1m 记 1.0）、容差吸收噪声、被 mask 屏蔽的点不参与、非法形状与参数拒绝；
+  `tests/test_trainer.py` 覆盖负权重拒绝与兼容字段不一致拒绝；`tests/test_training_config.py` 覆盖
+  YAML 解析与非法值拒绝。
+
+### `SAFE-TRAIN-001`：恢复状态安全微调
 - 前置：已有通过开环准入的 Trainer checkpoint，模型名称和模型配置与新运行完全一致；最终恢复数据保持 `original/stride/collision_backtrack` 来源身份。
 - 行为：`initialize_from` 只加载基线模型权重，不加载 optimizer、epoch、patience 或旧输出目录，与 `resume_from` 明确互斥；安全微调固定使用推理阶段的 teacher-forcing 终值。启用恢复平衡后，每个训练 batch 确定性包含一个普通恢复样本、一个碰撞回溯样本和其余原始专家样本，各池按 seed+epoch 独立重排并循环，验证集保持原分布且不重采样。
 - 结果：相同 seed、初始化、数据和配置生成相同 batch；恢复小类不会因总体 shuffle 被稀释；checkpoint/report 记录初始化身份和采样策略，不能伪装成断点恢复。
@@ -129,6 +153,7 @@
 | `SAFE-LOSS-002` | 连续净空、侵入梯度、真实损失下降 | `tests/test_safety_loss.py`、`scripts/evaluate_safety_ablation.py` | `training/safety.py::build_clearance_fields/SweptFootprintLoss` | 合成净空/边界/梯度测试通过；同一 val 统一复算 v7 1.102705→净空均匀 0.115092，下降 89.6%，ADE/FDE 0.228/0.572m | ✅ |
 | `SAFE-LOSS-003` | 近端终点对齐、默认关闭、checkpoint 兼容 | `tests/test_model.py::TestEndpointAlignmentLoss`、`tests/test_trainer.py`、`tests/test_training_config.py` | `model/network.py::endpoint_alignment_loss`、`training/trainer.py::TrainerConfig` | 合成末端对齐/非末端不参与/非法参数、Trainer 总损失提高与 checkpoint 拒绝不一致续训均通过；真实闭环振荡定位确认近端退化后引入 | ✅ |
 | `SAFE-TRAIN-001` | 权重初始化、三路 batch、身份与消融 | `tests/test_training_config.py`、`tests/test_trainer.py`、小规模消融 | `training/checkpoint.py::initialize_model_from_checkpoint`、`training/data.py::epoch_batches`、`training/runner.py` | 三组同 seed/v7 初始化消融完成；三池均衡净空 0.128024、ADE/FDE 0.263/0.590m，略差于真实占比 shuffle，故能力保留但正式配置关闭 | ✅ |
+| `SAFE-LOSS-004` | 单调逼近项正确性、默认关闭、兼容字段 | `tests/test_model.py::TestProgressMonotonicityLoss`（5 项）、`tests/test_trainer.py`（2 项）、`tests/test_training_config.py`（2 项）、`runs/diagnostics/check_progress_effect.py` | `model/network.py::progress_monotonicity_loss`、`training/trainer.py::TrainerConfig.progress_weight` | 9 项新单测通过；全仓 507 项无回归。**实测该损失在权重 0.25 下惰性**：网络预测的后退步占比本来就只有 0.76–3.02%（专家 0%），加该损失后为 0.76–2.95%（与基线 0.79–3.02% 无差别），闭环成功率亦未改善 → 保留为可选能力，**默认关闭，不作为推荐配方** | ⚠️ |
 | `SAFE-DATA-001` | 学习器状态重标注、安全余量回溯、证据驱动补采、元数据与续建 | `tests/test_recovery_dataset.py`、`scripts/build_recovery_dataset.py` smoke/真实困难任务消融 | `dataset/recovery.py::select_recovery_candidates_with_diagnostics/build_recovery_sample`、恢复数据 CLI | 15 个困难碰撞回合同回放消融：固定步长/紧邻帧/完整回溯覆盖 0/0/15，完整回溯 15/15 专家重规划成功；258 条恢复样本去重并合并为 2658 条训练集；283 项全量测试通过 | ✅ |
 | `SAFE-SHIELD-001` | 放行/拦截/回退/统计与 CLI 模式 | `tests/test_runtime_safety.py`、网络闭环 smoke | `runtime/safety.py`、`runtime/sources.py::SafetyShieldSource`、`experiments/closed_loop_evaluation.py` | 放行/扫掠拦截测试通过；真实 1 回合完成 6 次审查、0 误干预、0 碰撞；不安全回退改由 `SAFE-SHIELD-003` 接管（`test_unsafe_fallback_degrades_to_minimal_risk_hold`） | ✅ |
 | `SAFE-SHIELD-002` | 执行前转移门禁、可回退不变量、最小风险降级 | `tests/test_runtime_safety.py`、v34 协议门禁评测 | `runtime/sources.py::SafetyShieldSource/SafetyStopError`、`runtime/engine.py::ClosedLoopEngine.run` | 单测覆盖转移提前拦截、降级阶梯走完与真实异常透传；v34 协议 300 条门禁：`fallback_failures = 0`、`minimal_risk_reuses = 91`、`safety_stops = 16`（原 49）、碰撞 0.0%、成功 **89.0%**（原 78.3%） | ✅ |

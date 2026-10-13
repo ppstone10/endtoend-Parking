@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import torch
 
-from model import MineParkingNet, endpoint_alignment_loss, loss_fn
+from model import MineParkingNet, endpoint_alignment_loss, loss_fn, progress_monotonicity_loss
 from model.network import MineParkingNet as _Net
 
 
@@ -83,6 +83,70 @@ class TestEndpointAlignmentLoss(unittest.TestCase):
         mask = torch.ones(1, 8)
         with self.assertRaisesRegex(ValueError, "tail_points"):
             endpoint_alignment_loss(pred, target, mask, tail_points=0)
+
+
+class TestProgressMonotonicityLoss(unittest.TestCase):
+    """目标单调逼近损失：惩罚"到目标距离反而变大"的步。
+
+    依据专家示范在到目标距离上 100% 单调（实测 2476+300 条交替次数全为 0）。
+    目标固定在原点，故轨迹的 x 即到目标距离。
+    """
+
+    def _points(self, xs: list[float]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        pred = torch.zeros(1, len(xs), 3)
+        pred[0, :, 0] = torch.tensor(xs)
+        goal = torch.zeros(1, 3)
+        mask = torch.ones(1, len(xs))
+        return pred, goal, mask
+
+    def test_monotone_approach_has_zero_loss(self):
+        pred, goal, mask = self._points([3.0, 2.0, 1.0, 0.5])
+        self.assertAlmostEqual(
+            progress_monotonicity_loss(pred, goal, mask).item(), 0.0, places=6
+        )
+
+    def test_receding_step_is_penalized_and_scales_with_distance(self):
+        pred, goal, mask = self._points([3.0, 2.0, 2.1, 2.05])
+        small = progress_monotonicity_loss(pred, goal, mask)
+        far, goal2, mask2 = self._points([3.0, 2.0, 2.4, 2.05])
+        large = progress_monotonicity_loss(far, goal2, mask2)
+        self.assertGreater(small.item(), 0.0)
+        self.assertGreater(large.item(), small.item())
+        # 后退 0.1m、容差取 0 时恰好记 1.0（步长归一化尺度默认 0.1m）
+        single, goal3, mask3 = self._points([2.0, 2.1])
+        self.assertAlmostEqual(
+            progress_monotonicity_loss(
+                single, goal3, mask3, tolerance_m=0.0
+            ).item(),
+            1.0,
+            places=5,
+        )
+
+    def test_tolerance_absorbs_numerical_noise(self):
+        pred, goal, mask = self._points([1.0, 1.002])
+        self.assertAlmostEqual(
+            progress_monotonicity_loss(pred, goal, mask, tolerance_m=0.005).item(),
+            0.0,
+            places=6,
+        )
+
+    def test_masked_out_points_do_not_contribute(self):
+        pred, goal, mask = self._points([3.0, 2.0, 9.0])
+        mask[0, 2] = 0.0  # 第三点无效：它造成的"后退"不应计入
+        self.assertAlmostEqual(
+            progress_monotonicity_loss(pred, goal, mask).item(), 0.0, places=6
+        )
+
+    def test_rejects_bad_shapes_and_parameters(self):
+        pred, goal, mask = self._points([2.0, 1.0])
+        with self.assertRaisesRegex(ValueError, "goal"):
+            progress_monotonicity_loss(pred, torch.zeros(2, 3), mask)
+        with self.assertRaisesRegex(ValueError, "mask"):
+            progress_monotonicity_loss(pred, goal, torch.ones(1, 3))
+        with self.assertRaisesRegex(ValueError, "reference_step_m"):
+            progress_monotonicity_loss(pred, goal, mask, reference_step_m=0.0)
+        with self.assertRaisesRegex(ValueError, "tolerance_m"):
+            progress_monotonicity_loss(pred, goal, mask, tolerance_m=-1.0)
 
 
 class TestTrainingConvergence(unittest.TestCase):

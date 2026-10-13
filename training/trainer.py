@@ -52,6 +52,15 @@ class TrainerConfig:
     #: 终点位姿损失中的航向项权重。位置项以米²计、航向项以弧度²计，
     #: 默认 10.0 的等效关系：0.1rad(≈5.7°) 航向偏差 ≈ 0.3m 位置偏差。
     terminal_yaw_weight: float = 10.0
+    #: 目标单调逼近损失权重（>0 启用）：惩罚预测轨迹里"到目标距离反而变大"的步。
+    #: 依据：专家示范在到目标距离上 100% 单调（2476+300 条实测交替次数全为 0），
+    #: 而同一量在闭环里就是失效签名（成功回合翻转率 0–5%、振荡失败 30–38%）。
+    #: 该约束只依赖目标位姿——网络本就观测得到，故与反复失败的净空损失不同。
+    progress_weight: float = 0.0
+    #: 单调逼近损失的步长归一化尺度（米），默认取专家等弧长间距实测中位 0.0996m。
+    progress_step_scale_m: float = 0.1
+    #: 单调逼近损失的容差（米），吸收终点附近距离趋零时的数值噪声。
+    progress_tolerance_m: float = 0.005
 
     def __post_init__(self) -> None:
         if self.epochs <= 0:
@@ -129,6 +138,12 @@ class TrainerConfig:
             raise ValueError("balance_recovery_batches 必须为布尔值")
         if not math.isfinite(self.endpoint_alignment_weight) or self.endpoint_alignment_weight < 0.0:
             raise ValueError("endpoint_alignment_weight 必须为有限非负数")
+        if not math.isfinite(self.progress_weight) or self.progress_weight < 0.0:
+            raise ValueError("progress_weight 必须为有限非负数")
+        if not math.isfinite(self.progress_step_scale_m) or self.progress_step_scale_m <= 0.0:
+            raise ValueError("progress_step_scale_m 必须为有限正数")
+        if not math.isfinite(self.progress_tolerance_m) or self.progress_tolerance_m < 0.0:
+            raise ValueError("progress_tolerance_m 必须为有限非负数")
         if (
             isinstance(self.endpoint_alignment_tail_points, bool)
             or not isinstance(self.endpoint_alignment_tail_points, int)
@@ -278,6 +293,16 @@ class Trainer:
                 target,
                 mask,
                 yaw_weight=self.config.terminal_yaw_weight,
+            )
+        if self.config.progress_weight > 0.0:
+            from model import progress_monotonicity_loss
+
+            total = total + self.config.progress_weight * progress_monotonicity_loss(
+                points,
+                goal,
+                mask,
+                tolerance_m=self.config.progress_tolerance_m,
+                reference_step_m=self.config.progress_step_scale_m,
             )
         return total, collision_loss
 
@@ -445,6 +470,9 @@ class Trainer:
             "endpoint_alignment_tail_points",
             "terminal_pose_weight",
             "terminal_yaw_weight",
+            "progress_weight",
+            "progress_step_scale_m",
+            "progress_tolerance_m",
         }
         if any(
             stored_trainer.get(field) != current_trainer.get(field)

@@ -141,6 +141,53 @@ def endpoint_alignment_loss(
     return per_point.sum() / denominator
 
 
+def progress_monotonicity_loss(
+    pred: torch.Tensor,
+    goal: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    tolerance_m: float = 0.005,
+    reference_step_m: float = 0.1,
+) -> torch.Tensor:
+    """目标单调逼近监督：惩罚预测轨迹里"到目标距离反而变大"的步。
+
+    **依据（2026-10-13 实测）**：专家示范在"到目标距离"上是 **100% 单调**的——
+    2476 条训练 + 300 条验证轨迹，无论逐点统计还是按 1.0s 分段（对齐闭环重规划周期）
+    统计，趋近/远离的符号交替次数**全部为 0**。而同一个量在闭环里就是失效签名：
+    成功回合"到目标距离减少量"的符号翻转率为 0–5%，振荡失败回合为 30–38%，
+    且各 checkpoint 的均值与闭环成绩有序对应。因此本损失不是强加先验，
+    而是照抄示范结构。
+
+    **与既有净空损失的关键区别**：本损失只需要**目标位姿**，而目标本来就是网络输入，
+    所以被约束的量对网络**完全可观测**；净空损失要求网络遵守它观测不到的几何，
+    这是那四种损失反复失败的原因。
+
+    量纲：按 ``reference_step_m``（专家轨迹的等弧长间距，实测中位 0.0996m）归一化，
+    因此"一步后退了 0.1m"记 1.0，与其它损失量级可比；``tolerance_m`` 用来吸收
+    终点附近的数值噪声（距离趋零时步长本身很小）。
+    """
+    if pred.ndim != 3 or pred.shape[-1] != 3:
+        raise ValueError("progress_monotonicity_loss 要求 pred=(B,T,3)")
+    if goal.ndim != 2 or goal.shape != (pred.shape[0], 3):
+        raise ValueError("progress_monotonicity_loss 要求 goal=(B,3) 且与 pred 同批")
+    if mask.shape != pred.shape[:2]:
+        raise ValueError("progress_monotonicity_loss batch/mask 形状不一致")
+    if not math.isfinite(tolerance_m) or tolerance_m < 0.0:
+        raise ValueError("tolerance_m 必须为有限非负数")
+    if not math.isfinite(reference_step_m) or reference_step_m <= 0.0:
+        raise ValueError("reference_step_m 必须为有限正数")
+    if pred.shape[1] < 2:
+        return pred.sum() * 0.0
+
+    goal_xy = goal[:, None, :2]
+    distances = (pred[..., :2] - goal_xy).pow(2).sum(-1).clamp_min(0.0).sqrt()
+    delta = distances[:, 1:] - distances[:, :-1]
+    pair_mask = mask[:, 1:] * mask[:, :-1]
+    deficit = torch.relu(delta - tolerance_m) / reference_step_m
+    denominator = pair_mask.sum().clamp(min=1.0)
+    return (deficit * pair_mask).sum() / denominator
+
+
 def terminal_pose_loss(
     pred: torch.Tensor,
     target: torch.Tensor,

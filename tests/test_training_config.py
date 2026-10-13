@@ -99,6 +99,40 @@ class TestTrainingRunConfig(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "endpoint_alignment_weight"):
                 load_training_run_config(path)
 
+    def test_parses_progress_weight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "train.npz").touch()
+            (root / "val.npz").touch()
+            path = root / "progress.yaml"
+            path.write_text(
+                "model: {name: net-v1}\n"
+                "data: {train: train.npz, val: val.npz}\n"
+                "training: {epochs: 1, progress_weight: 0.5, "
+                "progress_step_scale_m: 0.12}\n"
+                "output: {directory: runs/test}\n",
+                encoding="utf-8",
+            )
+            config = load_training_run_config(path)
+            self.assertEqual(config.trainer.progress_weight, 0.5)
+            self.assertEqual(config.trainer.progress_step_scale_m, 0.12)
+
+    def test_rejects_invalid_progress_weight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "train.npz").touch()
+            (root / "val.npz").touch()
+            path = root / "bad-progress.yaml"
+            path.write_text(
+                "model: {name: net-v0}\n"
+                "data: {train: train.npz, val: val.npz}\n"
+                "training: {epochs: 1, progress_weight: -1.0}\n"
+                "output: {directory: runs/test}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "progress_weight"):
+                load_training_run_config(path)
+
     def test_rejects_unknown_fields(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "bad.yaml"
