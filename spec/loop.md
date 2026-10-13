@@ -100,6 +100,33 @@
 - 验收：`tests/test_rollout_metrics.py::TestForwardFlipRate` 覆盖单调、交替、部分交替与零位移排除；
   `tests/test_closed_loop_selection.py` 覆盖 `score_mode` 的默认值、合法值与非法值拒绝。
 
+### `LOOP-CONSIST-001`：跨重规划一致性迟滞（诊断能力）
+
+- 前置：`LOOP-SRC-001` 的轨迹源接口；轨迹源输出**世界系**参考轨迹（`NetworkSource` 已如此）。
+- 行为：可选包装源 `ConsistentPlanSource`，通过 `--consistency-hold-limit N`（N>0）启用。
+  每次重规划比较新计划与上一条计划（截去离当前位姿最近点之前的已执行段）的**净趋近方向**
+  （起终点到目标距离之差，死区 0.02m）；方向相反且上一条仍有 ≥3 点剩余段、且连续保持未达 N 次时，
+  继续执行上一条的剩余段。上一条剩余段不足或已达上限则放行新计划。统计区分
+  `direction_flips`/`held`/`released`/`checks`。
+- 结果：只改变参考轨迹的时间一致性，不做任何几何或安全判断；与 `safety_mode="none"` 组合时
+  即"纯网络 + 一致性迟滞"。
+- 边界：**不提供安全保证**，安全性仍由引擎真实接触判据与可选门禁负责；默认关闭（N=0 时既有行为
+  逐位不变）。
+- 依据与**实测结论（2026-10-13，v34 半协议 150 条，纯网络）**：该迟滞能压低抖动但**不改善成绩**——
+
+  | 配置 | 成功 | 碰撞 | 抖动 | 振荡失败 |
+  |---|---:|---:|---:|---:|
+  | epoch0012 基线 | 0.0% | 58.7% | 18.7% | 62 |
+  | epoch0012 + N=3 | 0.0% | **68.7%** | **14.6%** | 47 |
+  | epoch0012 + N=30（准开环） | 0.0% | 68.7% | ~14.6% | 47 |
+  | epoch0009 基线 | **58.0%** | 41.3% | 5.4% | 1 |
+  | epoch0009 + N=3 | 55.3% | 42.0% | — | 4 |
+
+  → 强行压抖动只把"振荡失败"换成"碰撞失败"，成功不变；好 checkpoint 本身已只有 5.4% 抖动。
+  **抖动是计划质量差的表征，不是杠杆**；因此该能力保留为诊断手段，**默认关闭、不推荐用于验收**。
+- 验收：`tests/test_plan_consistency.py` 8 项覆盖首次直通、同向放行、反向保持、达上限放行、
+  N=0 不保持、死区不计翻转、旧计划耗尽不空转、负上限拒绝。
+
 ## 追溯
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
@@ -112,6 +139,7 @@
 | `LOOP-GROUND-001` | 专家+MPC ≥95% | `experiments/run_experiment.py` ground_baseline | 引擎全链路 | 197/200 成功（98.5%） | ✅ |
 | `LOOP-EVAL-001` | 当前 deployment 在原始任务场景中可复现闭环并输出分组报告 | `tests/test_closed_loop_evaluation.py`；`scripts/run_closed_loop.py --source network ...` | `experiments/closed_loop_evaluation.py`、`runtime/sources.py::NetworkSource`、`scripts/run_closed_loop.py` | 600/600 任务身份复原；263 项全量测试通过；34 val + 30 S9 分层闭环报告完成 | ✅ |
 | `LOOP-SELECT-001` | 前进翻转率/倒退周期比可复算；`score_mode` 可选且默认不变 | `tests/test_rollout_metrics.py::TestForwardFlipRate`（4 项）、`tests/test_closed_loop_selection.py`（2 项）、`runs/diagnostics/verify_flip_rate_selection.py` | `metrics/rollout.py::analyze_cycle_samples/cycles_from_record`、`training/closed_loop_selection.py::ClosedLoopSelectionConfig/evaluate/select_best_checkpoint` | 新增 6 项单测通过；全仓 498 项无回归；4 个 checkpoint × 样本量 {20,40,60} 实测两种判据在三种样本量下选中同一 checkpoint（epoch0009，抖动 2.3%/3.5%/5.3% 对次优 12.4–18.7%） | ✅ |
+| `LOOP-CONSIST-001` | 反向保持、达上限放行、死区不计翻转、N=0 行为不变 | `tests/test_plan_consistency.py`（8 项）、`scripts/run_validation_suite.py --consistency-hold-limit` | `runtime/sources.py::ConsistentPlanSource/ConsistentPlanStats`、`experiments/validation_matrix.py` | 8 项单测通过；全仓 515 项无回归。实测**不改善闭环**：epoch0012 抖动 18.7%→14.6%、振荡失败 62→47，但碰撞 58.7%→68.7%、成功仍 0%；准开环（N=30）与 N=3 结果相同；epoch0009 由 58.0%→55.3% | ⚠️ |
 
 ## 待人工确认
 

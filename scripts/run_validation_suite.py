@@ -322,6 +322,8 @@ def _run_suite(args: argparse.Namespace, output: Path) -> dict[str, dict]:
                 filter_kwargs["filter_max_offset"] = args.filter_max_offset
             if args.filter_max_rounds is not None:
                 filter_kwargs["filter_max_rounds"] = args.filter_max_rounds
+            if args.consistency_hold_limit is not None:
+                filter_kwargs["consistency_hold_limit"] = args.consistency_hold_limit
             report = run_validation_experiment(
                 spec,
                 data_path=data_path,
@@ -517,6 +519,15 @@ def main() -> None:
     )
     parser.add_argument("--filter-max-offset", type=float, default=None)
     parser.add_argument("--filter-max-rounds", type=int, default=None)
+    parser.add_argument(
+        "--consistency-hold-limit",
+        type=int,
+        default=None,
+        help=(
+            ">0 时启用跨重规划一致性迟滞：新计划与上一条的净趋近方向相反时，"
+            "最多连续保持上一条计划该次数（0/未给出 = 关闭，沿用既有行为）"
+        ),
+    )
     parser.add_argument("--output", default="runs/validation")
     args = parser.parse_args()
 

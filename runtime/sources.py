@@ -7,6 +7,7 @@ NetworkSource 每次重规划时感知 → BEV → 网络推理（端到端主�
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 import numpy as np
@@ -435,6 +436,121 @@ class GeometricFilterSource:
     def record_safety_stop(self) -> None:
         """与 SafetyShieldSource 接口对齐：引擎在 SafetyStopError 路径上会回调。"""
         self.stats.safety_stops += 1
+
+
+@dataclass
+class ConsistentPlanStats:
+    """一致性迟滞的记账：翻转次数、保持次数、以及达到上限后被迫放行的次数。"""
+
+    checks: int = 0
+    direction_flips: int = 0
+    held: int = 0
+    released: int = 0
+
+    def to_dict(self) -> dict:
+        result = asdict(self)
+        result["held_rate"] = self.held / self.checks if self.checks else 0.0
+        result["flip_rate"] = (
+            self.direction_flips / self.checks if self.checks else 0.0
+        )
+        return result
+
+
+class ConsistentPlanSource:
+    """跨重规划一致性迟滞：方向相反时保持上一条计划，抑制抖动。
+
+    **动机（2026-10-13 实测）**：网络单条计划已经 97–99% 单调（专家 100% 单调），
+    但相邻两次重规划的"净趋近方向"有 12–24% 概率相反；闭环失败回合的前进翻转率是
+    30–38%，成功回合只有 0–5%。因此震荡是**跨重规划的时间不一致**，不是单条计划的质量
+    问题——这也是"计划内损失"反复无效的原因。
+
+    **做法**：每次重规划比较新计划与上一条计划（截去已被执行的部分）的净趋近方向；
+    若两者相反，且上一条仍有可执行的剩余段、且连续保持次数未超上限，则继续执行上一条。
+    这是抖动系统里的经典迟滞：把"来回翻"变成"翻一次就锁一会儿"。
+
+    与 `SafetyShieldSource` / `GeometricFilterSource` 的区别：后两者按**几何可行性**干预，
+    本包装源按**时间一致性**干预，不看障碍。因此它是纯诊断/机理验证用的推理侧改动，
+    不提供任何安全保证——安全性仍由引擎的真实接触判据（以及可选的门禁）负责。
+    """
+
+    def __init__(self, primary, *, hold_limit: int = 3) -> None:
+        if hold_limit < 0:
+            raise ValueError("hold_limit 不能为负")
+        self.primary = primary
+        self.hold_limit = int(hold_limit)
+        self.stats = ConsistentPlanStats()
+        self._goal: GoalPose | None = None
+        self._last_plan: np.ndarray | None = None
+        self._held = 0
+
+    def begin(self, start: VehicleState, goal: GoalPose) -> None:
+        self.stats = ConsistentPlanStats()
+        self._goal = goal
+        self._last_plan = None
+        self._held = 0
+        self.primary.begin(start, goal)
+
+    def next_trajectory(self, state: VehicleState) -> tuple[Trajectory, float]:
+        trajectory, elapsed_ms = self.primary.next_trajectory(state)
+        self.stats.checks += 1
+        new_plan = np.asarray(trajectory.points, dtype=np.float64)
+
+        if self._goal is None or self._last_plan is None:
+            self._last_plan = new_plan
+            return trajectory, elapsed_ms
+
+        remaining = self._remaining_plan(self._last_plan, state)
+        if remaining is None:
+            self._last_plan = new_plan
+            self._held = 0
+            return trajectory, elapsed_ms
+
+        new_sign = self._approach_sign(new_plan, state)
+        held_sign = self._approach_sign(remaining, state)
+        flipped = new_sign != 0 and held_sign != 0 and new_sign != held_sign
+        if flipped:
+            self.stats.direction_flips += 1
+        if flipped and self._held < self.hold_limit:
+            self.stats.held += 1
+            self._held += 1
+            return Trajectory(remaining, dt=trajectory.dt), elapsed_ms
+        if flipped:
+            self.stats.released += 1
+        self._held = 0
+        self._last_plan = new_plan
+        return trajectory, elapsed_ms
+
+    def consistency_stats(self) -> dict:
+        return self.stats.to_dict()
+
+    def _remaining_plan(
+        self, plan: np.ndarray, state: VehicleState
+    ) -> np.ndarray | None:
+        """截去已经执行过的部分：从离当前位姿最近的点起取后缀。"""
+        if plan.ndim != 2 or plan.shape[0] < 3:
+            return None
+        distance = np.hypot(plan[:, 0] - state.x, plan[:, 1] - state.y)
+        nearest = int(np.argmin(distance))
+        remaining = plan[nearest:]
+        return remaining if remaining.shape[0] >= 3 else None
+
+    def _approach_sign(self, plan: np.ndarray, state: VehicleState) -> int:
+        """净趋近方向：+1 表示末端比起点更靠近目标，-1 表示反而更远，0 表示无明确方向。
+
+        死区取 0.02m，避免"基本没动"的噪声被计成方向翻转。
+        """
+        if self._goal is None or plan.shape[0] < 2:
+            return 0
+        start_distance = float(
+            np.hypot(plan[0, 0] - self._goal.x, plan[0, 1] - self._goal.y)
+        )
+        end_distance = float(
+            np.hypot(plan[-1, 0] - self._goal.x, plan[-1, 1] - self._goal.y)
+        )
+        net = start_distance - end_distance
+        if abs(net) < 0.02:
+            return 0
+        return 1 if net > 0.0 else -1
 
 
 class NetworkSource:

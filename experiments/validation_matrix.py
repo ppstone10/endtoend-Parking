@@ -52,6 +52,7 @@ from metrics.rollout import CycleTracker, analyze_cycle_samples, cycles_from_rec
 from planner import RectangleFootprintCollisionChecker
 from runtime import (
     ClosedLoopEngine,
+    ConsistentPlanSource,
     ExpertSource,
     FootprintTrajectorySafetyChecker,
     GeometricFilterSource,
@@ -343,6 +344,7 @@ def run_validation_experiment(
     filter_required_margin: float = FILTER_REQUIRED_MARGIN_M,
     filter_max_offset: float = FILTER_MAX_OFFSET_M,
     filter_max_rounds: int = FILTER_MAX_ROUNDS,
+    consistency_hold_limit: int = 0,
     progress: Callable[[int, int, EpisodeBundle], None] | None = None,
 ) -> dict[str, Any]:
     """按实验组合执行闭环评测并返回报告。"""
@@ -420,6 +422,13 @@ def run_validation_experiment(
                 else None
             ),
         )
+        if consistency_hold_limit > 0:
+            # 跨重规划一致性迟滞（诊断用）：方向相反时保持上一条计划。
+            # 包在 `_build_source` 之外，因此作用于该源最终给出的参考轨迹；
+            # 与 safety_mode="none" 组合时即"纯网络 + 一致性迟滞"。
+            source = ConsistentPlanSource(
+                source, hold_limit=consistency_hold_limit
+            )
         collision_checker = RectangleFootprintCollisionChecker(
             restored.task.scene.env,
             vehicle_length=vehicle.length,

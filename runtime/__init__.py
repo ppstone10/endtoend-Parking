@@ -10,6 +10,8 @@ from .execution import (
 from .recorder import EpisodeRecord
 from .safety import FootprintTrajectorySafetyChecker, SafetyDecision, SafetyShieldStats
 from .sources import (
+    ConsistentPlanSource,
+    ConsistentPlanStats,
     ExpertSource,
     GeometricFilterSource,
     HierarchicalPlanningSource,
@@ -29,6 +31,8 @@ from .trajectory_repair import (
 
 __all__ = [
     "ClosedLoopEngine",
+    "ConsistentPlanSource",
+    "ConsistentPlanStats",
     "EpisodeRecord",
     "ExecutionError",
     "ExpertSource",
