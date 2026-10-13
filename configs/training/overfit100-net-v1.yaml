@@ -1,0 +1,48 @@
+# 小样本过拟合检验：同一架构（net-v1 h128）只在 100 条上训到收敛，看训练误差能否压到 ~0。
+#
+# 判读：
+# - 训练误差能压到远低于 0.05m → 架构**有**拟合能力 → 2476 条上停在 0.16m 是
+#   容量/优化/预算问题 → 方向是加大预算与容量；
+# - 即使在这 100 条上也停在 ~0.15m → **架构表征能力到顶** → 方向是改结构。
+#
+# data.val 特意指向**同一份 100 条**：这样每轮报告的验证指标就是训练误差，
+# 不需要额外脚本就能看到拟合是否收敛。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/overfit100_v8/sub100.npz
+  val: ../../data/task_dataset/overfit100_v8/sub100.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v35-pilot-7scenes-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: false
+training:
+  epochs: 150
+  learning_rate: 0.0003
+  patience: 500
+  min_delta: 0.0
+  device: cpu
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 149
+output:
+  directory: ../../runs/training/overfit100/net-v1
