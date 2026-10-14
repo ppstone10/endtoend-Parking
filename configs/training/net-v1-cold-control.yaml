@@ -1,0 +1,56 @@
+# 架构 A/B 的 v1 冷启动对照（对照 net-v2-spatial-cold.yaml，除模型名外完全一致）。
+#
+# 为什么需要这个对照：先导1（v1 的最好成绩 E3 57.7%/41.3%）是从
+# runs/training/v22-7scenes-no-dagger 的 best_closed_loop 暖启动的；
+# 而 net-v2 无法从 v1 权重初始化。若只跑 v2 冷启动再与"v1 暖启动"比较，
+# 冷启动劣势会与架构效应混淆。故本配置与 v2 配置逐字段对齐（同数据、同 epoch、
+# 同 seed、同损失、同闭环选型节奏），唯一差别是 model.name。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v35_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 5
+  samples: 80
+  patience: 3
+  snapshot_every_epochs: 5
+  final_selection_samples: 80
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+  score_mode: success
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/ab-v1-cold/net-v1

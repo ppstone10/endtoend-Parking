@@ -1,0 +1,68 @@
+# 架构 A/B 的 v2 冷启动（U-Net 跳连 + 目标条件交叉注意力）。
+#
+# 动机（结构性证据，非统计推断）：`net-v1` 的 BEV 编码器以
+# `nn.AdaptiveAvgPool2d(1)` 结尾（model/variants.py:140），解码器只能拿到
+# "整张 BEV 的全局平均 + 目标位姿 3 数 + 状态 2 数"——**没有任何空间通路知道障碍在哪**。
+# 这一行解释了既有的一整类否证结论（输入分辨率无影响、净空损失无效、
+# 误差与净空不相关），并解释了"碰撞时车到参考仅 0.042m"——参考轨迹自己穿障。
+#
+# `net-v2` 用 U-Net 跳连保留空间特征图，并用 (goal, state) 作 query 对特征图做
+# 交叉注意力（model/variants.py:235-252），使解码器拿到"与目标相关的空间特征"。
+# 该实现自 2026-08-27 起就在仓库里，**从未训练过**。
+#
+# 参照做法：ParkingE2E（地平线 2024，真车 4 车库平均成功率 87.8%）在 BEV 特征图上
+# 用 target query 融合目标车位特征，再由解码器自回归输出轨迹点——解码器是在
+# **空间特征图**上做注意力，而不是读一个全局池化向量。
+#
+# 本配置与 net-v1-cold-control.yaml **逐字段一致**，唯一差别是模型。
+model:
+  name: net-v2
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    base_channels: 32
+    attention_heads: 4
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v35_dagger_7scenes/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 5
+  samples: 80
+  patience: 3
+  snapshot_every_epochs: 5
+  final_selection_samples: 80
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+  score_mode: success
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 5
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/ab-v2-spatial/net-v2
