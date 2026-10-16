@@ -1,0 +1,66 @@
+# 血统续训一轮：暖启动先导1 + 3.3 倍碰撞状态恢复数据 + 逐轮闭环选型。
+#
+# 依据（2026-10-14 架构 A/B 结论，见 docs/acceptance_ledger.md §2.11）：
+# - 改架构（给 net-v1 加空间通路）**0 pt** 成功率提升（33.3% 对 33.3%）；
+# - 暖启动血统 **+24.7 pt**（冷启动 33.3% → 暖启动 58.0%），两者唯一差别是初始化血统；
+# - 本项目历史上每一次真实增益都来自"暖启动 + 数据迭代 + 逐轮闭环选型"
+#   （v16 11.0%→33.8%、v38→65%/28%、先导1 58.0%）。
+# → 本轮沿这条线推进，不动架构。
+#
+# 数据迭代：当前最优模型（先导1 deployment）的主要失败是**碰撞 41.3%**（不是振荡）。
+# 用 `scripts/build_recovery_dataset.py` 在全 7 场景、600 条源任务上补采碰撞回溯恢复样本：
+# 新采 898 条（上一轮 275 条，3.3 倍）；平衡后进训练集 518 条（上一轮 76 条，6.8 倍）。
+#
+# 选型节奏：好 checkpoint 的窗口很窄（先导1 的 epoch8 是 52.5%、epoch11 就是 0.0%），
+# 故本轮把闭环选型加密到**每轮一次**（every_epochs=1）并每轮存快照，
+# 用 60 条样本控制单次开销。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v40_dagger_collision/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v35-pilot-7scenes-dagger/net-v1/best_closed_loop.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 1
+  samples: 60
+  patience: 8
+  snapshot_every_epochs: 1
+  final_selection_samples: 60
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+  score_mode: success
+training:
+  epochs: 20
+  learning_rate: 0.0002
+  patience: 6
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: true
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/v40-lineage/net-v1
