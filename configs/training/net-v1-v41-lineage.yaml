@@ -1,0 +1,65 @@
+# 血统续训第二轮：暖启动 v40 epoch0007 + 新采碰撞恢复数据。
+#
+# 上一轮结果（docs/acceptance_ledger.md §2.12，全量 300 条 E3）：
+#   先导1 57.7%/41.3%  →  v40 epoch0007 62.3%/30.3%（成功 +4.6pt、碰撞 −11.0pt）。
+# 杠杆确认：架构 A/B 为 0pt（§2.11），血统 + 数据为 −11pt 碰撞。
+#
+# 本轮数据：用 v40 epoch0007 作 rollout 策略再采一轮碰撞回溯恢复样本——
+#   新采 712 条（上轮 898；**更少是因为策略更好、碰撞更少**，收益递减的自然信号）；
+#   平衡后进训练集 314 条。
+# 说明：未与 v40 的旧恢复集合并（合并断言拒绝重复）。这在暖启动血统里是可接受的——
+#   上一轮的数据知识已保存在被暖启动的权重中，血统通过权重累积而非重复携带数据。
+#
+# 选型：仍每轮一次，但**样本量从 60 提到 80**。上一轮实证了 60 条子集的排序与协议
+#   结果基本不相关（LEARNING.md）；本轮的最终挑选将按上一轮的做法，
+#   对候选在 v34 协议上补测后再定，而不是直接采用训练器选出的那个。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    target_channel: geometry
+    height_mode: semantic
+data:
+  train: ../../data/task_dataset/v41_dagger_collision/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+initialize_from: ../../runs/training/v40-lineage/net-v1/epoch0007.pt
+closed_loop_selection:
+  enabled: true
+  data: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  every_epochs: 1
+  samples: 80
+  patience: 8
+  snapshot_every_epochs: 1
+  final_selection_samples: 80
+  max_steps: 600
+  replan_every: 10
+  safety_mode: none
+  score_mode: success
+training:
+  epochs: 20
+  learning_rate: 0.0002
+  patience: 6
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: true
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/v41-lineage/net-v1
