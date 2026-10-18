@@ -111,6 +111,14 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 python scripts/run_closed_loop.py --source network --data data/task_dataset/tracked_pivot_v7_3000/val.npz --model runs/training/v9-safety-v1/net-v1/deployment.pt --samples 34 --safety-mode expert_fallback --output runs/closed-loop/v9-safety-v1/net-v1/val-shield/report.json
 ```
 
+对已完成的无干预 E5 报告，可回放失败并保存真实初态、MPC 实际参考窗口、控制命令、网络参考、起始/末次 BEV 和碰撞前后状态。诊断不改变原算法，会检查回放结果是否匹配基线；输出目录须尚无最终诊断报告。
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/diagnose_closed_loop_failures.py --baseline-report runs/validation/live-20261018-170806/full/E5/report.json --scenes S8_weigh_station --render --output runs/diagnostics/failure-replay-s8
+```
+
+省略 `--scenes` 可回放全部失败；机制分类仅作候选解释，参考窗口安全不代表运动学可跟踪。后续自主闭环攻坚按 [执行计划](docs/closed_loop_acceptance_plan.md) 推进。
+
 ## 目录结构
 
 ```
