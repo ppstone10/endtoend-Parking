@@ -76,6 +76,11 @@ class TestPrefixKinematics(unittest.TestCase):
 
 
 class TestJointSelection(unittest.TestCase):
+    def test_experimental_controller_report_is_rejected(self):
+        report = {"probe": {"kind": "diagnostic_controller_counterfactual"}}
+        with self.assertRaisesRegex(ValueError, "控制协议"):
+            compare_reports(report, report)
+
     def test_zero_collision_with_no_success_is_not_admitted(self):
         decision = assess_candidate_metrics({"success_rate": 0.66, "collision_rate": 0.28}, {"success_rate": 0, "collision_rate": 0})
         self.assertEqual(decision["status"], "tradeoff_or_regression_not_admitted")

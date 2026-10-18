@@ -126,7 +126,13 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 & 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/analyze_prefix_kinematics.py --baseline-report runs/validation/live-20261018-170806/full/E5/report.json --output runs/diagnostics/prefix-paired.json
 ```
 
-使用 `scripts/compare_selection_candidates.py --baseline <基线报告> --candidate <候选报告> --output <比较.json>` 对同协议无干预 E5 报告联合检查成功与碰撞门槛；该工具不修改权重，选型过线仍需原完整主协议确认。
+使用 `scripts/compare_selection_candidates.py --baseline <基线报告> --candidate <候选报告> --output <比较.json>` 对同协议无干预 E5 报告联合检查成功与碰撞门槛；该工具不修改权重，选型过线仍需原完整主协议确认。实验性控制器报告被拒绝，不能混入固定控制协议的模型选型。
+
+求解器机制实验可使用以下独立入口；`--candidate` 可选 `baseline`、`incumbent`（保留已找到的低代价解）、`correlated`（仅使用时间相关采样）。输出目录必须不存在。省略索引文件表示完整基线索引，须先通过小规模可信改善判断；控制器候选不是原主协议验收，也不证明网络学习能力提升。
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/probe_mpc_solver.py --baseline-report runs/validation/live-20261018-170806/full/E5/report.json --indices-file runs/validation/independent-acceptance/p2-regression/protocol.json --candidate incumbent --output runs/diagnostics/mpc-incumbent-regression
+```
 
 ## 目录结构
 

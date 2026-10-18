@@ -33,6 +33,8 @@ def assess_candidate_metrics(baseline: dict, candidate: dict) -> dict:
 
 def compare_reports(baseline: dict, candidate: dict) -> dict:
     for report in (baseline, candidate):
+        if report.get("probe", {}).get("kind") == "diagnostic_controller_counterfactual" or report.get("protocol", {}).get("controller_candidate") not in (None, "baseline"):
+            raise ValueError("实验控制器反事实不属于固定控制协议，不能作为模型选型准入")
         if report.get("status") != "completed" or report["experiment"]["name"] != "E5" or report["experiment"]["safety_mode"] != "none":
             raise ValueError("联合选型只接受已完成的无干预 E5")
         if report["overall"]["reconstruct_failures"] != 0:
