@@ -119,6 +119,15 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 
 省略 `--scenes` 可回放全部失败；机制分类仅作候选解释，参考窗口安全不代表运动学可跟踪。后续自主闭环攻坚按 [执行计划](docs/closed_loop_acceptance_plan.md) 推进。
 
+独立选型数据沿用原场景分层、使用新 seed，并对已知训练/恢复任务身份去重；只用于 checkpoint 选型，不替代 S9 最终测试。构建可用相同参数续建，参数或排除来源变化需新目录。
+
+```powershell
+& 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/build_selection_dataset.py --template data/task_dataset/tracked_pivot_v8_3000/val.npz --exclude-root data/task_dataset --exclude-root runs/validation --output data/task_dataset/independent_selection_v1 --seed 2026101801
+& 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/analyze_prefix_kinematics.py --baseline-report runs/validation/live-20261018-170806/full/E5/report.json --output runs/diagnostics/prefix-paired.json
+```
+
+使用 `scripts/compare_selection_candidates.py --baseline <基线报告> --candidate <候选报告> --output <比较.json>` 对同协议无干预 E5 报告联合检查成功与碰撞门槛；该工具不修改权重，选型过线仍需原完整主协议确认。
+
 ## 目录结构
 
 ```
