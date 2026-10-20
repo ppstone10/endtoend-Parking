@@ -128,11 +128,47 @@ python scripts/run_closed_loop.py --source network --data data/task_dataset/trac
 
 使用 `scripts/compare_selection_candidates.py --baseline <基线报告> --candidate <候选报告> --output <比较.json>` 对同协议无干预 E5 报告联合检查成功与碰撞门槛；该工具不修改权重，选型过线仍需原完整主协议确认。实验性控制器报告被拒绝，不能混入固定控制协议的模型选型。
 
+当前闭环收益出口[LT14固定R0/R2e2完整独立对照](docs/long_tasks/LT-20261020-14-closed-loop-benefit.md)已完成并[独立复核](runs/validation/closed-loop-benefit-20261020-v1/results/independent-review.md)：选型成功200→213、碰撞85→79，有真实收益但不足且S4/S5退化，不晋升/部署/扩大主300或追加旧配方。入口`scripts/validate_closed_loop_benefit.py`保留作可复现记录，不重跑或扫参；71.0%/26.3%不是原主300成绩，原部署仍68.3%/25.7%。
+
 求解器机制实验可使用以下独立入口；`--candidate` 可选 `baseline`、`incumbent`（保留已找到的低代价解）、`correlated`（仅使用时间相关采样）。输出目录必须不存在。省略索引文件表示完整基线索引，须先通过小规模可信改善判断；控制器候选不是原主协议验收，也不证明网络学习能力提升。
 
 ```powershell
 & 'D:\conda\envs\endtoend-parking\python.exe' -B scripts/probe_mpc_solver.py --baseline-report runs/validation/live-20261018-170806/full/E5/report.json --indices-file runs/validation/independent-acceptance/p2-regression/protocol.json --candidate incumbent --output runs/diagnostics/mpc-incumbent-regression
 ```
+
+长任务由用户手动执行。恢复数据配比双臂训练及 [8组69条闭环配对](docs/long_tasks/LT-20261019-01-recovery-balance-regression.md) 均已完成并核验，没有候选通过扩大门槛；本对照停止，未替换部署权重。原 [训练计划](docs/long_tasks/LT-20261018-01-recovery-balance-ab.md) 保留追溯。`scripts/prepare_recovery_balance_ab.py` 只写新任务的数据/配置；`scripts/train_fixed_threshold.py` 用固定父阈值保存逐轮快照，支持显式resume，不自动校准、部署或启动闭环评测。默认训练入口行为不变。
+
+续训退化调查确认了归一化yaw标签与普通实数航向损失不一致。训练配置新增显式 `yaw_error_mode: wrapped`（最短角差），默认 `raw` 保留历史行为，禁止跨模式恢复优化器。[W0/W1训练](docs/long_tasks/LT-20261019-02-yaw-loss-ab.md) 与 [8组69条闭环](docs/long_tasks/LT-20261019-03-yaw-loss-regression.md) 已完成并独立核验，W0逐轮/逐回合复现旧R2；W1四轮未降低碰撞、均未通过联合筛选，本单变量停止，不追加训练、不扩大300条、不部署。下一步先诊断真实失效状态与实际MPC窗口。由于执行代码已变，旧冻结计划会拒绝重跑/续跑；不要改旧manifest绕过。
+
+分层诊断入口 `scripts/diagnose_reference_execution.py` 必须显式指定任务索引，保存原预测、MPC实际窗口/控制序列和真实推进，分别检查窗口内部、状态连接和执行风险，不改变控制器。已完成S4/S8的7条任务×3模型共21回放；[诊断与训练方向](runs/diagnostics/reference-execution-20261019/analysis.md)表明参考危险与执行偏离可先后叠加，下一步先验证训练域恢复标签在固定MPC下可执行，不直接重训。需要批量长诊断或训练时仍先交人工运行计划。
+
+训练域跨重规划[12源任务验证](docs/long_tasks/LT-20261019-04-recovery-execution-gate.md)已完成，网络后缀精确复现；S4专家安全恢复6/6、S8严格余量通过0/6且缺成功对照，不进入训练。后续[参考兼容性诊断](runs/diagnostics/s8-reference-compatibility-20261019-v2/analysis.md)确认原求解近似误差。用户同意离线求解器试验，首版[69条双臂](docs/long_tasks/LT-20261019-05-mpc-candidate-regression.md)已完成并联合失败，停止该候选；原MPC/默认入口不变，不训练、不部署。新代码全集身份变化后不要改旧hash续跑，使用新冻结配置。
+
+上一候选保留版和当前搜索样本方案的69条双臂均已完成且未通过联合门槛，全部停止；[LT-20261019-06](docs/long_tasks/LT-20261019-06-mpc-search-best-regression.md)保留结果。原MPC、上一版代码和模型均不变。
+
+训练域参考更新验证入口`scripts/validate_reference_updates.py`观察同状态对齐窗口，并从复制的热启动/RNG先精确复现正常后缀，再仅延迟一次参考更新，随后恢复网络重规划。[LT-20261019-07](docs/long_tasks/LT-20261019-07-reference-update-stability.md)正式24源已完成：19对完整后缀复现，605次更新有13次规划/2次接触安全回退，延迟没有改变7成功/12碰撞分类。机制覆盖满足但不代表稳定或可执行；[独立复核](runs/diagnostics/reference-update-stability-20261019-v1/results/agent-audit.md)区分首次回退与分叉错位、S8首次重规划前执行偏离。停止重跑原计划，不自动训练或部署。
+
+事件对齐入口`scripts/probe_reference_events.py`的[LT-20261019-08](docs/long_tasks/LT-20261019-08-reference-event-probe.md)11源正式验证已完成并[独立复核](runs/diagnostics/reference-event-probe-20261019-v1/results/agent-audit.md)：7全程事件组正常/延迟均2成功5碰撞，专家一次恢复#1455却丢失2成功对照；S4专家前10步均不失余量，退化在恢复网络后。S8初态专家仅1/4保持前10步余量，其余安全窗口仍执行越界。短窗不作全程标签，不重跑旧计划、不直接训练、不改默认MPC。
+
+连续恢复前置入口`scripts/validate_recovery_compatibility.py`的[LT-20261020-09](docs/long_tasks/LT-20261020-09-s4-continuous-recovery.md)六源已完成并[独立复核](runs/diagnostics/recovery-compatibility-20261020-v3/results/agent-audit.md)：四恢复源仅1559/1441严格通过，1298到达但损失3步余量，1455执行越界后于相对step50重规划失败；两教师成功对照严格到达。53条已应用专家参考均几何安全，但两首事件安全实际窗口仍执行越界，说明原MPC兼容性也限制S4。未过4/4数据门槛、不生成训练集或开训；学生保留未评估，S8失败cost候选继续停止，原MPC/模型不改。
+
+原代价求解精度对照入口`scripts/compare_cem_polishing.py`的[LT-20261020-10](docs/long_tasks/LT-20261020-10-cem-polishing.md)六源四分支已完成并[独立复核](runs/diagnostics/cem-polishing-ab-20261020-v1/results/agent-audit.md)：精修教师6/6严格成功，但纯网络从2成功/4碰撞退为1成功/5碰撞，#1334丢失，联合门槛失败。其危险窗口先于实际越界；同状态下精修也出现cost更低而首步不安全，低cost不是安全保证。停止扩大、不直接训练或部署，默认控制器不改；教师可执行不等于原MPC监督可执行。
+
+训练前停点对齐入口`scripts/audit_terminal_alignment.py`的[LT-20261020-11](docs/long_tasks/LT-20261020-11-terminal-alignment.md)原train2400条已完成并[独立复核](runs/diagnostics/terminal-alignment-train-20261020-v1/results/agent-audit.md)：部署点达标1144、错停但完整预测有联合点920、无联合点336。错停中147条只在真值长度之外有合格点；无联合点中179条位置/航向合格时刻错开。结果仅诊断，不能当闭环成绩或直接改成oracle停点标签；不训练或改阈值、不绕过原MPC标签兼容性。
+
+独立停止头入口`scripts/train_frozen_stop_head.py`的[LT-20261020-12](docs/long_tasks/LT-20261020-12-frozen-stop-head.md)两臂20轮已完成并[独立复核](runs/training/frozen-stop-head-ab-20261020-v1/results/agent-audit.md)：40个checkpoint仅改变129参数停止头，原2400自由轨迹与LT11一致，但部署停点开环合格数由父1144降为guided774/free184。free平均BCE下降同时前缀误触发增加，目标与首次停止/位姿验收不一致；候选失败，停止扩大、不扫epoch/阈值、不进入闭环或部署，默认模型/MPC保持原状。
+
+后续[停止目标短审计](runs/diagnostics/stop-objective-audit-20261020-v2/summary.md)已完成：`scripts/audit_stop_objectives.py --output <新的独立目录>`在指定conda环境只读计算固定head的损失与梯度，不训练。事件前缀/最坏前缀两个候选仍存在总体或分组取舍，尚未进入新训练；拒绝覆盖已有输出，公式及边界见[规格](spec/stop_objective_audit.md)。
+
+进一步的[完整池跨组审计](runs/diagnostics/stop-cross-effects-20261020-v1/summary.md)由`scripts/audit_stop_cross_effects.py --output <新的独立目录>`执行：固定完整池方向检查分组损失和原1144首停索引解析保护范围，无参数更新。最坏前缀方向仍有原合格组前缀风险与S8事件风险，尚不能直接重训；28相关测试通过。
+
+[原合格保护可行性审计](runs/diagnostics/stop-direction-feasibility-20261020-v2/summary.md)入口为`scripts/audit_stop_direction_feasibility.py --output <新的独立目录>`，只检查三个旧方向非负组合，不训练。总体条件有见证，但分组条件及两种原合格保护均有该方向族内的不相容证据；34相关测试通过。停止旧方向混权路线，该有限族结论不代表完整129维停止头无解。
+
+[完整129维检查](runs/diagnostics/stop-fullspace-extended-20261020-v1/results/agent-audit.md)及[LT13延长审计](docs/long_tasks/LT-20261020-13-stop-fullspace-feasibility.md)已完成独立复核：两无保护方向成立，两原合格保护仍4096迭代耗尽，无受保护方向见证，不直接训练。合法对偶上界与约6.60e−5的原首停索引解析保持区间已确认；其后有限损失/float32单步检查见下项，不再盲目加迭代，模型与标签未改。
+
+[单次有限步长验证](runs/diagnostics/stop-finite-step-20261020-v1/summary.md)已完成，入口`scripts/probe_stop_finite_step.py`只取解析上界的1/4：float32下原1144缓存开环合格全保留，八项损失约10⁻⁷下降，但全部2918缓存停点及8条原生predict都不变、无新增合格，故不训练/部署或扩大闭环。完整2400原生B1未复评，默认模型不变。
+
+[终点合格区间审计](runs/diagnostics/stop-endpoint-intervals-20261020-v1/summary.md)入口`scripts/audit_stop_endpoint_intervals.py --output <新目录>`只读固定方向的float64缓存区间，不更新参数：允许合格集合内换停点后初始无损范围扩大15.2倍，但首次损失原合格早于首次潜在新增，初始无损区间新增0。当前方向不继续放大或训练；不代表其他方向无解，也不是实际float32或闭环成绩。
 
 ## 目录结构
 

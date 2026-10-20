@@ -36,6 +36,7 @@ class TrainerConfig:
     teacher_forcing_decay_epochs: int = 15
     early_stopping_start_epoch: int = 0
     stop_target_mode: str = "terminal"
+    yaw_error_mode: str = 'raw'
     collision_loss_weight: float = 0.0
     safety_extra_margin_m: float = 0.1
     safety_sample_spacing_m: float = 0.5
@@ -103,6 +104,8 @@ class TrainerConfig:
             raise ValueError("early_stopping_start_epoch 必须位于 [0, epochs) 内")
         if self.stop_target_mode not in {"terminal", "cumulative"}:
             raise ValueError("stop_target_mode 必须为 terminal 或 cumulative")
+        if self.yaw_error_mode not in {'raw', 'wrapped'}:
+            raise ValueError('yaw_error_mode 必须为 raw 或 wrapped')
         for name, value in (
             ("collision_loss_weight", self.collision_loss_weight),
             ("safety_extra_margin_m", self.safety_extra_margin_m),
@@ -264,11 +267,12 @@ class Trainer:
                 stop_weight=self.config.stop_loss_weight,
                 balance_stop=self.config.balance_stop_loss,
                 stop_target_mode=self.config.stop_target_mode,
+                yaw_error_mode=self.config.yaw_error_mode,
             )
             points = prediction.points
         else:
             points = self.model(bev, goal, state)
-            base_loss = loss_fn(points, target, mask)
+            base_loss = loss_fn(points, target, mask, yaw_error_mode=self.config.yaw_error_mode)
         if self.safety_loss is None or self.config.collision_loss_weight == 0.0:
             collision_loss = torch.zeros((), dtype=base_loss.dtype, device=base_loss.device)
             total = base_loss
@@ -283,6 +287,7 @@ class Trainer:
                 target,
                 mask,
                 tail_points=self.config.endpoint_alignment_tail_points,
+                yaw_error_mode=self.config.yaw_error_mode,
             )
             total = total + self.config.endpoint_alignment_weight * endpoint_loss
         if self.config.terminal_pose_weight > 0.0:
@@ -293,6 +298,7 @@ class Trainer:
                 target,
                 mask,
                 yaw_weight=self.config.terminal_yaw_weight,
+                yaw_error_mode=self.config.yaw_error_mode,
             )
         if self.config.progress_weight > 0.0:
             from model import progress_monotonicity_loss
@@ -444,6 +450,9 @@ class Trainer:
             raise RuntimeError("checkpoint 模型配置与当前 Trainer 不一致")
         stored_trainer = payload.get("trainer_config", {})
         current_trainer = asdict(self.config)
+        # 缺字段的历史检查点只拥有 raw 语义，不允许跨模式恢复优化器。
+        if stored_trainer.get('yaw_error_mode', 'raw') != self.config.yaw_error_mode:
+            raise RuntimeError('checkpoint 训练超参数 yaw_error_mode 与当前 Trainer 不一致')
         compatibility_fields = {
             "learning_rate",
             "patience",

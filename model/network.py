@@ -92,14 +92,27 @@ class MineParkingNet(nn.Module):
         return Trajectory(points=out[0].numpy(), dt=self.dt)
 
 
+def _yaw_residual(pred: torch.Tensor, target: torch.Tensor, mode: str) -> torch.Tensor:
+    """保留历史 raw 模式；wrapped 只比较车体航向，不监督旋转圈数。"""
+    delta = pred - target
+    if mode == 'raw':
+        return delta
+    if mode == 'wrapped':
+        return torch.atan2(torch.sin(delta), torch.cos(delta))
+    raise ValueError('yaw_error_mode 必须为 raw 或 wrapped')
+
+
 def loss_fn(
-    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
+    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor,
+    *, yaw_error_mode: str = 'raw',
 ) -> torch.Tensor:
     """MSE 轨迹损失，按有效点掩码平均。
 
     pred/target: (B, N, 3)；mask: (B, N)（1 表示该点有效）。
     """
-    diff = (pred - target) ** 2
+    position_error = (pred[..., :2] - target[..., :2]).square()
+    yaw_error = _yaw_residual(pred[..., 2], target[..., 2], yaw_error_mode).square()
+    diff = torch.cat((position_error, yaw_error.unsqueeze(-1)), dim=-1)
     diff = diff * mask.unsqueeze(-1)
     denom = mask.sum().clamp(min=1.0)
     return diff.sum() / denom
@@ -111,6 +124,7 @@ def endpoint_alignment_loss(
     mask: torch.Tensor,
     *,
     tail_points: int = 8,
+    yaw_error_mode: str = 'raw',
 ) -> torch.Tensor:
     """近端终点对齐监督：对预测轨迹末端加权逼近专家轨迹末端。
 
@@ -135,7 +149,7 @@ def endpoint_alignment_loss(
     tail_pred = pred[batch_idx, end_idx]
     tail_target = target[batch_idx, end_idx]
     pos_err = (tail_pred[..., :2] - tail_target[..., :2]).pow(2).sum(-1)
-    yaw_err = (tail_pred[..., 2] - tail_target[..., 2]).pow(2)
+    yaw_err = _yaw_residual(tail_pred[..., 2], tail_target[..., 2], yaw_error_mode).square()
     per_point = pos_err + yaw_err
     denominator = tail_span.sum().clamp(min=1.0)
     return per_point.sum() / denominator
@@ -194,6 +208,7 @@ def terminal_pose_loss(
     mask: torch.Tensor,
     *,
     yaw_weight: float = 10.0,
+    yaw_error_mode: str = 'raw',
 ) -> torch.Tensor:
     """终点位姿损失：**只**监督预测轨迹的**最后一点**，并对航向加权。
 
@@ -228,7 +243,7 @@ def terminal_pose_loss(
     terminal_pred = pred.gather(1, final_index.unsqueeze(-1).expand(-1, 1, 3)).squeeze(1)
     terminal_target = target.gather(1, final_index.unsqueeze(-1).expand(-1, 1, 3)).squeeze(1)
     pos_err = (terminal_pred[..., :2] - terminal_target[..., :2]).pow(2).sum(-1)
-    yaw_err = (terminal_pred[..., 2] - terminal_target[..., 2]).pow(2)
+    yaw_err = _yaw_residual(terminal_pred[..., 2], terminal_target[..., 2], yaw_error_mode).square()
     return (pos_err + yaw_weight * yaw_err).mean()
 
 
@@ -241,13 +256,14 @@ def variable_loss_fn(
     stop_weight: float = 0.2,
     balance_stop: bool = True,
     stop_target_mode: str = "terminal",
+    yaw_error_mode: str = 'raw',
 ) -> torch.Tensor:
     """变长轨迹损失：掩码轨迹 MSE + 有效前缀终止 BCE。
 
     ``balance_stop`` 按当前 batch 有效前缀中的负/正样本比提高终点权重，
     避免长轨迹里单个终点被大量“继续”标签淹没。
     """
-    trajectory_loss = loss_fn(pred, target, mask)
+    trajectory_loss = loss_fn(pred, target, mask, yaw_error_mode=yaw_error_mode)
     if stop_target_mode not in {"terminal", "cumulative"}:
         raise ValueError("stop_target_mode 必须为 terminal 或 cumulative")
     lengths = mask.sum(dim=1).long()

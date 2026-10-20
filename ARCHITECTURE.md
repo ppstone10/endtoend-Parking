@@ -10,12 +10,23 @@
 | 端到端网络 | `model/` | 注册表按 `net-v0/v1/v2` 构造模型：v0 为固定 horizon CNN+MLP，v1 为 CNN+GRU 变长解码和终止 logits，v2 增加 U-Net 跳连空间编码与 goal/state 交叉注意力；损失支持掩码轨迹 MSE 与终止 BCE |
 | 训练体系 | `training/` | 安全 YAML 配置解析并相对配置文件定位数据/输出；支持只初始化模型权重或严格断点恢复；`Trainer` 拥有确定性 shuffle、可选恢复三池采样、累计停止监督、连续净空完整车体扫掠损失、课程感知 early stopping 和逐 epoch 自由滚动/安全诊断；runner 从 schema v2 解析车辆/BEV 安全几何，并在 best 上用 val 校准停止阈值 |
 | 轨迹控制器 | `controller/` | MPC 轨迹跟踪：CEM 交叉熵求解 + 差分驱动模型预测，输出 `[v_cmd, omega_cmd]` |
+| 终点对齐离线审计 | `experiments/terminal_alignment_audit.py` | 基于既有自由滚动采集，按冻结部署阈值区分停点/真值末点索引/全预测联合达标点；scripts/audit_terminal_alignment.py只推理原train并冻结身份，不校准阈值、不判断几何/控制可执行或训练成功 |
+| 冻结停止头训练试验 | `experiments/frozen_stop_head.py` | 只读hook缓存stop_head输入，独立复制129参数head按原累计BCE训练；主干/point_head不更新。scripts/train_frozen_stop_head.py冻结2918旧池及guided/free同预算，保留独立非resumable模型与缓存/摘要，完整轨迹/阈值不变，不修改现有Trainer或部署 |
+| 停止目标独立审计 | `experiments/stop_objective_audit.py`、`experiments/stop_cross_effects.py`、`experiments/stop_direction_feasibility.py`、`experiments/stop_fullspace_feasibility.py`、`experiments/stop_finite_step.py`、`experiments/stop_endpoint_intervals.py` | 固定梯度/跨组/有限族/全空间审计，内存head副本单次有限步长验证，以及只读仿射首次停点区间；对应audit_stop_*.py与probe_stop_finite_step.py。复用LT12/LT13身份，float64解析、float32缓存统计与原生predict抽查分开；延长任务人工执行，不更新默认模型或自动训练 |
+| 闭环收益裁决 | `experiments/closed_loop_benefit.py`、`scripts/validate_closed_loop_benefit.py` | 前者校验完整纯E5逐回合/协议并统计联合收益、配对转移与场景回归；后者冻结固定R0/R2e2及独立300条，复用validation_matrix，不修改模型/MPC/感知。每臂报告SHA登记后才可显式恢复；短smoke与正式证据隔离，不自动训练/部署 |
+| 原代价局部精修试验 | `experiments/cem_polishing.py`、`experiments/polishing_execution.py` | 独立CEMPolishedMPC保留原CEM后作有界L-BFGS精修，原NumPy cost严格更优才选，不读几何，额外最多80次梯度评估。compare_cem_polishing.py冻结六源原/精修×网络/持续教师，私有快照与逐控审计，默认controller及训练schema不变 |
+| 离线求解器试验 | `experiments/mpc_candidate_solver.py` | 显式实验子类仅比较原CEM均值/移位热启动/全零候选，沿用原代价；专用scripts/compare_mpc_solvers.py进程内注入并finally恢复。无障碍输入/安全干预，controller默认实现不变，不可与原控制器成绩混报 |
+| 当前搜索样本试验 | `experiments/mpc_search_best_solver.py` | 独立SearchBestMPC保留原CEM采样/拟合，比较本次最佳样本与最终均值；热启动仅作搜索初值。专用scripts/compare_search_best_mpc.py显式注入、输出逐步选择账本并finally恢复，与上一候选版/生产控制器隔离 |
+| 参考更新诊断 | `experiments/reference_update_stability.py` | 在原MPC私有副本对齐旧/新窗口，实际执行不受观察影响；复制既有上下文，正常分支精确复现后缀，再单次丢弃新参考但仍消费感知/推理，之后恢复更新。专用scripts/validate_reference_updates.py冻结原训练源/身份并记录覆盖；不修改默认运行时、不作训练标签或生产保持策略 |
+| 参考事件探针 | `experiments/reference_event_probe.py` | 既有安全事件精确时点分叉，正常/旧参考/专家仅首次替换，随后恢复网络。实际solve窗口审计只包装不再采集快照的私有MPC，避免闭包随上下文复制；原采样/RNG不变。scripts/probe_reference_events.py冻结来源/输入与审计，S8初态10步显式区分全程；不是生产策略或训练标签 |
+| 连续恢复前置 | `experiments/recovery_compatibility.py` | 连续教师每次正常感知/网络旁路推理后执行同状态专家，原MPC私有快照续行并记录每次全局参考/状态；scripts/validate_recovery_compatibility.py冻结来源/身份，正式只运行S4。无训练schema导出或自动回灌，原成功记录保留不代表学生已保留成功 |
+| 几何航向代价试验 | `experiments/footprint_yaw_mpc.py` | FootprintYawMPC仅增加按车身尺寸缩放的周期航向残差，不读取环境/碰撞、不改原CEM预算/返回或默认MPC；其S8短预检未改善，已停止扩大，仅保留证据与测试，不进入正式S4或部署 |
 | 专家轨迹 | `planner/` | Hybrid A* 生成履带低速运动学可行轨迹（前后差速弧线 + 左右原地旋转 + 48 词族 Reeds–Shepp/履带解析候选）；`collision.py` 拥有完整矩形与连续扫掠碰撞，`smoothing.py`/`profile.py` 提供可选平滑以及含原地旋转耗时的速度剖面 |
 | 数据管线 | `dataset/` | `calibration.py` 直接枚举全部专家能力单元；Task 驱动生成经机动与可行性双门禁保存 schema v2；`recovery.py` 从学习器闭环偏离状态生成重新审计的专家恢复样本，碰撞时完整回溯最近的规划安全余量状态；构建脚本按源任务原子续建、从失败检查点派生困难补采并去重合并既有恢复集和原训练集 |
 | 闭环运行时 | `runtime/` | `engine.py` 执行轨迹源→MPC→车辆并在状态更新前调用转移门禁，再以完整矩形连续扫掠判碰撞；`sources.py` 提供 Expert/Network、当前安全状态专家重规划、专用安全停止、门禁组合与轨迹级几何过滤组合；`safety.py` 定义场景无关的轨迹审查接口与干预统计；`trajectory_repair.py` 把预测轨迹中不可行的部分按"可达锥"侧向投影回可行域（只做侧移，不改航向与训练目标），失败时由包装源退化为计划保持或安全截断 |
 | 实验指标 | `metrics/` | `EpisodeResult` 与闭环聚合；开环层在目标有效前缀上统计 ADE/FDE/环绕航向 MAE，并拒绝预测 horizon 不足的比较；预测诊断层保留逐样本误差与终止长度，按场景、任务、方向、噪声和相邻占用聚合 |
 | 可视化 | `viz/`、`dataset/inspection.py` | 统一风格（`style.py` 色表/PNG+PDF 双格式）、世界俯视渲染、轨迹三线叠加、单回合总图与分组开环图；专家验收图和预测叠加图使用“前方 x、车体左方 y”右手局部系，将正 Left 显示在画面左侧，并把连续零位移航向变化汇总为从旋转前航向出发的有符号旋转弧 |
-| 批量实验 | `experiments/` | 配置驱动专家 runner；`closed_loop_evaluation.py` 从 schema v2 NPZ/manifest 确定性复原任务场景并加载 Trainer deployment，输出网络闭环整体、分组与逐回合 JSON |
+| 批量实验 | `experiments/` | 配置驱动专家 runner；`closed_loop_evaluation.py` 从 schema v2 NPZ/manifest 确定性复原任务场景并加载 Trainer deployment，输出网络闭环整体、分组与逐回合 JSON；`recovery_execution.py` 仅供离线诊断，复制真实车辆/MPC热启动与RNG/感知管道，在私有MPC副本上保留续执行状态，原engine/MPC默认reset及生产执行不变 |
 | 运行脚本 | `scripts/` | 阶段演示与数据流串联 |
 
 ## 数据流
