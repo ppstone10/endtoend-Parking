@@ -13,6 +13,7 @@ from dataset import DatasetGenerator
 from metrics.open_loop import evaluate_open_loop
 from metrics.prediction_analysis import collect_open_loop_predictions
 from model import build_model
+from interfaces.bev import CAMERA_PROJECTION_LEGACY
 from .checkpoint import initialize_model_from_checkpoint
 from .closed_loop_selection import ClosedLoopSelector, select_best_checkpoint
 
@@ -335,3 +336,7 @@ def _validate_dataset_pair(train_data: dict, val_data: dict) -> None:
     val_dt = float(np.asarray(val_data["dt"]).reshape(-1)[0])
     if not np.isclose(train_dt, val_dt):
         raise ValueError("train/val 的轨迹 dt 不一致")
+    train_projection = (train_data.get('bev_meta') or {}).get('camera_projection', CAMERA_PROJECTION_LEGACY)
+    val_projection = (val_data.get('bev_meta') or {}).get('camera_projection', CAMERA_PROJECTION_LEGACY)
+    if train_projection != val_projection:
+        raise ValueError("train/val 的camera_projection不一致，不能混用不同版本输入")

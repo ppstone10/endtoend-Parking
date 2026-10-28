@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from interfaces import BEVTensor, GoalPose, Trajectory, VehicleState
+from interfaces.bev import CAMERA_PROJECTION_LEGACY, assert_camera_projection_matches
 
 from .prediction import TrajectoryPrediction
 
@@ -87,6 +88,8 @@ class _VariableTrajectoryMixin:
         self, bev: BEVTensor, goal: GoalPose, state: VehicleState
     ) -> Trajectory:
         self.eval()
+        assert_camera_projection_matches(bev.camera_projection, self.camera_projection,
+                                         target_channel=self.target_channel)
         device = next(self.parameters()).device
         bev_t = torch.as_tensor(bev.data, dtype=torch.float32, device=device).unsqueeze(0)
         goal_t = torch.as_tensor(
@@ -115,6 +118,7 @@ class MineParkingNetV1(_VariableTrajectoryMixin, nn.Module):
         stop_threshold: float = 0.5,
         target_channel: str = "image",
         height_mode: str = "installation",
+        camera_projection: str = CAMERA_PROJECTION_LEGACY,
     ) -> None:
         super().__init__()
         if not 0.0 < stop_threshold < 1.0:
@@ -130,6 +134,8 @@ class MineParkingNetV1(_VariableTrajectoryMixin, nn.Module):
         # 避免"用几何 target 训练的模型被喂相机 target"这类静默错配。
         self.target_channel = str(target_channel)
         self.height_mode = str(height_mode)
+        assert_camera_projection_matches(camera_projection, camera_projection)
+        self.camera_projection = camera_projection
         self.bev_encoder = nn.Sequential(
             nn.Conv2d(bev_channels, 32, 3, stride=2, padding=1),
             nn.ReLU(inplace=True),
@@ -200,6 +206,7 @@ class MineParkingNetV2(_VariableTrajectoryMixin, nn.Module):
         stop_threshold: float = 0.5,
         target_channel: str = "image",
         height_mode: str = "installation",
+        camera_projection: str = CAMERA_PROJECTION_LEGACY,
     ) -> None:
         super().__init__()
         if hidden_dim % attention_heads != 0:
@@ -216,6 +223,8 @@ class MineParkingNetV2(_VariableTrajectoryMixin, nn.Module):
         # BEV 输入契约：随 checkpoint 持久化，运行时据此校验感知链路一致。
         self.target_channel = str(target_channel)
         self.height_mode = str(height_mode)
+        assert_camera_projection_matches(camera_projection, camera_projection)
+        self.camera_projection = camera_projection
         self.enc1 = _ConvBlock(bev_channels, base_channels)
         self.enc2 = _ConvBlock(base_channels, base_channels * 2)
         self.bottleneck = _ConvBlock(base_channels * 2, base_channels * 4)

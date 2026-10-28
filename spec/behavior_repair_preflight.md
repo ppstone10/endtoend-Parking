@@ -24,7 +24,7 @@
 
 ### BEHAVIOR-PREFLIGHT-002：教师可执行门禁
 
-原网络闭环真实访问状态采集BEV/目标/状态/参考；R0成功作为保持锚点，R0失败且R2成功才允许R2迁移。两者失败尝试归档原全局专家轨迹，在R0首次失余量前的上下文使用原MPC热启动完整执行。必须真实到达、零接触、零原规划余量侵入才允许成为恢复监督。保留失败来源，拟合中S4/S8各至少一条严格通过且存在R0锚点才允许下一阶段；覆盖不足不训练，不因教师成功宣布候选改善。
+原网络闭环真实访问状态采集BEV/目标/状态/参考；R0成功作为保持锚点，R0失败且R2成功才允许R2迁移。两者失败尝试归档原全局专家轨迹，在R0首次失余量前的上下文使用原MPC热启动完整执行。必须真实到达、零接触、零原规划余量侵入才允许成为恢复监督。保留失败来源，拟合中S4/S8各至少一条严格通过的改善/恢复监督且存在R0锚点才允许下一阶段；覆盖不足不训练，不因教师成功宣布候选改善。
 
 ### BEHAVIOR-PREFLIGHT-003：有界行为保持拟合
 
@@ -34,11 +34,21 @@
 
 候选只以纯网络+原MPC执行固定5条未拟合探针，与R0同任务/感知/seed/容差/步数配对。至少新增1条成功、碰撞净减少至少1条，且不丢探针原成功，才能标预检有效；任意缺失/预算耗尽/教师不足/loss仅下降均不通过，不生成长任务计划。小规模通过也不是主300达标或泛化证明。
 
+### BEHAVIOR-PREFLIGHT-005：离线航向补偿试验
+
+仅显式`--refine-teacher`启用。固定全局教师未严格通过时，最多两次同上下文/热启动/RNG重放，以实际MPC进度对应的原始参考航向为目标，上一轮实际后状态航向误差按0.5倍负反馈更新参考；误差映射至原始点后5点平滑，相对原参考累计偏移限幅0.1rad。保留xy、dt、点数、首末位姿，只更新实际访问区间。更新后的整条参考内部扫掠必须规划安全，否则该来源停止，不回退搜索权重或替换来源。每次实际结果完整保存；首次严格成功才作为监督，否则仍拒绝。补偿仅离线、只用拟合源，不能修改候选网络执行或将其报作网络收益；共用原180秒预算与原门禁。
+
+### BEHAVIOR-PREFLIGHT-006：已验证教师组合
+
+仅同时显式`--refine-teacher --rolling-s4`启用：S4固定教师不严格时，改用项目既有持续重规划教师一次完整执行，不再尝试S4航向补偿；S8仍按005固定补偿。不替换来源，不修改模型/MPC，不向纯网络探针插入教师。记录固定对照和持续教师实际结果、实际消费标签；当前重放必须重新严格通过才采纳，不能凭历史报告认定。其余001–004完全不变；组合试验不等于005原版本通过。
+
 ## 追溯
 
 | ID | 实现/验收 | 状态 |
 |---|---|---|
-| BEHAVIOR-PREFLIGHT-001 | 待补固定入口/隔离测试 | ⏳ |
-| BEHAVIOR-PREFLIGHT-002 | 待补教师/状态分叉与执行门禁 | ⏳ |
-| BEHAVIOR-PREFLIGHT-003 | 待补损失/输入只读/短优化测试 | ⏳ |
-| BEHAVIOR-PREFLIGHT-004 | 待补探针配对与不扩大门禁 | ⏳ |
+| BEHAVIOR-PREFLIGHT-001 | scripts/preflight_behavior_repair.py::frozen_config/run；v2 config与report | ✅ 固定5+5训练来源、与val/selection零交集、105源/6输入及环境冻结通过；未替换失败来源，10条R0全数组与旧版精确一致 |
+| BEHAVIOR-PREFLIGHT-002 | experiments/executable_behavior.py；29项聚合测试；独立物理审计 | ✅ 旧固定教师覆盖0/0失败保留；显式组合教师S4/S8各1严格通过，309转移重建误差0/接触0/余量侵入0，原终止检查通过 |
+| BEHAVIOR-PREFLIGHT-003 | experiments/behavior_preservation.py；prepare_supervision_frames；真实v2 report与candidate-state.pt | ✅ 20监督帧、固定12步lr1e-5真实拟合；候选与R0的20项参数条目不同，原权重未改，未作为部署模型 |
+| BEHAVIOR-PREFLIGHT-004 | coverage_gate/probe_gate；v2 report、independent-audit.json、summary.md | ✅ 5条候选从落盘权重重放字段完全一致；2成功2碰撞1振荡无净收益，门禁正确拒绝且未生成长计划。证据完整不等于收益通过 |
+| BEHAVIOR-PREFLIGHT-005 | experiments/reference_compensation.py；显式--refine-teacher；tests/test_reference_compensation.py | ✅ 负反馈/累计限幅/首末与xy不变/角度环绕/未访问前缀/错误进度/扫掠测试通过；v1 S8首次严格通过、S4两轮仍4侵入并停止，不宣称统一有效 |
+| BEHAVIOR-PREFLIGHT-006 | RecordedReplanningExpert；显式--rolling-s4；v2真实报告 | ✅ S4持续教师42步与旧LT09状态/命令完全一致，S8补偿与v1完全一致；严格教师覆盖1/1后才拟合，学生无收益即停止 |

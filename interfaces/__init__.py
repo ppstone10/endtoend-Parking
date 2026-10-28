@@ -2,7 +2,7 @@
 
 from .bev import BEVConfig, BEVTensor
 from .control import ControlCmd
-from .sensor import CameraFrame, CameraIntrinsics, LiDARFrame
+from .sensor import CameraFrame, CameraIntrinsics, CameraView, LiDARFrame
 from .state import GoalPose, VehicleState
 from .trajectory import Trajectory, TrajectoryPoint
 
@@ -11,6 +11,7 @@ __all__ = [
     "BEVTensor",
     "ControlCmd",
     "CameraFrame",
+    "CameraView",
     "CameraIntrinsics",
     "LiDARFrame",
     "GoalPose",

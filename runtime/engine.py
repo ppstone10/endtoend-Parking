@@ -110,7 +110,7 @@ class ClosedLoopEngine:
             self.executor.begin_trajectory(traj)
             inference_times = [infer_ms]
         except SafetyStopError:
-            self.source.record_safety_stop()
+            self._record_safety_stop()
             safety_stop = True
             traj = Trajectory(
                 np.asarray([[state.x, state.y, state.yaw]], dtype=np.float64),
@@ -135,50 +135,56 @@ class ClosedLoopEngine:
                     self.executor.begin_trajectory(traj)
                     inference_times.append(infer_ms)
                 except SafetyStopError:
-                    self.source.record_safety_stop()
+                    self._record_safety_stop()
                     safety_stop = True
                     break
                 except ValueError as exc:
                     planning_failure = f"replan@{step}: {exc}"
                     break
             previous_state = state
-            proposed_state = self.executor.propose(state, traj, self.mpc.dt)
-            guard = getattr(self.source, "guard_transition", None)
-            if callable(guard):
-                try:
-                    replacement, guard_ms = guard(previous_state, proposed_state)
-                except SafetyStopError:
-                    self.source.record_safety_stop()
-                    safety_stop = True
-                    break
-                if replacement is not None:
-                    traj = replacement
-                    self.executor.begin_trajectory(traj)
-                    inference_times.append(guard_ms)
-                    proposed_state = self.executor.propose(
-                        previous_state, traj, self.mpc.dt
-                    )
-                    if not self.source.transition_is_safe(
-                        previous_state, proposed_state
-                    ):
-                        # 替换参考通过轨迹审查，但控制器实际推进仍离开安全集合：
-                        # 按 SAFE-SHIELD-003 继续退到最小风险动作。不具备该能力的
-                        # 源保持原有的安全停止语义。
-                        minimal_risk = getattr(
-                            self.source, "minimal_risk_trajectory", None
+            try:
+                proposed_state = self.executor.propose(state, traj, self.mpc.dt)
+                guard = getattr(self.source, "guard_transition", None)
+                if callable(guard):
+                    try:
+                        replacement, guard_ms = guard(previous_state, proposed_state)
+                    except SafetyStopError:
+                        self._record_safety_stop()
+                        safety_stop = True
+                        break
+                    if replacement is not None:
+                        traj = replacement
+                        self.executor.begin_trajectory(traj)
+                        inference_times.append(guard_ms)
+                        proposed_state = self.executor.propose(
+                            previous_state, traj, self.mpc.dt
                         )
-                        if callable(minimal_risk):
-                            traj = minimal_risk(previous_state)
-                            self.executor.begin_trajectory(traj)
-                            proposed_state = self.executor.propose(
-                                previous_state, traj, self.mpc.dt
-                            )
                         if not self.source.transition_is_safe(
                             previous_state, proposed_state
                         ):
-                            self.source.record_safety_stop()
-                            safety_stop = True
-                            break
+                            # 替换参考通过轨迹审查，但控制器实际推进仍离开安全集合：
+                            # 按 SAFE-SHIELD-003 继续退到最小风险动作。不具备该能力的
+                            # 源保持原有的安全停止语义。
+                            minimal_risk = getattr(
+                                self.source, "minimal_risk_trajectory", None
+                            )
+                            if callable(minimal_risk):
+                                traj = minimal_risk(previous_state)
+                                self.executor.begin_trajectory(traj)
+                                proposed_state = self.executor.propose(
+                                    previous_state, traj, self.mpc.dt
+                                )
+                            if not self.source.transition_is_safe(
+                                previous_state, proposed_state
+                            ):
+                                self._record_safety_stop()
+                                safety_stop = True
+                                break
+            except SafetyStopError as exc:
+                self._record_safety_stop()
+                self.meta['control_safety_stop'] = str(exc)
+                safety_stop = True
+                break
             state = proposed_state
             collision = self._check_collision(previous_state, state)
             record.log(state, self.executor.last_cmd, traj, traj, collision)
@@ -201,6 +207,11 @@ class ClosedLoopEngine:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    def _record_safety_stop(self):
+        record_stop = getattr(self.source, 'record_safety_stop', None)
+        if callable(record_stop):
+            record_stop()
 
     def _check_collision(self, previous: VehicleState, state: VehicleState) -> bool:
         if self.collision_checker is not None:

@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from training.trainer import Batch
+from .emitted_terminal import aggregate_emitted_terminal, emitted_terminal_metrics
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ def analyze_prediction_errors(
     *,
     stop_logits: np.ndarray | None = None,
     stop_threshold: float = 0.5,
+    local_goals: np.ndarray | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """返回总体/分组统计和带内部误差数组的逐样本记录。"""
     predicted = np.asarray(predictions, dtype=np.float64)
@@ -121,6 +123,10 @@ def analyze_prediction_errors(
         raise ValueError("stop_logits 必须为有限值")
     if not 0.0 < stop_threshold < 1.0:
         raise ValueError("stop_threshold 必须位于 (0,1)")
+
+    goals = None if local_goals is None else np.asarray(local_goals, dtype=np.float64)
+    if goals is not None and (goals.shape != (sample_count, 3) or not np.isfinite(goals).all()):
+        raise ValueError("local_goals必须为有限(B,3)局部目标")
 
     rows: list[dict[str, Any]] = []
     for index, length in enumerate(lengths.tolist()):
@@ -158,6 +164,13 @@ def analyze_prediction_errors(
                 "_yaw_errors": yaw_errors,
             }
         )
+
+        emitted_length = predicted.shape[1] if predicted_length is None else predicted_length
+        rows[-1].update(terminal_status="not_observed", terminal_missing_reason="local_goal_missing",
+                        emitted_suffix_points=max(0, emitted_length-length))
+        if goals is not None:
+            rows[-1].update(emitted_terminal_metrics(predicted[index], goals[index],
+                                                    emitted_length, length, item))
 
     dimensions = ("scene", "task_type", "maneuver", "noise_level", "adjacent_occupancy")
     groups: dict[str, dict[str, dict[str, Any]]] = {}
@@ -204,4 +217,5 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 ),
             }
         )
+    result.update(aggregate_emitted_terminal(rows))
     return result

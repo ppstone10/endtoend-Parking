@@ -7,6 +7,8 @@ import math
 import numpy as np
 
 from interfaces import CameraIntrinsics
+from interfaces.bev import (CAMERA_PROJECTION_CURRENT, CAMERA_PROJECTION_LEGACY,
+                            assert_camera_projection_matches)
 from planner import HybridAStarPlanner
 from sensor2bev import BEVFusion, Camera2BEV, LiDAR2BEV
 from sim import (
@@ -27,6 +29,7 @@ def bev_contract_from_checkpoint(model_config) -> dict:
         "geometry_target": str(config.get("target_channel", "image")) == "geometry",
         "target_channel": str(config.get("target_channel", "image")),
         "height_mode": str(config.get("height_mode", "installation")),
+        "camera_projection": str(config.get("camera_projection", CAMERA_PROJECTION_LEGACY)),
     }
 
 
@@ -45,6 +48,8 @@ def assert_pipeline_matches_contract(pipeline, model_config) -> None:
             "感知管道 target 通道与 checkpoint 输入契约不一致："
             f"管道 {pipeline_target} vs 契约 {contract['target_channel']}"
         )
+    if pipeline_target == "image":
+        assert_camera_projection_matches(CAMERA_PROJECTION_CURRENT, contract["camera_projection"])
 
 
 def build_task_components(
@@ -57,11 +62,13 @@ def build_task_components(
 
     ``model_config`` 为已载入 checkpoint 的模型配置：给出时按其中的 BEV 输入契约
     （``target_channel``）构造同构管道，避免"训练用几何 target、运行时喂相机 target"
-    这类静默错配；不给时保持既有语义（相机渲染 target）。
+    这类静默错配；不给时使用修复后的per_view_v2相机target。
     """
     if model_config is None:
         return build_planner_and_pipeline(task, vehicle_config, geometry_target=False)
     contract = bev_contract_from_checkpoint(model_config)
+    if not contract["geometry_target"]:
+        assert_camera_projection_matches(CAMERA_PROJECTION_CURRENT, contract["camera_projection"])
     return build_planner_and_pipeline(
         task, vehicle_config, geometry_target=contract["geometry_target"]
     )

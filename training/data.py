@@ -7,6 +7,7 @@ from bisect import bisect_right
 
 import numpy as np
 import torch
+from interfaces.bev import CAMERA_PROJECTION_LEGACY, assert_camera_projection_matches
 
 from .trainer import Batch
 
@@ -226,6 +227,12 @@ def validate_model_dataset(model: torch.nn.Module, data: dict) -> None:
     data_dt = float(np.asarray(data.get("dt")).reshape(-1)[0])
     if model_dt is None or not np.isclose(float(model_dt), data_dt):
         raise ValueError("模型 dt 与数据集轨迹 dt 不一致")
+    metadata = data.get("bev_meta") or {}
+    assert_camera_projection_matches(
+        metadata.get("camera_projection"),
+        getattr(model, "camera_projection", CAMERA_PROJECTION_LEGACY),
+        target_channel=getattr(model, "target_channel", "image"),
+    )
 
 
 def _prefix_lengths(masks: np.ndarray) -> np.ndarray:

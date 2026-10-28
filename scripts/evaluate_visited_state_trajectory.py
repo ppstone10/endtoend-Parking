@@ -168,6 +168,8 @@ def run_visited_state_evaluation(
     )
     report = {
         "schema_version": 1,
+        "kind": "legacy_diagnostic_not_production_acceptance",
+        "production_qualified": False,
         "task": "L2_visited_state_trajectory",
         "data": str(data_source),
         "checkpoint": str(checkpoint_source),
@@ -201,7 +203,7 @@ def run_visited_state_evaluation(
     return report
 
 
-def main() -> None:
+def legacy_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="schema v2 数据集 NPZ")
     parser.add_argument("--model", required=True, help="deployment checkpoint")
@@ -225,6 +227,15 @@ def main() -> None:
         near_threshold_m=args.near_threshold,
     )
     print(f"报告：{Path(args.output).resolve()}")
+
+
+def main() -> None:
+    if "--legacy-diagnostic" in sys.argv:
+        sys.argv.remove("--legacy-diagnostic")
+        legacy_main()
+    else:
+        from scripts.verify_closed_loop_components import main as production_main
+        production_main(stage="L2")
 
 
 if __name__ == "__main__":

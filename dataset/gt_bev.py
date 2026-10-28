@@ -25,6 +25,7 @@ from __future__ import annotations
 import numpy as np
 
 from interfaces import BEVConfig, BEVTensor, GoalPose
+from interfaces.bev import CAMERA_PROJECTION_GEOMETRY
 from metrics.bev_fidelity import (
     rasterize_ground_truth_height,
     rasterize_ground_truth_occupancy,
@@ -145,4 +146,5 @@ class GroundTruthBEVPipeline:
             resolution=config.resolution,
             extent=config.extent,
             channels=self.channels,
+            camera_projection=CAMERA_PROJECTION_GEOMETRY,
         )

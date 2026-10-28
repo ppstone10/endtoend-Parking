@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from interfaces import BEVConfig, BEVTensor, CameraFrame
+from interfaces import BEVConfig, BEVTensor, CameraFrame, CameraView
+
+from interfaces.bev import CAMERA_PROJECTION_CURRENT
 
 CH_TARGET = "target"
 
@@ -49,10 +51,11 @@ class Camera2BEV:
         self.threshold = threshold
         self.channels = [CH_TARGET]
 
-    def _homography(self, intrinsics) -> np.ndarray:
+    def _homography(self, intrinsics, *, height=None, pitch=None) -> np.ndarray:
         """构建地面→像素 3x3 单应矩阵（与 sim/camera_model.py 一致）。"""
-        cos_p, sin_p = np.cos(self.pitch), np.sin(self.pitch)
-        h = self.height
+        pitch = self.pitch if pitch is None else pitch
+        cos_p, sin_p = np.cos(pitch), np.sin(pitch)
+        h = self.height if height is None else height
         k = intrinsics
         return np.array(
             [
@@ -65,50 +68,31 @@ class Camera2BEV:
 
     def to_bev(self, frame: CameraFrame, x: float, y: float, yaw: float) -> BEVTensor:
         """将相机图像反投影到车辆中心局部 BEV，输出目标区域通道。"""
-        hmat = self._homography(frame.intrinsics)
-        image = frame.image
-        if image.ndim == 3:
-            gray = image.mean(axis=-1)
-        else:
-            gray = image
-
         front, back, left, right = self.extent
-        h = round((front + back) / self.resolution)
-        w = round((left + right) / self.resolution)
+        h, w = self.config.shape
+        rows, cols = np.arange(h, dtype=np.float64), np.arange(w, dtype=np.float64)
+        grid_x, grid_y = np.meshgrid(front-(rows+.5)*self.resolution,
+                                    -right+(cols+.5)*self.resolution, indexing="ij")
         target = np.zeros((h, w), dtype=np.float32)
-
-        # 逐栅格中心前向投影到像素并采样灰度。
-        rows = np.arange(h, dtype=np.float64)
-        cols = np.arange(w, dtype=np.float64)
-        centers_x = front - (rows + 0.5) * self.resolution  # 行 → 前向距离
-        centers_y = -right + (cols + 0.5) * self.resolution  # 列 → 左向距离
-        grid_x, grid_y = np.meshgrid(centers_x, centers_y, indexing="ij")
-        flat_x = grid_x.ravel()
-        flat_y = grid_y.ravel()
-        ones = np.ones_like(flat_x)
-        hom = hmat @ np.stack([flat_x, flat_y, ones], axis=0)
-        depth = hom[2]
-        valid_depth = depth > 0.0
-        u = hom[0] / np.maximum(depth, 1e-12)
-        v = hom[1] / np.maximum(depth, 1e-12)
-
-        img_h, img_w = gray.shape
-        inside = (
-            valid_depth
-            & (u >= 0)
-            & (u < img_w)
-            & (v >= 0)
-            & (v < img_h)
-        )
-        u_int = u[inside].astype(int)
-        v_int = v[inside].astype(int)
-        target.ravel()[np.flatnonzero(inside)] = (
-            gray[v_int, u_int] > self.threshold
-        ).astype(np.float32)
-
-        return BEVTensor(
-            data=target[None, :, :],
-            resolution=self.resolution,
-            extent=self.extent,
-            channels=self.channels,
-        )
+        views = frame.views or (CameraView(frame.image, frame.intrinsics,
+                                          height=self.height, pitch=self.pitch),)
+        for view in views:
+            # BEV格心先由车体系转到该相机局部地面系，再采样该视角图像。
+            c, s = np.cos(view.yaw), np.sin(view.yaw)
+            local_x, local_y = c*grid_x+s*grid_y, -s*grid_x+c*grid_y
+            hom = self._homography(view.intrinsics, height=view.height, pitch=view.pitch) @ np.stack(
+                [local_x.ravel(), local_y.ravel(), np.ones(h*w)], axis=0)
+            depth = hom[2]
+            valid = depth > 1e-3
+            u = np.divide(hom[0], depth, out=np.full(h*w, -1.), where=valid)
+            v = np.divide(hom[1], depth, out=np.full(h*w, -1.), where=valid)
+            gray = view.image.mean(axis=-1)
+            img_h, img_w = gray.shape
+            inside = valid & (u >= 0) & (u < img_w) & (v >= 0) & (v < img_h)
+            pixels = gray[v[inside].astype(int), u[inside].astype(int)] > self.threshold
+            # 多视角只在同一车体BEV格上融合，重叠不会重复累计强度。
+            indices = np.flatnonzero(inside)
+            target.ravel()[indices] = np.maximum(target.ravel()[indices], pixels)
+        return BEVTensor(data=target[None], resolution=self.resolution, extent=self.extent,
+                         channels=self.channels,
+                         camera_projection=CAMERA_PROJECTION_CURRENT if frame.views else None)

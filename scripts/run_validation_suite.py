@@ -353,6 +353,8 @@ def _summary_rows(reports: dict[str, dict]) -> list[dict]:
         rows.append(
             {
                 "experiment": name,
+                "production_qualified": False,
+                "qualification_reason": "matrix_comparison_only; use production_component_verification_v1 for unified evidence",
                 "model_label": report.get("model_label"),
                 "model_name": report["protocol"].get("model_name"),
                 "description": report["experiment"]["description"],
@@ -457,7 +459,7 @@ def _write_markdown(rows: list[dict], output: Path) -> None:
             )
         )
     (output / "summary.md").write_text(
-        "# 闭环验证对照表\n\n" + header + "\n".join(lines) + "\n",
+        "# 闭环验证对照表\n\n本表为矩阵对照，运行完成与指标不提供生产资格。统一三模块/耦合验收请使用 scripts/verify_closed_loop_components.py；旧GT/理想执行保持诊断用途。\n\n" + header + "\n".join(lines) + "\n",
         encoding="utf-8",
     )
 
@@ -549,7 +551,7 @@ def main() -> None:
         parser.error("需要 --experiment 或 --freeze-protocol")
     reports = _run_suite(args, output)
     rows = _summary_rows(reports)
-    atomic_write_json(output / "summary.json", {"schema_version": 1, "rows": rows})
+    atomic_write_json(output / "summary.json", {"schema_version": 1, "kind": "matrix_comparison_not_production_acceptance", "production_qualified": False, "rows": rows})
     _write_markdown(rows, output)
     print(f"汇总：{output / 'summary.json'}；对照表：{output / 'summary.md'}")
     for row in rows:

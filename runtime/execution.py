@@ -19,6 +19,8 @@ from typing import Protocol
 import numpy as np
 
 from interfaces import ControlCmd, Trajectory, VehicleState
+from controller.constrained_mpc import ControlSafetyError
+from .sources import SafetyStopError
 
 __all__ = [
     "ExecutionError",
@@ -95,12 +97,19 @@ class MpcVehicleExecutor:
     def propose(
         self, state: VehicleState, trajectory: Trajectory, dt: float
     ) -> VehicleState:
-        cmd = self.mpc.compute(trajectory, state)
+        try:
+            cmd = self.mpc.compute(trajectory, state)
+        except ControlSafetyError as exc:
+            raise SafetyStopError(str(exc)) from exc
         self._last_cmd = cmd
         return self.vehicle_model.step(state, cmd, dt)
 
     def audit(self) -> dict:
-        return {"kind": "mpc_vehicle"}
+        result = {"kind": "mpc_vehicle"}
+        stats = getattr(self.mpc, 'safety_stats', None)
+        if callable(stats):
+            result['control_safety'] = stats()
+        return result
 
 
 class IdealPathExecutor:

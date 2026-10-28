@@ -2,18 +2,15 @@
 
 通过相机模型把泊车位目标区域渲染到图像平面，生成 CameraFrame。
 
-**环视配置**：自动泊车需要的目标既可能在正前方，也可能在侧面或车后
-（实测 val 集 58.3% 的目标方位角 ≥90°）。默认按 4 个正交视角
-（前 / 左 / 右 / 后，`view_yaws_deg=(0, 90, -90, 180)`）渲染并叠加到同一张
-图像上，等效水平全视场 360°；每个视角仍用同一套针孔 + 单应几何，
-`Camera2BEV` 的反投影口径因此不变。
+环视帧保留每个视角的图像与标定，Camera2BEV逐视角变换到统一车体系。
+CameraFrame.image仅为兼容预览，不能用它恢复环视方向。
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from interfaces import CameraFrame, CameraIntrinsics, GoalPose
+from interfaces import CameraFrame, CameraIntrinsics, CameraView, GoalPose
 from .camera_model import CameraModel
 from .environment import ParkingEnvironment
 from .noise import NoiseLevel, NoiseProfile, get_noise_profile
@@ -49,56 +46,42 @@ class SimulatedCamera:
         self.view_yaws_deg = tuple(float(value) for value in view_yaws_deg)
         if not self.view_yaws_deg:
             raise ValueError("环视相机至少需要一个视角")
+        if (not np.isfinite([self.height, self.pitch, *self.view_yaws_deg]).all()
+                or self.height <= 0):
+            raise ValueError("相机高度必须为正，视角与外参必须有限")
         self.model = CameraModel(intrinsics, height=height, pitch=pitch)
         self.parking_area = parking_area
         self.noise_profile = get_noise_profile(noise)
         self.rng = np.random.default_rng(seed)
 
     def capture(self, x: float, y: float, yaw: float) -> CameraFrame:
-        """采集一帧图像。
-
-        将环境中的第一个泊车位目标区域投影到图像并填充为白色（255），
-        其余像素为黑色。图像为灰度单通道。多个视角渲染到同一张图像。
-        """
-        w = self.intrinsics.image_width
-        h = self.intrinsics.image_height
-        image = np.zeros((h, w), dtype=np.uint8)
-
+        """采集各视角；目标漏检事件共享，像素/伪目标噪声逐视角生成。"""
         config = self.noise_profile.camera
         missed = (
             bool(self.rng.random() < config.false_negative_rate)
             if self.env.parking_spots and config.false_negative_rate > 0.0 else False
         )
-        if self.env.parking_spots and not missed:
-            goal = self.env.parking_spots[0]
-            rect = self._parking_rectangle(goal)
-            for view_yaw in self.view_yaws_deg:
-                # 各视角相机朝向 view_yaw；渲染时先旋到该视角的局部坐标系，
-                # 再按该视角的相机平面对多边形做裁剪并投影填充。
-                local_rect = [
-                    self._to_view_local(px, py, x, y, yaw, view_yaw)
-                    for px, py in rect
-                ]
-                visible = self._clip_to_camera_front(local_rect)
-                pixels = []
-                for point in visible:
-                    proj = self.model.project(float(point[0]), float(point[1]))
-                    if proj is not None:
-                        pixels.append(proj)
+        views = []
+        for view_yaw in self.view_yaws_deg:
+            image = np.zeros((self.intrinsics.image_height, self.intrinsics.image_width), dtype=np.uint8)
+            if self.env.parking_spots and not missed:
+                rect = self._parking_rectangle(self.env.parking_spots[0])
+                local = [self._to_view_local(px, py, x, y, yaw, view_yaw) for px, py in rect]
+                visible = self._clip_to_camera_front(local)
+                pixels = [self.model.project(*point) for point in visible]
+                pixels = [point for point in pixels if point is not None]
                 if len(pixels) >= 3:
                     self._fill_polygon(image, self._convex_hull(pixels), 255)
-
-        if config.false_positive_rate > 0.0 and self.rng.random() < config.false_positive_rate:
-            self._add_false_positive(image)
-        if config.pixel_std > 0.0:
-            image = np.clip(
-                image.astype(np.float32)
-                + self.rng.normal(0.0, config.pixel_std, size=image.shape),
-                0.0,
-                255.0,
-            ).astype(np.uint8)
-
-        return CameraFrame(image=image[:, :, None], intrinsics=self.intrinsics)
+            if config.false_positive_rate > 0.0 and self.rng.random() < config.false_positive_rate:
+                self._add_false_positive(image)
+            if config.pixel_std > 0.0:
+                image = np.clip(image.astype(np.float32)
+                                + self.rng.normal(0.0, config.pixel_std, size=image.shape),
+                                0.0, 255.0).astype(np.uint8)
+            views.append(CameraView(image[:, :, None], self.intrinsics,
+                                    yaw=float(np.deg2rad(view_yaw)), height=self.height, pitch=self.pitch))
+        preview = np.maximum.reduce([view.image for view in views])
+        return CameraFrame(image=preview, intrinsics=self.intrinsics, views=tuple(views))
 
     def _add_false_positive(self, image: np.ndarray) -> None:
         """在图像内增加一个随机矩形伪目标。"""
@@ -152,7 +135,7 @@ class SimulatedCamera:
         """按相机前方条件 ``cosP·X + h·sinP > 0`` 对地面多边形做 Sutherland–Hodgman 裁剪。
 
         相机斜向下看时，车辆后方约 0.87m 以外的地面点落在相机平面之后。此处对
-        这些边求与相机平面的交点并插值，使跨越相机平面的目标仍能渲染可见部分。
+        这些边求与相机平面的交点并插值到同一正深度eps平面，避免透视除法遇到零深度。
         """
         cos_p, sin_p = np.cos(self.pitch), np.sin(self.pitch)
         offset = self.height * sin_p
@@ -173,7 +156,7 @@ class SimulatedCamera:
             if current_in != following_in:
                 span = d_current - d_following
                 if abs(span) > 1e-12:
-                    ratio = d_current / span
+                    ratio = (d_current - eps) / span
                     output.append(current + ratio * (following - current))
         return [(float(point[0]), float(point[1])) for point in output]
 

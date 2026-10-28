@@ -176,6 +176,8 @@ def run_single_cycle_tracking(
     overall = _aggregate(rows)
     report = {
         "schema_version": 1,
+        "kind": "legacy_diagnostic_not_production_acceptance",
+        "production_qualified": False,
         "task": "L3_single_cycle_tracking",
         "data": str(data_source),
         "checkpoint": str(Path(checkpoint_path).resolve()) if source == "network" else None,
@@ -214,7 +216,7 @@ def _aggregate(rows: list[dict]) -> dict:
     }
 
 
-def main() -> None:
+def legacy_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="schema v2 数据集 NPZ")
     parser.add_argument("--model", default="", help="network 源时提供 deployment checkpoint")
@@ -238,6 +240,15 @@ def main() -> None:
         source=args.source,
     )
     print(f"报告：{Path(args.output).resolve()}")
+
+
+def main() -> None:
+    if "--legacy-diagnostic" in sys.argv:
+        sys.argv.remove("--legacy-diagnostic")
+        legacy_main()
+    else:
+        from scripts.verify_closed_loop_components import main as production_main
+        production_main(stage="L3")
 
 
 if __name__ == "__main__":

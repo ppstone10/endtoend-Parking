@@ -1,0 +1,41 @@
+# LT30配对旧输入控制：与per-view配置仅输入版本、数据路径、输出路径不同。
+# 从相同seed冷启动；last.pt固定20轮/原生0.5停止为主要比较对象。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    stop_threshold: 0.5
+    target_channel: image
+    height_mode: semantic
+    camera_projection: legacy_overlay_v1
+data:
+  train: ../../data/task_dataset/v40_dagger_collision/train-balanced.npz
+  val: ../../data/task_dataset/tracked_pivot_v8_3000/val.npz
+  batch_size: 8
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 20
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/lt30-surround-input-20261027/legacy-control

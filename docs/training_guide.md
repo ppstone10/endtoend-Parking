@@ -22,6 +22,22 @@
 
 采用方案的 S9 test 为 ADE/FDE 0.293/0.527m、长度 MAE 26.83 点；test 未用于调参。
 
+## 环视修复后的配对训练（LT30，已完成）
+
+LT29已完成原2918训练/300验证的`per_view_v2`副本修复。当前训练入口仍严格拒绝跨输入版本，旧image权重不能只改声明当作适配完成。可运行方案见[LT30](long_tasks/LT-20261027-30-surround-input-paired-training.md)：`net-v1-surround-legacy-control.yaml`与`net-v1-surround-per-view.yaml`同seed冷启动、同旧专家/恢复监督、各20轮固定剂量，仅改变target生成版本。两臂须使用各自匹配的train/val，正式训练由用户执行。
+
+主比较为固定末轮`last.pt`、原生stop_threshold0.5；runner的`report.json`使用校准后的best，不能与原生last结果混报。原生指标在计划中的`analysis-*-native/report.json`。冷启动配对只检验输入修复的学习效应，不能代替相对原模型的旧成功任务保持；五层质量及完整闭环验收仍独立保留。规范见[SURROUND-FIT](../spec/surround_input_training.md)。
+
+LT30两臂已各完成20轮/7300更新；[完成反馈后的独立复核](../runs/verification/lt30-independent-review-20261027/review.md)重算两份300条原生预测，ADE/FDE由0.3685/0.4976m降至0.2593/0.3187m。但这些FDE在专家长度处取点；模型自身停止点的平均位置误差反由0.973m增至1.695m，静态位置/航向联合匹配从28/300降至20/300。`terminal_pose_loss`仍只监督专家长度处，后缀坐标没有直接轨迹损失梯度。实际停止点/全长输出须独立验收；这些静态数值不是闭环成功率，当前结果不能晋升。
+
+## 实际输出末点与可选专家终点保持
+
+`analyze_predictions.py`保留原专家长度指标，同时报告`emitted_endpoint_*`、`emitted_any_joint_passed`与`emitted_suffix_*`；位置/环绕航向相对真实batch局部目标计算，联合判断用每任务selected_goal的严格容差。缺目标或容差时`terminal_status=not_observed/partial`并保留真实观察分母，不能猜默认容差。新增`sample_metrics.json`保存全部样本，支持逐任务回归；这些都是静态预测诊断，不是车辆闭环成功率。
+
+`training.terminal_hold_weight`默认0。启用正值时要求变长模型/cumulative停止监督，按样本等权监督专家长度后的坐标保持专家末位姿，并将teacher forcing输入副本的后缀按同规则补齐；原target/mask和停止标签不变。旧checkpoint缺字段按0解释，仅当前也为0才能恢复旧优化器；启用新策略请通过既有initialize_from只加载同模型配置的权重，重新建立优化器。
+
+[LT31](long_tasks/LT-20261027-31-terminal-hold-paired-validation.md)已完成同LT30起点、同数据、各4轮/lr1e-5的control(0)/hold(0.25)固定对照，阶段筛选失败：原生末点联合control 84/300、hold 14/300，停止前联合支撑253/15；hold有285条提前、260条在首次联合点前停止。完整未截断输出表明末端坐标保持部分改善，不能由后缀数减少直接断言保持未学到；损失与teacher补齐的单独影响尚未隔离。该hold配方不扩大，control仅作为待真实闭环验证候选。见[独立复核](../runs/verification/lt31-independent-review-20261027/review.md)。新增损失后的总loss不可与控制总loss直接比较；主指标用固定末轮原生0.5的实际末点、前缀及分组回归。Spec：[EMITTED-TERM](../spec/emitted_terminal_alignment.md)。
+
 ## v9 连续净空安全与闭环状态微调
 
 `configs/training/net-v1-safe.yaml` 从已准入的 v7 `best.pt` 只加载模型权重，不继承 optimizer、epoch 或 patience，再使用两个有明确职责的输入进行安全微调：
@@ -56,24 +72,30 @@
 - `stop_threshold_calibration.json`：完整阈值网格、选择目标和同分决胜证据。
 - `training_curve.png/.pdf`：loss、自由滚动、课程/早停阶段和停止质量。
 
-## L1 感知→BEV 保真评测
+## 当前生产分层验收
+
+已有LT21结果无需为4条L1误报重跑：使用`scripts/review_component_verification.py`做类型保真的只读v2迁移。模型输入声明的审计与独立校正副本由`scripts/audit_parking_input_contract.py`生成，保持网络参数和实际BEV不变。新的完整车体约束控制候选通过`scripts/compare_footprint_execution.py`显式运行，正式同300命令见[LT22](long_tasks/LT-20261023-22-footprint-constrained-control-validation.md)，产物核验用`scripts/inspect_footprint_execution.py`；不启动训练或替换默认控制器。
+
+三个验证入口默认共用原生E5全程运行、独立组件重放及两个耦合检查，命令和用户执行的同300长任务见[LT21](long_tasks/LT-20261023-21-production-component-verification.md)，判据见[统一设计](closed_loop_verification_design.md)。已生成的同一报告分别使用`--phase inspect --output <运行目录>`查看，避免重复仿真。旧诊断命令必须加`--legacy-diagnostic`；以下旧v7指标/经验阈值均不能作为当前模型通过证明。
+
+## 历史诊断 L1 感知→BEV 保真评测
 
 闭环验收前先隔离感知层失真（验证阶梯 L1，见 `docs/closed_loop_verification_design.md` §4）：
 
 ```powershell
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_bev_fidelity.py --poses-per-scene 4 --output runs/bev-fidelity/L1-v1
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_bev_fidelity.py --legacy-diagnostic --poses-per-scene 4 --output runs/bev-fidelity/L1-v1
 ```
 
 - occupancy 主口径为"高分辨率 LiDAR 采样真值"（3600 束 clean 同配置投射），几何真值作参考；target 用车位矩形真值。
 - 判定：target 命中率应 ≥0.9；clean→high 的 occupancy IoU 退化幅度用于确认感知层不是闭环失败主因；若 high 噪声下 IoU 系统性低于 0.35，先检查感知/BEV 参数再进入规划层调优。
 - 全部指标写入 `report.json`（逐场景×噪声档 + 整体）并输出退化曲线 PNG/PDF。
 
-## L2 闭环访问状态轨迹质量评测
+## 历史诊断 L2 闭环访问状态轨迹质量评测
 
 闭环失败归因的规划层指标（验证阶梯 L2，见 `docs/closed_loop_verification_design.md` §4）：
 
 ```powershell
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_visited_state_trajectory.py \
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_visited_state_trajectory.py --legacy-diagnostic \
     --data data/task_dataset/tracked_pivot_v7_3000/val.npz \
     --model runs/training/v7-flow-v3/net-v1/deployment.pt \
     --samples 34 --output runs/visited-state/L2-v1-v7/report.json
@@ -83,26 +105,26 @@
 - 判定：近端航向误差与方向切换应接近专家量级（flips 0、近端航向收敛）；若近端预测长度骤缩（如 <2m）且航向偏差大，按方向 B 结论修训练侧（近端终点对齐）而非调 MPC。
 - 报告含整体/分组/逐重规划行与退化曲线 PNG/PDF。
 
-## L3 单周期 MPC 跟踪复核
+## 历史诊断 L3 单周期 MPC 跟踪复核
 
 隔离控制层的指标（验证阶梯 L3，见 `docs/closed_loop_verification_design.md` §4）：
 
 ```powershell
 # 专家参考：控制层基线（应保持 M1 量级）
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py \
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py --legacy-diagnostic \
     --data data/task_dataset/tracked_pivot_v7_3000/val.npz --samples 34 --source expert \
     --output runs/single-cycle/L3-expert/report.json
 
 # 网络参考：网络轨迹下控制层仍能跟上（RMS 应远小于近端轨迹误差）
-& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py \
+& 'D:\conda\envs\endtoend-parking\python.exe' scripts/evaluate_single_cycle_tracking.py --legacy-diagnostic \
     --data data/task_dataset/tracked_pivot_v7_3000/val.npz \
     --model runs/training/v7-flow-v3/net-v1/deployment.pt --samples 34 --source network \
     --output runs/single-cycle/L3-network/report.json
 ```
 
 - 指标：跟踪横向 RMS、周期末对参考轨迹最近点偏差、reach_ratio。
-- 判定：专家参考 RMS 应保持 M1 量级（<0.05m）；若网络参考 RMS 明显大于专家参考且伴随失败，问题在网络参考轨迹（查 L2）而非 MPC。
-- 实测 v7：专家 RMS 0.02–0.04m、网络 RMS 多数 <0.05m → 控制层健康。
+- 历史经验量级：专家参考中心RMS<0.05m仅是诊断量；网络参考误差较大需要同时检查参考、航向、完整车体扫掠和控制响应，不能排除MPC。
+- 实测v7中心RMS多数<0.05m只覆盖当时的初始单周期，不给当前控制层健康背书。
 
 ## L4 顶层效率判据
 

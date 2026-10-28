@@ -101,7 +101,7 @@ def main() -> None:
     parser.add_argument("--executor", choices=["mpc_vehicle", "ideal_path"], default="mpc_vehicle")
     parser.add_argument(
         "--safety-mode",
-        choices=["none", "expert_fallback", "hierarchical"],
+        choices=["none", "expert_fallback", "hierarchical", "strict_footprint", "safe_prefix"],
         default="none",
     )
     parser.add_argument("--data", default="data/task_dataset/tracked_pivot_v7_3000/val.npz")
@@ -151,11 +151,13 @@ def main() -> None:
             args.bev_source != "sensor"
             or args.trajectory_source != "expert"
             or args.executor != "mpc_vehicle"
+            or args.safety_mode != "none"
         ):
             spec = ExperimentSpec(
                 name=spec.name,
                 bev_source=args.bev_source,
-                trajectory_source=args.trajectory_source,
+                trajectory_source=(spec.trajectory_source if args.trajectory_source == "expert"
+                                   and args.safety_mode != "none" else args.trajectory_source),
                 executor=args.executor,
                 safety_mode=args.safety_mode,
                 description=spec.description,

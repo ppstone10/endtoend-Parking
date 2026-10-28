@@ -120,8 +120,13 @@ class TestPredictionAnalysis(unittest.TestCase):
             self.assertEqual(report["overall"]["samples"], 2)
             self.assertEqual(report["groups"]["task_type"]["T1"]["samples"], 1)
             self.assertIn("predicted_length_mae_points", report["overall"])
+            self.assertEqual(report["overall"]["terminal_status"], "not_observed")
+            all_rows = json.loads((root / "analysis" / "sample_metrics.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(all_rows), 2)
+            self.assertIn("emitted_endpoint_position_error_m", all_rows[0])
             for name in (
                 "report.json",
+                "sample_metrics.json",
                 "grouped_metrics.png",
                 "grouped_metrics.pdf",
                 "worst_overall.png",

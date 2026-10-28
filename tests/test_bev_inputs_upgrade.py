@@ -145,7 +145,8 @@ class TestGeometryTarget(unittest.TestCase):
         for name in ("occupancy", "height", "density", "vehicle"):
             with self.subTest(channel=name):
                 self.assertTrue(np.array_equal(plain[name], overridden[name]))
-        self.assertFalse(np.array_equal(plain["target"], overridden["target"]))
+        # 四视角已按各自外参投到车体系，此干净侧方例与几何真值应一致。
+        np.testing.assert_array_equal(plain["target"], overridden["target"])
 
 
 class TestGroundTruthPipelineHeight(unittest.TestCase):

@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dataset import DatasetGenerator
@@ -56,6 +58,7 @@ def run_prediction_analysis(
         metadata,
         stop_logits=predictions.stop_logits,
         stop_threshold=float(getattr(loaded.model, "stop_threshold", 0.5)),
+        local_goals=np.concatenate([batch[1].cpu().numpy() for batch in batches]),
     )
     analysis["overall"]["inference_ms_per_sample"] = predictions.inference_ms_per_sample
     worst = sorted(sample_metrics, key=lambda item: item["fde_m"], reverse=True)
@@ -88,6 +91,10 @@ def run_prediction_analysis(
         destination / "worst_by_task",
         title="Worst open-loop prediction in each task type",
     )
+    sample_metrics_path = atomic_write_json(
+        destination / "sample_metrics.json",
+        [public_sample_metric(item) for item in sample_metrics],
+    )
     report = {
         "schema_version": 1,
         "dataset": str(data_source),
@@ -98,6 +105,7 @@ def run_prediction_analysis(
         **analysis,
         "worst_samples": [public_sample_metric(item) for item in worst[:20]],
         "artifacts": {
+            "sample_metrics": str(sample_metrics_path),
             "grouped_metrics_png": grouped_paths[0],
             "grouped_metrics_pdf": grouped_paths[1],
             "worst_overall_png": overall_paths[0],

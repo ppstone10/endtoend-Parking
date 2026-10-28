@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from interfaces import BEVTensor
+from interfaces.bev import CAMERA_PROJECTION_GEOMETRY
 
 CH_VEHICLE = "vehicle"
 
@@ -60,6 +61,8 @@ class BEVFusion:
             resolution=lidar_bev.resolution,
             extent=lidar_bev.extent,
             channels=channels,
+            camera_projection=(CAMERA_PROJECTION_GEOMETRY if target_override is not None
+                               else camera_bev.camera_projection),
         )
 
     def _vehicle_outline(self, bev: BEVTensor) -> np.ndarray | None:

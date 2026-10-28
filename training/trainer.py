@@ -10,7 +10,7 @@ from typing import Callable, Iterable
 import torch
 import torch.nn as nn
 
-from model import loss_fn, variable_loss_fn
+from model import hold_terminal_targets, loss_fn, terminal_hold_loss, variable_loss_fn
 
 
 Batch = tuple[torch.Tensor, ...]
@@ -48,8 +48,10 @@ class TrainerConfig:
     balance_recovery_batches: bool = False
     endpoint_alignment_weight: float = 0.0
     endpoint_alignment_tail_points: int = 8
-    #: 终点位姿损失权重（>0 启用）：只监督预测轨迹**最后一点**，对准闭环成功判据。
+    #: 专家有效前缀末点的位姿监督；不保证模型自身停止点达标。
     terminal_pose_weight: float = 0.0
+    #: 可选专家末位姿后缀保持；启用时同步补齐teacher输入，默认保留旧行为。
+    terminal_hold_weight: float = 0.0
     #: 终点位姿损失中的航向项权重。位置项以米²计、航向项以弧度²计，
     #: 默认 10.0 的等效关系：0.1rad(≈5.7°) 航向偏差 ≈ 0.3m 位置偏差。
     terminal_yaw_weight: float = 10.0
@@ -157,6 +159,10 @@ class TrainerConfig:
             raise ValueError("terminal_pose_weight 必须为有限非负数")
         if not math.isfinite(self.terminal_yaw_weight) or self.terminal_yaw_weight < 0.0:
             raise ValueError("terminal_yaw_weight 必须为有限非负数")
+        if not math.isfinite(self.terminal_hold_weight) or self.terminal_hold_weight < 0.0:
+            raise ValueError("terminal_hold_weight必须为有限非负数")
+        if self.terminal_hold_weight > 0 and self.stop_target_mode != "cumulative":
+            raise ValueError("终点保持要求cumulative停止监督")
 
     def teacher_forcing_ratio(self, epoch: int) -> float:
         """线性退火并在终值处截断。"""
@@ -219,6 +225,8 @@ class Trainer:
         self.initialization = None if initialization is None else dict(initialization)
         if config.collision_loss_weight > 0.0 and safety_loss is None:
             raise ValueError("collision_loss_weight > 0 时必须提供 safety_loss")
+        if config.terminal_hold_weight > 0 and not callable(getattr(model, "forward_with_stop", None)):
+            raise ValueError("终点保持要求变长轨迹模型")
         self.device = torch.device(config.device)
         self.model.to(self.device)
         self.optimizer = torch.optim.Adam(
@@ -242,6 +250,8 @@ class Trainer:
         clearance_field = moved[5] if len(moved) >= 6 and moved[5].ndim == 4 else None
         forward_with_stop = getattr(self.model, "forward_with_stop", None)
         if callable(forward_with_stop):
+            teacher_target = (hold_terminal_targets(target, mask)
+                              if training and self.config.terminal_hold_weight > 0 else target)
             teacher_forcing_ratio = (
                 self.config.teacher_forcing_ratio(epoch) if training else 0.0
             )
@@ -255,7 +265,7 @@ class Trainer:
                 bev,
                 goal,
                 state,
-                teacher_points=target if training else None,
+                teacher_points=teacher_target if training else None,
                 teacher_forcing_ratio=teacher_forcing_ratio,
                 sampling_generator=sampling_generator,
             )
@@ -309,6 +319,11 @@ class Trainer:
                 mask,
                 tolerance_m=self.config.progress_tolerance_m,
                 reference_step_m=self.config.progress_step_scale_m,
+            )
+        if self.config.terminal_hold_weight > 0.0:
+            total = total + self.config.terminal_hold_weight * terminal_hold_loss(
+                points, target, mask, yaw_weight=self.config.terminal_yaw_weight,
+                yaw_error_mode=self.config.yaw_error_mode,
             )
         return total, collision_loss
 
@@ -453,6 +468,8 @@ class Trainer:
         # 缺字段的历史检查点只拥有 raw 语义，不允许跨模式恢复优化器。
         if stored_trainer.get('yaw_error_mode', 'raw') != self.config.yaw_error_mode:
             raise RuntimeError('checkpoint 训练超参数 yaw_error_mode 与当前 Trainer 不一致')
+        if stored_trainer.get('terminal_hold_weight', 0.0) != self.config.terminal_hold_weight:
+            raise RuntimeError('checkpoint训练超参数terminal_hold_weight不一致')
         compatibility_fields = {
             "learning_rate",
             "patience",

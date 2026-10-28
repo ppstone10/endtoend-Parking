@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from interfaces import BEVTensor, GoalPose, Trajectory, VehicleState
+from interfaces.bev import CAMERA_PROJECTION_LEGACY, assert_camera_projection_matches
 
 
 class MineParkingNet(nn.Module):
@@ -28,10 +29,13 @@ class MineParkingNet(nn.Module):
         horizon: int = 20,
         dt: float = 0.1,
         hidden_dim: int = 256,
+        camera_projection: str = CAMERA_PROJECTION_LEGACY,
     ) -> None:
         super().__init__()
         self.horizon = horizon
         self.dt = dt
+        assert_camera_projection_matches(camera_projection, camera_projection)
+        self.camera_projection = camera_projection
 
         # BEV 编码器：3 层卷积下采样。
         self.bev_encoder = nn.Sequential(
@@ -83,6 +87,7 @@ class MineParkingNet(nn.Module):
     ) -> Trajectory:
         """预测未来轨迹（局部坐标）。"""
         self.eval()
+        assert_camera_projection_matches(bev.camera_projection, self.camera_projection)
         bev_t = torch.as_tensor(bev.data, dtype=torch.float32).unsqueeze(0)
         goal_t = torch.as_tensor(
             [goal.x, goal.y, goal.yaw], dtype=torch.float32
@@ -210,7 +215,7 @@ def terminal_pose_loss(
     yaw_weight: float = 10.0,
     yaw_error_mode: str = 'raw',
 ) -> torch.Tensor:
-    """终点位姿损失：**只**监督预测轨迹的**最后一点**，并对航向加权。
+    """监督专家mask末点处的预测位姿；该索引不等于模型原生停止点。
 
     为什么需要它：闭环成功判据是终点位姿落入 ``tol_pos``/``tol_yaw``（0.3m / 10°），
     但通用逐点损失监督的是整条轨迹的平均误差，两者在近端可以完全脱钩——

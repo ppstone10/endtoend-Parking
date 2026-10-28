@@ -1,7 +1,7 @@
 """L1 感知→BEV 保真度评测：按场景×噪声档输出退化报告。
 
-对每个场景在合法起点区内采样若干车辆位姿（朝向目标车位方向，模拟真实泊车
-起点朝向），对每个位姿构建带目标车位的传感器管道并采集融合 BEV，与两类
+对每个场景在合法起点区内采样若干车辆位姿（航向均匀采样，不强制目标位于前方），
+对每个位姿构建带目标车位的传感器管道并采集融合 BEV，与两类
 真值比较：
 
 - occupancy：高分辨率 LiDAR 采样真值（主口径）与场景几何真值（参考）；
@@ -44,7 +44,7 @@ from viz.bev_fidelity import save_bev_fidelity_degradation
 
 
 def _sample_vehicle_pose(scene, vehicle: VehicleConfig, goal: GoalPose, rng: np.random.Generator):
-    """在场景 spawn_zones 内采样一个朝向目标、四角无碰撞的车辆位姿。"""
+    """在spawn_zones内采样位置与独立航向、四角无碰撞的车辆位姿。"""
     env = scene.env
     zones = scene.spawn_zones or [(-env.world_size / 2 + 2, env.world_size / 2 - 2,
                                     -env.world_size / 2 + 2, env.world_size / 2 - 2)]
@@ -57,8 +57,7 @@ def _sample_vehicle_pose(scene, vehicle: VehicleConfig, goal: GoalPose, rng: np.
         dist = math.hypot(goal.x - x, goal.y - y)
         if dist < 3.0 or dist > 20.0:
             continue
-        # 车头朝向目标（局部前向 +x 指向目标方向）。
-        yaw = float(np.arctan2(goal.y - y, goal.x - x))
+        yaw = float(rng.uniform(-np.pi, np.pi))
         cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
         corners = [
             (x + half_l * cos_yaw - half_w * sin_yaw, y + half_l * sin_yaw + half_w * cos_yaw),
@@ -173,9 +172,12 @@ def run_bev_fidelity(
     plot_paths = save_bev_fidelity_degradation(per_scene, destination / "bev_fidelity_degradation")
     report = {
         "schema_version": 1,
+        "kind": "legacy_diagnostic_not_production_acceptance",
+        "production_qualified": False,
         "task": "L1_bev_fidelity",
         "seed": seed,
         "poses_per_scene": poses_per_scene,
+        "pose_sampling": "uniform_vehicle_yaw_in_spawn_zone",
         "vehicle_model": vehicle.to_metadata(),
         "overall": overall,
         "per_scene": per_scene_report,
@@ -210,7 +212,7 @@ def _mock_task(bundle):
     )
 
 
-def main() -> None:
+def legacy_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenes",
@@ -231,6 +233,15 @@ def main() -> None:
         seed=args.seed,
     )
     print(f"报告：{Path(args.output).resolve() / 'report.json'}")
+
+
+def main() -> None:
+    if "--legacy-diagnostic" in sys.argv:
+        sys.argv.remove("--legacy-diagnostic")
+        legacy_main()
+    else:
+        from scripts.verify_closed_loop_components import main as production_main
+        production_main(stage="L1")
 
 
 if __name__ == "__main__":

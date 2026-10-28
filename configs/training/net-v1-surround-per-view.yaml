@@ -1,0 +1,41 @@
+# LT30修复输入臂；保留旧2400条专家与518条恢复监督，不能称已保住旧闭环能力。
+# 与legacy-control同seed/初始参数/优化器/损失/20轮曝光；无warm start。
+model:
+  name: net-v1
+  config:
+    bev_channels: 5
+    max_horizon: 320
+    dt: 0.2
+    hidden_dim: 128
+    stop_threshold: 0.5
+    target_channel: image
+    height_mode: semantic
+    camera_projection: per_view_v2
+data:
+  train: ../../runs/verification/surround-target-rebuild-lineage-20261027/train/train-balanced.npz
+  val: ../../runs/verification/surround-target-rebuild-lineage-20261027/val/val.npz
+  batch_size: 8
+training:
+  epochs: 20
+  learning_rate: 0.0003
+  patience: 20
+  min_delta: 0.0
+  device: cpu
+  gradient_clip_norm: 1.0
+  stop_loss_weight: 0.2
+  endpoint_alignment_weight: 0.5
+  endpoint_alignment_tail_points: 8
+  terminal_pose_weight: 1.0
+  terminal_yaw_weight: 10.0
+  collision_loss_weight: 0.0
+  balance_recovery_batches: false
+  seed: 20260827
+  shuffle_train: true
+  balance_stop_loss: false
+  stop_target_mode: cumulative
+  teacher_forcing_start: 1.0
+  teacher_forcing_end: 0.2
+  teacher_forcing_decay_epochs: 10
+  early_stopping_start_epoch: 10
+output:
+  directory: ../../runs/training/lt30-surround-input-20261027/per-view

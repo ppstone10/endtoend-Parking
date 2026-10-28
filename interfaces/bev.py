@@ -6,6 +6,30 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+CAMERA_PROJECTION_LEGACY = "legacy_overlay_v1"
+CAMERA_PROJECTION_CURRENT = "per_view_v2"
+CAMERA_PROJECTION_GEOMETRY = "geometry_v1"
+
+
+def assert_camera_projection_matches(actual: str | None, expected: str, *, target_channel="image") -> None:
+    """显式GT源可用于诊断；image输入必须匹配训练投影版本。"""
+    if expected not in (CAMERA_PROJECTION_LEGACY, CAMERA_PROJECTION_CURRENT):
+        raise ValueError(f"未知模型camera_projection：{expected}")
+    if actual not in (None, CAMERA_PROJECTION_LEGACY, CAMERA_PROJECTION_CURRENT, CAMERA_PROJECTION_GEOMETRY):
+        raise ValueError(f"未知输入camera_projection：{actual}")
+    if target_channel == "geometry":
+        if actual == CAMERA_PROJECTION_CURRENT:
+            raise ValueError("target_channel不匹配：输入为修复后的image，模型声明geometry")
+        return
+    if actual == CAMERA_PROJECTION_GEOMETRY:
+        return
+    actual = actual or CAMERA_PROJECTION_LEGACY
+    if actual != expected:
+        raise ValueError(
+            f"camera_projection不匹配：输入{actual}，模型{expected}；"
+            "请使用对应版本数据/权重，修复后的输入需要重新训练，不能只改checkpoint声明"
+        )
+
 
 @dataclass(frozen=True)
 class BEVConfig:
@@ -59,18 +83,23 @@ class BEVTensor:
     data 形状为 (C, H, W)。通道语义由 channels 列表说明，约定顺序：
     障碍物占据、高度、点云密度、目标区域、车辆轮廓。
     resolution 为每栅格的米数，extent 为前后左右覆盖范围 (front, back, left, right) 米。
+    camera_projection记录target生成版本；None保留历史元数据，不能冒充per_view_v2。
     """
 
     data: np.ndarray
     resolution: float
     extent: tuple[float, float, float, float]
     channels: list[str] = field(default_factory=list)
+    camera_projection: str | None = None
 
     def __post_init__(self) -> None:
         config = BEVConfig(resolution=self.resolution, extent=self.extent)
         self.resolution = config.resolution
         self.extent = config.extent
         self.data = np.asarray(self.data, dtype=np.float32)
+        if self.camera_projection not in (None, CAMERA_PROJECTION_LEGACY,
+                                          CAMERA_PROJECTION_CURRENT, CAMERA_PROJECTION_GEOMETRY):
+            raise ValueError(f"未知camera_projection：{self.camera_projection}")
         if self.data.ndim != 3:
             raise ValueError(f"BEV 数据形状必须为 (C, H, W)，实际 {self.data.ndim} 维")
         c, h, w = self.data.shape
@@ -95,11 +124,14 @@ class BEVTensor:
     def width(self) -> int:
         return self.data.shape[2]
 
-    def to_metadata(self) -> dict[str, float | list[float] | list[str] | list[int]]:
+    def to_metadata(self) -> dict:
         """返回可直接 JSON 序列化的稳定空间与通道元数据。"""
-        return {
+        metadata = {
             "resolution": self.resolution,
             "extent": list(self.extent),
             "channels": list(self.channels),
             "shape": list(self.shape),
         }
+        if self.camera_projection is not None:
+            metadata["camera_projection"] = self.camera_projection
+        return metadata

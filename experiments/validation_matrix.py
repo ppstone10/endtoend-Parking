@@ -40,7 +40,11 @@ from typing import Any, Callable
 import numpy as np
 
 from controller import MPCController
+from controller.terminal_capture_mpc import TerminalCaptureMPCController
+from runtime.strict_footprint import StrictFootprintSource
+from runtime.safe_prefix import SafePrefixReferenceSource
 from dataset import GroundTruthBEVPipeline, build_task_components
+from dataset.components import assert_pipeline_matches_contract
 from experiments.closed_loop_evaluation import (
     load_dataset_manifest,
     reconstruct_dataset_task,
@@ -72,7 +76,7 @@ from training.reporting import atomic_write_json
 VALID_BEV_SOURCES = ("sensor", "gt")
 VALID_TRAJECTORY_SOURCES = ("expert", "expert_replan", "network")
 VALID_EXECUTORS = ("mpc_vehicle", "ideal_path")
-VALID_SAFETY_MODES = ("none", "expert_fallback", "hierarchical", "filter")
+VALID_SAFETY_MODES = ("none", "expert_fallback", "hierarchical", "filter", "strict_footprint", "safe_prefix")
 
 #: 轨迹级几何过滤要求的净空（米）。0 表示"只消除真实接触"；取正值即要求过滤后的
 #: 参考轨迹至少保留该净空，用余量吸收执行误差。
@@ -111,6 +115,8 @@ class ExperimentSpec:
             raise ValueError(f"未知 safety_mode：{self.safety_mode}")
         if self.trajectory_source in {"expert", "expert_replan"} and self.safety_mode != "none":
             raise ValueError("传统规划轨迹源不使用安全门禁/分层模式")
+        if self.safety_mode in ('strict_footprint', 'safe_prefix') and (self.bev_source != 'sensor' or self.executor != 'mpc_vehicle'):
+            raise ValueError('strict_footprint要求sensor/network/mpc_vehicle实际执行组合')
         if self.trajectory_source == "network" and self.executor == "ideal_path":
             return  # 理想执行口径只对网络轨迹有验证意义，但也允许专家参数化自检
         if self.trajectory_source in {"expert", "expert_replan"} and self.bev_source == "gt":
@@ -255,6 +261,9 @@ def _build_source(
     *,
     hierarchical_lookahead: float,
     filter_projector: SweptFootprintProjector | None = None,
+    strict_checker=None,
+    terminal=None,
+    control_horizon_seconds=None,
 ):
     """按 trajectory_source 与 safety_mode 构造轨迹源。"""
     if spec.trajectory_source == "expert":
@@ -263,6 +272,15 @@ def _build_source(
     if spec.trajectory_source == "expert_replan":
         return expert_source
     network_source = NetworkSource(pipeline, model)
+    if spec.safety_mode in ('strict_footprint', 'safe_prefix'):
+        if strict_checker is None:
+            raise ValueError('strict_footprint必须显式注入共享车体检查器')
+        if spec.safety_mode == 'safe_prefix':
+            return SafePrefixReferenceSource(network_source, expert_source,
+                FootprintTrajectorySafetyChecker(strict_checker), terminal=terminal,
+                min_duration_s=control_horizon_seconds)
+        return StrictFootprintSource(network_source, expert_source,
+                                     FootprintTrajectorySafetyChecker(strict_checker))
     if spec.safety_mode == "expert_fallback":
         return SafetyShieldSource(
             network_source,
@@ -355,6 +373,8 @@ def run_validation_experiment(
     spec.validate()
     if max_steps <= 0 or replan_every <= 0:
         raise ValueError("max_steps 与 replan_every 必须为正")
+    if spec.safety_mode in ('strict_footprint', 'safe_prefix') and consistency_hold_limit != 0:
+        raise ValueError('strict_footprint不允许被一致性迟滞包装，以免绕过完整参考守卫')
 
     data_source = Path(data_path).resolve()
     from dataset import DatasetGenerator
@@ -403,13 +423,26 @@ def run_validation_experiment(
             continue
         state = VehicleState.from_array(np.asarray(data["states"])[index])
         goal = restored.goal
-        planner, pipeline = _build_pipeline(spec, restored.task, vehicle)
+        terminal = TerminalChecker(restored.tol_pos, restored.tol_yaw)
+        if spec.safety_mode in ('strict_footprint', 'safe_prefix'):
+            planner, pipeline = build_task_components(restored.task, vehicle, model_config=loaded.model_config)
+            assert_pipeline_matches_contract(pipeline, loaded.model_config)
+        else:
+            planner, pipeline = _build_pipeline(spec, restored.task, vehicle)
+        strict_checker = (
+            RectangleFootprintCollisionChecker(
+                restored.task.scene.env, vehicle_length=vehicle.length, vehicle_width=vehicle.width,
+                collision_margin=vehicle.collision_margin, resolution=vehicle.collision_check_resolution)
+            if spec.safety_mode in ('strict_footprint', 'safe_prefix') else None
+        )
         source = _build_source(
             spec,
             planner,
             pipeline,
             loaded.model if loaded is not None else None,
             hierarchical_lookahead=hierarchical_lookahead,
+            strict_checker=strict_checker,
+            terminal=terminal, control_horizon_seconds=10*mpc_dt,
             filter_projector=(
                 build_filter_projector(
                     restored.task.scene.env,
@@ -436,11 +469,15 @@ def run_validation_experiment(
             collision_margin=0.0,
             resolution=vehicle.collision_check_resolution,
         )
-        mpc = MPCController(
+        vehicle_model = DifferentialDriveModel(**vehicle.vehicle_model_kwargs())
+        controller_class = TerminalCaptureMPCController if strict_checker is not None else MPCController
+        mpc = controller_class(
             dt=mpc_dt,
             horizon=10,
             seed=control_seed + index,
             **vehicle.mpc_kwargs(),
+            **({'footprint_checker': strict_checker, 'vehicle_model': vehicle_model, 'goal': goal, 'terminal': terminal}
+               if strict_checker is not None else {}),
         )
         executor = (
             IdealPathExecutor(
@@ -469,10 +506,10 @@ def run_validation_experiment(
             "experiment": spec.name,
         }
         engine = ClosedLoopEngine(
-            vehicle_model=DifferentialDriveModel(**vehicle.vehicle_model_kwargs()),
+            vehicle_model=vehicle_model,
             mpc=mpc,
             source=source,
-            terminal=TerminalChecker(restored.tol_pos, restored.tol_yaw),
+            terminal=terminal,
             env=restored.task.scene.env,
             replan_every=replan_every,
             max_steps=max_steps,
@@ -561,6 +598,14 @@ def run_validation_experiment(
         "episodes": [_episode_payload(bundle) for bundle in bundles],
         "reconstruct_failures": reconstruct_failures,
     }
+    if spec.safety_mode in ('strict_footprint', 'safe_prefix'):
+        report['safety_contract'] = {
+            'geometry_source': 'simulator_ground_truth', 'required_margin_m': vehicle.collision_margin,
+            'reference_and_control_share_checker': True,
+            'controller': 'TerminalCaptureMPCController', 'expert_fallback_allowed': True,
+            'reference_policy': spec.safety_mode,
+            'production_qualified': False, 'native_e5': False,
+        }
     if output_path is not None:
         atomic_write_json(Path(output_path).resolve(), report)
     return report
