@@ -222,6 +222,28 @@ LT20只读复核入口为`scripts/audit_s8_start_reference_search.py --source <�
 
 [原合格保护可行性审计](runs/diagnostics/stop-direction-feasibility-20261020-v2/summary.md)入口为`scripts/audit_stop_direction_feasibility.py --output <新的独立目录>`，只检查三个旧方向非负组合，不训练。总体条件有见证，但分组条件及两种原合格保护均有该方向族内的不相容证据；34相关测试通过。停止旧方向混权路线，该有限族结论不代表完整129维停止头无解。
 
+原生发出轨迹联合纠偏使用独立入口`scripts/train_emitted_output_joint.py`，按[LT34关口1/2计划](docs/long_tasks/LT-20261028-34-emitted-joint-gates.md)先验证固定训练八源教师，再决定是否拟合。新目标在自由解码中联合约束首停与对应位姿，默认Trainer及推理阈值不变。[正式教师复核](runs/verification/lt34-independent-review-20261028/review.md)严格6/8：八标签/完整参考合格且全部到达、无碰撞，但#860/#2315执行有6/13步余量侵入。关口1失败，已暂停拟合，先诊断监督与原MPC执行契约；原MPC契约下联合目标收益未检验，不扩大安全前缀或旧配方长训，联合训练候选的固定/滚动及125任务保持未执行。
+
+同八任务的只读[LT35三分支诊断](docs/long_tasks/LT-20261028-35-emitted-execution-diagnosis.md)已完成并[独立复核](runs/verification/lt35-independent-review-20261028/review.md)：教师8/8到达0碰撞，父网络固定首次参考7/8到达1碰撞，正常重规划4/8到达4碰撞；余量侵入分别19/43/101步。全八初始预测/前10步一致，122次预测及2185网络控制步独立复现。860/1720/2315丢失固定成功，1290首次网络参考已危险；1720教师与固定均严格安全而滚动碰撞，不能把失败全归教师不足。优先诊断更新参考与控制耦合，不加相同训练剂量；旧父模型诊断不放行LT34拟合或追认候选验收，不修改默认执行路径。
+
+[LT36可行CEM离线对照](docs/long_tasks/LT-20261029-36-feasible-cem-control.md)入口为`scripts/compare_feasible_cem.py`，显式实验子类在每代剔除完整H10危险候选，并独立检查均值/最终输出；默认控制器和旧冻结源码不变。固定/滚动原生参考不修补，无专家替换或终端接管；使用仿真GT几何及原0.2m余量，不能计作纯传感器/网络训练收益。[正式24回合复核](runs/verification/lt36-independent-review-20261029/review.md)完成：滚动4→6/8且旧4全保持，固定7→7/8但丢860换1290，教师8→7/8；全5834步/58340个H10转移零碰撞/余量。240预测和19保存状态CEM精确重放；48.8%控制调用超过100ms。局部滚动收益成立，完整候选因保持/教师/时延失败拒绝扩大，LT34拟合继续暂停。
+
+[LT37执行局限修正](docs/long_tasks/LT-20261029-37-runtime-refinement.md)入口为`scripts/compare_runtime_refinement.py`：批量安全检查配合独立的分布保护、候选择优、位姿进度和真实目标终端旋转开关，最终H10仍用原标量检查器验证。[正式30回合复核](runs/verification/lt37-independent-review-20261029/review.md)完成：滚动6→7/8且旧成功保持，教师7→8/8，但固定7→5/8丢1290/2315、860网络仍失败，组合拒绝扩大。全7466控制步/H10零碰撞/余量，299预测及两条fast完整执行等价通过，观测最大MPC调用86.264ms；时延门槛通过不代表整链路实时资格。终端单因素在1290从原起点544步恢复，progress单因素未恢复860教师；仅八训练任务/GT辅助，不解锁训练或部署。
+
+[LT38单变量修正](docs/long_tasks/LT-20261029-38-ungated-refinement.md)入口`scripts/compare_ungated_refinement.py`只撤销硬位姿进度门控，保留其余LT37 combined行为。[24回合正式复核](runs/verification/lt38-independent-review-20261029/review.md)完成：固定5→7/8恢复860/1290但2315仍失败，滚动保持7/8，教师8→6/8丢860/2315；5855步/H10零风险，256预测与父求解器重放一致，1次控制超100ms。组合拒绝扩大。9个保存零保持状态发现原标准下安全且低代价的移动H10，定位候选搜索遗漏；不是无安全动作或教师全不可用，未证明整回合恢复，不自动训练。
+
+[LT39全零运动补全](docs/long_tasks/LT-20261029-39-zero-motion-rescue.md)入口`scripts/compare_zero_hold_motion.py`仅在整段H10全零时额外验证8条固定直行/倒车候选，原完整安全且原cost严格下降才替换；原400随机候选、进度和安全标准保持，新增检查显式计时/计数。[正式独立复核](runs/verification/lt39-independent-review-20261029/review.md)通过：固定八训练任务的网络固定/滚动和教师均8/8，保留LT36—38全部旧成功，零碰撞/余量违规；24次实际补全、4135次完整控制核验和203份原始网络前向一致，控制最大74.639ms。仅允许准备下一项保持验证；网络权重未变、原生起点末点仅3/8联合达标，依赖仿真真值几何，不解锁训练或生产。
+
+[LT40保持验证](docs/long_tasks/LT-20261029-40-zero-motion-retention.md)入口`scripts/validate_zero_motion_retention.py`冻结既有22回退/8恢复/5残余/93原生成功的125任务并集，配对LT38父与LT39候选正常滚动，共250回合。[正式复核](runs/verification/lt40-independent-review-20261029/review.md)完成：102→104/125恢复292/296、父成功全保留、零风险；历史120成功仍缺18，原生93仅保90，另1次控制117.407ms，联合门槛拒绝。剩余21例均非零运动振荡、补全触发0，20例未进入位置阈值；停止扩大，转向参考/控制与重规划收敛诊断，训练/生产不解锁。
+
+[LT41收敛诊断](docs/long_tasks/LT-20261029-41-fixed-reference-diagnosis.md)入口`scripts/diagnose_fixed_reference.py`固定上述全部21失败，复用LT40滚动证据，仅新增21个原起点原生固定参考回合。[正式复核](runs/verification/lt41-independent-review-20261030/review.md)完成：首次预测及首10步一致，10个固定恢复，11个仍失败；其中5个实际跟到错误发出末点、6个原生参考余量不合格。原生末点仅1/21合格，坐标与停止选择缺口仍在；零实际风险，但固定有1次128.531ms。诊断须分流，不提供全局固定策略或固定/滚动拼接成绩，不改变LT40拒绝及训练/生产限制。
+
+[LT42再认证拟合](docs/long_tasks/LT-20261030-42-recertified-emitted-joint.md)已正式完成并[复核](runs/verification/lt42-independent-review-20261030/review.md)：LT39实验契约下8教师/32监督合格，固定双seed四臂共800更新及16检查点/512输入审计完整。最终control起点4/8、5/8及全部7/32、8/32，joint均5/8和16/32，静态改善但未过8/8及32/32门槛；两个joint各丢父1份旧合格沿程输入，实际末点23/32、22/32合格仍各有11份参考余量不安全。#860/#2315起点在合格目标点之前已有几何风险，不能只修停止。停止此具体配方/预算，转目标/梯度/表示与路径几何诊断，不加剂量或进入闭环；原MPC6/8失败、旧fit阻断和LT40拒绝保持。以上是静态输入验收，不是MPC到达/碰撞率。
+
+[LT43自由输出契约](docs/long_tasks/LT-20261030-43-native-output-contract.md)已完整执行并[独立复核](runs/verification/lt43-independent-review-20261030/review.md)：171源/82文件/24检查点/1200新更新及768保存输入核验通过，**AB双seed起点均从旧5/8退至1/8，全部仅16/32、15/32，拒绝候选并停止该配方**。A同样起点1/8；B减少参考几何风险，但仅增2/1份沿程输入、无新增起点成功且各丢1份旧合格输入，不能替代AB。四个共同丢失起点完整头仍有安全合格点却提前停止，困难起点又有停止窗口长期deferred；A内部多子项尚未唯一归因。未进入固定/滚动/125保持，无新增实际到达或执行碰撞指标；默认模型/MPC、原MPC门槛及旧拒绝结论保持，不追加剂量。
+
+[LT44停止验收一致性](docs/long_tasks/LT-20261031-44-accepted-native-stopping.md)已执行并[独立复核](runs/verification/lt44-independent-review-20261031/review.md)：175源/56文件/16检查点/800更新及512保存输入核验通过，**accept双seed仅2/8、1/8起点及16/32、14/32全部输入，候选拒绝，停止具体目标/预算**。gate起点同为2/8、1/8；合格输出零停止损失/梯度在正式模型中生效，但相对旧joint仍丢3/4个旧起点，#1975只单seed恢复，不能称稳定收益。早停、#1290晚停与#860/#2315前段余量侵入并存，固定坐标理想选停也仅6/8起点；不进入固定/滚动/125保持，不追加剂量，无新增实际到达/执行碰撞指标。原AB非停止目标、默认路径及旧拒绝保持。
+
 [完整129维检查](runs/diagnostics/stop-fullspace-extended-20261020-v1/results/agent-audit.md)及[LT13延长审计](docs/long_tasks/LT-20261020-13-stop-fullspace-feasibility.md)已完成独立复核：两无保护方向成立，两原合格保护仍4096迭代耗尽，无受保护方向见证，不直接训练。合法对偶上界与约6.60e−5的原首停索引解析保持区间已确认；其后有限损失/float32单步检查见下项，不再盲目加迭代，模型与标签未改。
 
 [单次有限步长验证](runs/diagnostics/stop-finite-step-20261020-v1/summary.md)已完成，入口`scripts/probe_stop_finite_step.py`只取解析上界的1/4：float32下原1144缓存开环合格全保留，八项损失约10⁻⁷下降，但全部2918缓存停点及8条原生predict都不变、无新增合格，故不训练/部署或扩大闭环。完整2400原生B1未复评，默认模型不变。
