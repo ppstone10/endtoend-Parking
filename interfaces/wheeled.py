@@ -55,3 +55,26 @@ class WheeledVehicleState:
         if array.shape != (5,):
             raise ValueError("轮式状态数组必须恰为(x,y,yaw,v,steering_angle)五维")
         return cls(*array)
+
+
+@dataclass(frozen=True)
+class WheeledTrajectory:
+    """绑定车型身份的世界系车体中心参考；不接受旧Trajectory隐式转换。"""
+
+    points: np.ndarray
+    dt: float
+    model_identity: str
+
+    def __post_init__(self) -> None:
+        dt = _finite_number(self.dt, "参考dt")
+        if dt <= 0:
+            raise ValueError("参考dt必须为正")
+        if (not isinstance(self.model_identity, str) or len(self.model_identity) != 64
+                or any(c not in "0123456789abcdef" for c in self.model_identity)):
+            raise ValueError("参考必须绑定完整轮式配置SHA256身份")
+        points = np.array(self.points, dtype=np.float64, copy=True)
+        if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0 or not np.isfinite(points).all():
+            raise ValueError("轮式参考必须是非空有限N×3车体中心位姿")
+        points.setflags(write=False)
+        object.__setattr__(self, "points", points)
+        object.__setattr__(self, "dt", dt)
