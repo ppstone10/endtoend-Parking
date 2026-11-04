@@ -143,9 +143,11 @@ def run_case(config, case, *, max_seconds=None):
                   geometry_source="simulator_ground_truth", initial_steering_assumption=0.,
                   dynamic_event_applied=False)
     try:
-        plan = planner.plan(start, restored.goal)
+        plan = planner.plan(start, restored.goal, requested_maneuver=case["maneuver"],
+                            minimum_requested_ratio=config["minimum_requested_ratio"])
     except WheeledPlanningError as exc:
         return {**record, "planned": False, "error": str(exc), "passed": False,
+                "candidate_failures": exc.candidate_failures,
                 "elapsed_seconds": perf_counter()-started}
     ratio = maneuver_ratio(plan.states, case["maneuver"], config["dt"])
     engine = build_wheeled_engine(model.config, dt=config["dt"], max_steps=config["max_steps"],

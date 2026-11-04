@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 import math
+from numbers import Real
 from time import perf_counter
 
 import numpy as np
@@ -14,6 +16,10 @@ from .reeds_shepp import reeds_shepp_paths
 
 class WheeledPlanningError(ValueError):
     """当前有限候选或预算内未生成合格参考，不代表全局无解。"""
+
+    def __init__(self, message, *, candidate_failures=None):
+        super().__init__(message)
+        self.candidate_failures = dict(candidate_failures or {})
 
 
 @dataclass(frozen=True)
@@ -45,40 +51,47 @@ class WheeledReedsSheppPlanner:
         count = (math.ceil(distance/(speed_limit*dt))+math.ceil(speed_limit/(c.max_acceleration*dt))
                  +math.ceil(speed_limit/(c.max_deceleration*dt))+1)
         if count > self.max_steps:
-            raise WheeledPlanningError("当前候选超过输出步数预算")
+            raise WheeledPlanningError("当前候选超过输出步数预算", candidate_failures={"step_budget": 1})
         indices = np.arange(1, count+1)
         envelope = np.minimum(np.minimum(c.max_acceleration*indices*dt,
                                           c.max_deceleration*(count-indices)*dt), speed_limit)
         available = float(envelope.sum()*dt)
         if available < distance-1e-12 or available <= 0:
-            raise WheeledPlanningError("离散速度包络未覆盖请求弧长")
+            raise WheeledPlanningError("离散速度包络未覆盖请求弧长", candidate_failures={"speed_profile": 1})
         return envelope*(distance/available)
 
-    def plan(self, start, goal):
+    def plan(self, start, goal, *, requested_maneuver=None, minimum_requested_ratio=.5):
+        if requested_maneuver not in (None, "forward", "reverse"):
+            raise ValueError("请求机动必须为forward/reverse或None")
+        if (isinstance(minimum_requested_ratio, bool) or not isinstance(minimum_requested_ratio, Real)
+                or not math.isfinite(minimum_requested_ratio) or not 0 <= minimum_requested_ratio <= 1):
+            raise ValueError("请求机动最小占比必须有限且位于[0,1]")
         if not isinstance(start, WheeledVehicleState):
             raise TypeError("轮式专家要求完整转角状态")
         self.model.yaw_rate(start)
         if not all(math.isfinite(v) for v in (goal.x, goal.y, goal.yaw)):
             raise ValueError("轮式专家目标必须有限")
         if not self.checker.pose_free(start):
-            raise WheeledPlanningError("起点车体碰撞或规划余量不合格")
+            raise WheeledPlanningError("起点车体碰撞或规划余量不合格", candidate_failures={"initial_collision": 1})
         target = WheeledVehicleState(goal.x, goal.y, goal.yaw)
         if not self.checker.pose_free(target):
-            raise WheeledPlanningError("目标车体碰撞或规划余量不合格")
+            raise WheeledPlanningError("目标车体碰撞或规划余量不合格", candidate_failures={"goal_collision": 1})
         deadline = perf_counter()+self.max_seconds
+        failures = Counter()
 
         def check_budget():
             if perf_counter() > deadline:
-                raise WheeledPlanningError("轮式专家时间预算耗尽")
+                raise WheeledPlanningError("轮式专家时间预算耗尽",
+                                           candidate_failures={**failures, "time_budget": 1})
 
         def append(states, controls, command):
             check_budget()
             if len(controls) >= self.max_steps:
-                raise WheeledPlanningError("当前候选超过输出步数预算")
+                raise WheeledPlanningError("当前候选超过输出步数预算", candidate_failures={"step_budget": 1})
             before = states[-1]
             after = self.model.step(before, command, self.dt)
             if not self.checker(before, after):
-                raise WheeledPlanningError("候选真实转移违反车体规划余量")
+                raise WheeledPlanningError("候选真实转移违反车体规划余量", candidate_failures={"geometry": 1})
             states.append(after)
             controls.append([command.v, command.steering_angle])
 
@@ -109,13 +122,25 @@ class WheeledReedsSheppPlanner:
                 end = states[-1]
                 yaw_error = abs(math.atan2(math.sin(end.yaw-goal.yaw), math.cos(end.yaw-goal.yaw)))
                 if math.hypot(end.x-goal.x, end.y-goal.y) > 1e-7 or yaw_error > 1e-7 or end.v != 0:
-                    raise WheeledPlanningError("真实模型终点未满足专家数值验收")
+                    raise WheeledPlanningError("真实模型终点未满足专家数值验收", candidate_failures={"terminal": 1})
                 array = np.asarray([state.to_array() for state in states])
+                if requested_maneuver is not None:
+                    speeds = array[1:, 3]
+                    requested = speeds > 0 if requested_maneuver == "forward" else speeds < 0
+                    total = float(np.abs(speeds).sum())
+                    ratio = float(np.abs(speeds[requested]).sum()/total) if total > 0 else 1.
+                    if ratio < minimum_requested_ratio:
+                        raise WheeledPlanningError("候选请求机动里程占比不足",
+                                                   candidate_failures={"requested_ratio": 1})
                 commands = np.asarray(controls, dtype=float).reshape(-1, 2)
                 array.setflags(write=False)
                 commands.setflags(write=False)
                 return WheeledExpertPlan(WheeledTrajectory(array[:, :3], self.dt, self.model.config.identity),
                                           array, commands, path.word.name)
             except WheeledPlanningError as exc:
+                if "time_budget" in exc.candidate_failures:
+                    raise
+                failures.update(exc.candidate_failures)
                 last_error = str(exc)
-        raise WheeledPlanningError(f"有限RS候选未通过：{last_error}")
+        raise WheeledPlanningError(f"有限RS候选未通过：{last_error}",
+                                   candidate_failures=failures or {"no_candidate": 1})

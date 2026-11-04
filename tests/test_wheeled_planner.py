@@ -3,6 +3,7 @@
 from dataclasses import replace
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from interfaces import GoalPose
 from interfaces.wheeled import WheeledControlCmd, WheeledVehicleState
 from planner.wheeled_expert import WheeledReedsSheppPlanner, WheeledPlanningError
 from planner.wheeled_safety import WheeledTransitionChecker
+from planner.reeds_shepp import ReedsSheppPath, REEDS_SHEPP_WORDS
 from sim import ParkingEnvironment, RectangleObstacle
 from sim.wheeled_config import load_wheeled_vehicle_config
 from sim.wheeled_vehicle import KinematicBicycleModel
@@ -60,6 +62,30 @@ class TestWheeledPlanner(unittest.TestCase):
         plan = self.planner.plan(WheeledVehicleState(0, 0, 0, .5, 0), goal)
         self.verify_plan(plan, goal)
         self.assertAlmostEqual(plan.states[1, 3], .4)
+
+    def test_requested_direction_continues_after_valid_wrong_direction_candidate(self):
+        start, goal = WheeledVehicleState(0, 0, 0), GoalPose(2, 0, 0)
+        radius = self.config.min_turning_radius
+        direct = ReedsSheppPath(("S",), (2.,), radius, REEDS_SHEPP_WORDS[0])
+        reverse_loop = ReedsSheppPath(("L", "S"), (-2*np.pi*radius, 2.), radius, REEDS_SHEPP_WORDS[1])
+        with patch("planner.wheeled_expert.reeds_shepp_paths", return_value=[direct, reverse_loop]):
+            old = self.planner.plan(start, goal)
+            self.assertTrue(np.all(old.states[:, 3] >= 0))
+            plan = self.planner.plan(start, goal, requested_maneuver="reverse")
+            self.verify_plan(plan, goal)
+            speeds = plan.states[1:, 3]
+            self.assertGreater(np.abs(speeds[speeds < 0]).sum()/np.abs(speeds).sum(), .5)
+            limited = WheeledReedsSheppPlanner(self.model, self.checker, max_candidates=1)
+            with self.assertRaises(WheeledPlanningError) as failed:
+                limited.plan(start, goal, requested_maneuver="reverse")
+            self.assertEqual(failed.exception.candidate_failures, {"requested_ratio": 1})
+
+    def test_requested_direction_and_ratio_validation(self):
+        start, goal = WheeledVehicleState(0, 0, 0), GoalPose(2, 0, 0)
+        for direction, ratio in (("sideways", .5), ("forward", -1), ("reverse", 1.1),
+                                 ("forward", float("nan")), ("forward", True)):
+            with self.subTest(direction=direction, ratio=ratio), self.assertRaises(ValueError):
+                self.planner.plan(start, goal, requested_maneuver=direction, minimum_requested_ratio=ratio)
 
     def test_collision_at_start_or_goal_and_budget_fail_explicitly(self):
         env = ParkingEnvironment(world_size=80, obstacles=[RectangleObstacle(-1, 1, -1, 1)])

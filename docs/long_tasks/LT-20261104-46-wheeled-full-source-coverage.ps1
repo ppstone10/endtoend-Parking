@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('All', 'Precheck', 'Run', 'Inspect')]
     [string]$Phase = 'All'
 )
@@ -16,7 +16,7 @@ try {
     $env:OMP_NUM_THREADS = '1'
     $env:MKL_NUM_THREADS = '1'
     $env:OPENBLAS_NUM_THREADS = '1'
-    & $coveragePython -X utf8 -c 'import platform,numpy; assert platform.python_version()=="3.12.13" and numpy.__version__=="2.5.2", "环境版本与冻结计划不一致"'
+    & $coveragePython -X utf8 -c "import platform,numpy; assert platform.python_version()=='3.12.13' and numpy.__version__=='2.5.2', '环境版本与冻结计划不一致'"
     if ($LASTEXITCODE -ne 0) { throw '环境检查失败' }
     if ((Get-FileHash -LiteralPath $coveragePrepared -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e319cf5bdfc830227b11ef5791f5f0024da4447b18536ef416ee43f76ac741b9') {
         throw 'prepared身份漂移；停止，不修改SHA绕过'

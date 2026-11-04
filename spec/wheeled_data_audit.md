@@ -41,6 +41,7 @@
 - 对每任务重新轮式规划，核终端、原请求机动距离占比至少50%、原目标容差，执行原600步上限，不放宽失败条件。
 - 原生轮式MPC加GT转移审查，保存预测误差、真实状态/控制与运行耗时；初态/实际转移由inspect重新审核。所有面板任务必须规划/机动/位姿到达和审计通过才放行下一阶段，否则停留本环节。
 - 规划候选失败只说明该算法与预算未找到解；实际安全停止或程序异常不算泊车成功。
+- 校准必须把源请求机动及既定最小占比传入专家选候选，仍由inspect独立重算占比；无符合请求的候选时明确规划失败并保留候选失败计数，不执行不符合请求的教师来冒充该机动监督。
 
 ### `WHEEL-DATA-004`：长任务及产物核验
 
@@ -65,10 +66,10 @@
 |---|---|---|---|---|---|
 | WHEEL-DATA-001 | 正反必要条件及原分母 | tests.test_wheeled_data；scripts/audit_wheeled_dataset.py | dataset/wheeled_audit.py | train2400/val300只读审核完成；float32量化及JSON回归通过 | ✅ |
 | WHEEL-DATA-002 | 冻结源/面板与身份拒绝 | tests.test_wheeled_data；scripts/calibrate_wheeled_tasks.py --phase precheck | verification/wheeled_calibration.py::prepare_config/precheck | 22任务/333文件冻结通过；改分母/文件漂移拒绝 | ✅ |
-| WHEEL-DATA-003 | 面板联合教师/执行结果 | LT45 v1及修复后v3 run | verification/wheeled_calibration.py::run_case | v1为19/22；停车预转轮修复后最终源码v3为22/22，原门槛不变 | ✅ |
-| WHEEL-DATA-004 | 产物与逐控制独立审核 | tests.test_wheeled_data；v3正式inspect | scripts/calibrate_wheeled_tasks.py::inspect_formal；inspect_case | v1负结果完整审核；v3 verified=true/cases=22/passed=22，状态/控制逐步重放及GT检查通过 | ✅ |
-| WHEEL-DATA-005 | 全源身份/分母冻结与负结果保留 | tests.test_wheeled_data；LT46全源prepare/precheck/run/inspect | verification/wheeled_calibration.py::prepare_config/precheck | 2700唯一源/顺序/缩分母/模式/test/恢复拒绝及全源precheck通过；正式全量待用户运行 | ⚠️ |
+| WHEEL-DATA-003 | 面板联合教师/执行结果 | LT45 v1/v3 run；276源定向验证 | verification/wheeled_calibration.py::run_case | LT45修复后22/22；LT46后机动选择修复在定向276中恢复48，原22状态/控制精确保持，原门槛不变 | ✅ |
+| WHEEL-DATA-004 | 产物与逐控制独立审核 | tests.test_wheeled_data；LT45/LT46正式inspect | scripts/calibrate_wheeled_tasks.py::inspect_formal；inspect_case | LT45 v3为22/22；LT46完整inspect verified=true/cases=2700/passed=2446，Agent核2702产物SHA及全部汇总，保留负结果 | ✅ |
+| WHEEL-DATA-005 | 全源身份/分母冻结与负结果保留 | tests.test_wheeled_data；LT46全源prepare/precheck/run/inspect | verification/wheeled_calibration.py::prepare_config/precheck | 全2700完整覆盖调查完成，2446通过/254不通过；只完成调查与定位，不代表全量教师就绪 | ✅ |
 
 ## 待人工确认
 
-- LT46全2700源调查待用户运行；真实矿卡参数仍未标定。22源面板通过不等于全源监督就绪。
+- LT46全量联合关口未通过，剩余候选覆盖仍需处理；真实矿卡参数未标定。完整负结果调查完成不等于全源监督就绪。

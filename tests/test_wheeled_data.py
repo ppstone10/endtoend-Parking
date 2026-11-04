@@ -16,6 +16,7 @@ from interfaces.wheeled import WheeledControlCmd, WheeledVehicleState
 from sim import ParkingEnvironment
 from sim.wheeled_config import load_wheeled_vehicle_config
 from sim.wheeled_vehicle import KinematicBicycleModel
+from planner.wheeled_expert import WheeledPlanningError
 from verification.wheeled_calibration import inspect_case, precheck, prepare_config, run_case, select_panel
 from scripts.calibrate_wheeled_tasks import inspect_formal, case_filename
 
@@ -115,6 +116,24 @@ class TestWheeledData(unittest.TestCase):
                 altered = {**config, field: value}
                 with self.assertRaisesRegex(ValueError, "语义"):
                     precheck(altered)
+
+    def test_calibration_forwards_maneuver_and_keeps_candidate_failure_counts(self):
+        config = dict(vehicle_path=str(VEHICLE), model_identity=self.vehicle.identity, dt=.1,
+                      max_steps=600, planner_max_seconds=3., case_max_seconds=120.,
+                      minimum_requested_ratio=.5, initial_steering_assumption=0.)
+        case = dict(index=0, task_id="synthetic", maneuver="reverse")
+        restored = SimpleNamespace(goal=GoalPose(2, 0, 0),
+                                   task=SimpleNamespace(scene=SimpleNamespace(env=ParkingEnvironment(world_size=80))))
+        start = WheeledVehicleState(0, 0, 0)
+        error = WheeledPlanningError("no matching candidate", candidate_failures={"requested_ratio": 2})
+        with patch("verification.wheeled_calibration.restore_case", return_value=(restored, start)), \
+                patch("verification.wheeled_calibration.WheeledReedsSheppPlanner.plan", side_effect=error) as plan:
+            record = run_case(config, case)
+            plan.assert_called_once_with(start, restored.goal, requested_maneuver="reverse",
+                                         minimum_requested_ratio=.5)
+            self.assertFalse(record["planned"])
+            self.assertEqual(record["candidate_failures"], {"requested_ratio": 2})
+            self.assertFalse(inspect_case(config, case, record))
 
     def test_full_selection_rejects_unknown_mode_test_and_recovery(self):
         with self.assertRaises(ValueError):

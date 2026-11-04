@@ -48,6 +48,12 @@
 - 专家参考接第2环节MPC，实际转移独立审查，报告位姿到达、几何检查状态、失败及预测一致性；固定少量任务，非正式主表。
 - 输入、参考和执行车型身份保持一致；未通过当前环节则不得生成正式训练集或扩大评测。
 
+### `WHEEL-PLAN-005`：指定机动候选选择与失败解释
+
+- plan可显式接收forward/reverse及有限的[0,1]最小里程占比（默认0.5）；省略请求时保留原首条合法候选行为。非法请求/阈值在发出控制前拒绝。
+- 有请求时按完整真实模型状态（含必要刹停前缀）核算该方向里程占比。不合格候选应继续尝试原候选预算内的后续候选，不能把它当合格教师返回，也不能放宽目标/几何/步数/时间限制。
+- 有限候选耗尽时保留候选首次失败计数（机动占比、几何、步数、终端等），而非仅以最后错误暗示唯一根因。时间预算单独标明，不能把未检查候选称已穷举。失败计数为候选层信息，不是每条路径全部潜在违规、任务互斥原因或全局不可解证明。
+
 ## 数据、接口与迁移
 
 - 新规划器独立模块，复用原RS函数及矩形碰撞检查，原Hybrid A*/profile/终端控制不修改。
@@ -63,6 +69,7 @@
 | WHEEL-PLAN-002 | 中间扫掠碰撞/弓高/非轮式拒绝 | tests.test_wheeled_planner | planner/wheeled_safety.py::WheeledTransitionChecker | 自由端点中间碰撞、非法纯旋转、身份/dt拒绝通过 | ✅ |
 | WHEEL-PLAN-003 | 有界失败与无原地捷径 | tests.test_wheeled_planner | WheeledReedsSheppPlanner.plan | 步数预算/墙体隔断失败明确；无旧终端接管 | ✅ |
 | WHEEL-PLAN-004 | 专家+MPC+独立转移审查短闭环 | tests.test_wheeled_planner；scripts/run_wheeled.py --mode expert --case arc | experiments/wheeled_evaluation.py；runtime/wheeled_execution.py | 三例短测通过；转弯187步教师/177步到达，GT检查、预测误差0 | ✅ |
+| WHEEL-PLAN-005 | 请求选择/预算/错误解释 | tests.test_wheeled_planner；276源定向验证 | WheeledReedsSheppPlanner.plan | 指定机动继续选候选、候选数不扩张/非法输入拒绝通过；恢复48，22原成功精确保持；剩206明确失败 | ✅ |
 
 ## 待人工确认
 

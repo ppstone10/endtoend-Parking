@@ -4,7 +4,7 @@
 
 ## 环境要求
 
-独立轮式模型、MPC和有限RS专家已通过基础短测及固定22源任务联合校准，默认闭环仍为履带版本；当前停在全源覆盖调查/数据迁移，新配置为研究假设，尚无轮式网络训练结果。入口见[分环节状态](docs/wheeled_migration_status.md)；[LT46计划](docs/long_tasks/LT-20261104-46-wheeled-full-source-coverage.md)及同名PowerShell脚本已准备，全2700源任务预计1.5～3小时，由用户运行；短测试由Agent完成。
+独立轮式模型、MPC和有限RS专家已通过基础短测及固定22源任务联合校准，默认闭环仍为履带版本；[LT46全2700源验收](docs/reviews/2026-11-04-wheeled-full-coverage-acceptance.md)完整完成但联合仅2446通过，当前留在环节4修复指定机动候选选择及定位有限规划覆盖。新配置为研究假设，尚无轮式训练数据/网络结果；入口见[分环节状态](docs/wheeled_migration_status.md)。短测试由Agent执行，预计小时级任务另行交付运行文件。
 
 - 本项目的开发、测试、运行、装包一律使用 conda 虚拟环境 `endtoend-parking`（Python 3.12，位于 `D:\conda\envs\endtoend-parking`），禁止使用本地环境 `C:\Python314`。
 - numpy、PyTorch（CPU 版即可）；配置化训练额外使用 PyYAML 与 matplotlib
