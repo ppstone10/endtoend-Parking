@@ -41,7 +41,9 @@ def select_panel(metadata):
     return sorted(chosen.values())
 
 
-def prepare_config(sources, vehicle_path):
+def prepare_config(sources, vehicle_path, *, case_selection="scene_maneuver_first"):
+    if case_selection not in {"scene_maneuver_first", "all_train_val"}:
+        raise ValueError("未知校准源任务选择方式")
     wheel = load_wheeled_vehicle_config(vehicle_path)
     frozen, cases, all_ids, splits = {}, [], set(), set()
     for source in sources:
@@ -62,7 +64,9 @@ def prepare_config(sources, vehicle_path):
             raise ValueError("新旧外廓/余量不同，不能沿用原任务几何身份")
         if not np.all(data["states"][:, 3:5] == 0):
             raise ValueError("源初态非静止，不能从旧omega推定轮式转角")
-        for index in select_panel(data["task_meta"]):
+        panel = select_panel(data["task_meta"])  # 两种选择均拒绝恢复样本。
+        indices = range(len(data["task_meta"])) if case_selection == "all_train_val" else panel
+        for index in indices:
             item = data["task_meta"][index]
             cases.append(dict(source=str(source), split=split, index=index, task_id=item["task_id"],
                               scene=item["scene_name"], maneuver=item["difficulty"]["maneuver"]))
@@ -76,12 +80,16 @@ def prepare_config(sources, vehicle_path):
             frozen[str(path.resolve())] = sha256_file(path)
     vehicle_path = Path(vehicle_path).resolve()
     frozen[str(vehicle_path)] = sha256_file(vehicle_path)
-    return dict(schema="wheeled_teacher_calibration_v1", vehicle_path=str(vehicle_path),
+    config = dict(schema="wheeled_teacher_calibration_v1", vehicle_path=str(vehicle_path),
                 model_identity=wheel.identity, cases=cases, frozen_files=frozen, dt=.1,
                 max_steps=600, planner_max_seconds=3., case_max_seconds=120.,
                 controller=dict(horizon=8, population=8, iterations=1, seed=7),
                 initial_steering_assumption=0., minimum_requested_ratio=.5,
                 training_exported=False, production_qualified=False)
+    # 历史prepared无字段即固定分层面板，保持其语义及逐字典重建兼容。
+    if case_selection == "all_train_val":
+        config["case_selection"] = case_selection
+    return config
 
 
 def precheck(config):
@@ -95,7 +103,8 @@ def precheck(config):
         raise ValueError("轮式车型身份漂移")
     # 独立重建面板与参数，不只依赖用户可改写的哈希字典。
     sources = list(dict.fromkeys(case["source"] for case in config["cases"]))
-    rebuilt = prepare_config(sources, config["vehicle_path"])
+    rebuilt = prepare_config(sources, config["vehicle_path"],
+                             case_selection=config.get("case_selection", "scene_maneuver_first"))
     if rebuilt != config:
         raise ValueError("校准配置语义或分母被修改")
     return wheel

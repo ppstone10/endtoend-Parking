@@ -90,6 +90,35 @@ class TestWheeledExecution(unittest.TestCase):
         self.assertEqual(self.mpc.compute(ref, state), first)
         np.testing.assert_array_equal(self.mpc.last_prediction, prediction)
 
+    def test_stopped_reference_presteers_before_motion_beyond_horizon(self):
+        for initial_delta, target_delta, speed in (
+                (0., config().max_steering_angle, .5),
+                (config().max_steering_angle, -config().max_steering_angle, -.5)):
+            with self.subTest(initial_delta=initial_delta, speed=speed):
+                state = WheeledVehicleState(0, 0, 0, 0, initial_delta)
+                states = [state]
+                for command in ([WheeledControlCmd(0, target_delta)]*22 +
+                                [WheeledControlCmd(speed, target_delta)]*15):
+                    states.append(self.model.step(states[-1], command, .1))
+                ref = WheeledTrajectory(np.array([s.to_array()[:3] for s in states]),
+                                        .1, self.model.config.identity)
+                self.mpc.reset()
+                command = self.mpc.compute(ref, state)
+                self.assertEqual(command.v, 0.)
+                self.assertAlmostEqual(command.steering_angle, target_delta, places=9)
+                advanced = self.model.step(state, command, .1)
+                np.testing.assert_array_equal(advanced.to_array()[:3], state.to_array()[:3])
+                self.assertAlmostEqual(abs(advanced.steering_angle-initial_delta),
+                                       config().max_steering_rate*.1)
+
+    def test_all_stationary_reference_keeps_current_steering(self):
+        state = WheeledVehicleState(0, 0, 0, 0, .2)
+        for count in (1, 20):
+            with self.subTest(count=count):
+                self.mpc.reset()
+                ref = WheeledTrajectory(np.zeros((count, 3)), .1, self.model.config.identity)
+                self.assertEqual(self.mpc.compute(ref, state), WheeledControlCmd(0, .2))
+
     def test_reference_resampling_keeps_dt_and_unwraps_heading(self):
         ref = WheeledTrajectory([[0, 0, 3.1], [.2, 0, -3.1]], .2, self.model.config.identity)
         points = self.mpc.align_reference(ref)

@@ -35,6 +35,7 @@ class WheeledMPCController:
         self._rng = np.random.default_rng(self.seed)
         self._trajectory = None
         self._aligned = None
+        self._reference_controls = None
         self._index = None
         self._warm = None
         self.last_prediction = None
@@ -85,10 +86,9 @@ class WheeledMPCController:
         return cost, predicted
 
     def _feedforward(self, poses, state):
-        """从后轴相邻参考推导有界几何候选；并不宣称它已满足执行变化率。"""
+        """由后轴几何推导候选；停车时预转下一移动段所需转角，变化率由模型审核。"""
         rear = np.asarray([self.model.center_to_rear_pose(p) for p in poses])
         controls = []
-        previous_delta = state.steering_angle
         for before, after in zip(rear[:-1], rear[1:]):
             turn = math.atan2(math.sin(after[2]-before[2]), math.cos(after[2]-before[2]))
             mid = before[2]+turn/2
@@ -96,9 +96,17 @@ class WheeledMPCController:
             sinc = 1 if abs(turn) < 1e-10 else math.sin(turn/2)/(turn/2)
             distance = chord/sinc
             speed = distance/self.dt
-            delta = math.atan(self.model.config.wheelbase*turn/distance) if abs(distance) > 1e-10 else previous_delta
+            delta = math.atan(self.model.config.wheelbase*turn/distance) if abs(distance) > 1e-10 else None
             controls.append((speed, delta))
-            previous_delta = delta
+        # 位姿不变不能反推转角；从同一条完整参考预览下一次移动，避免短窗口错过转轮时序。
+        next_delta = next((delta for _, delta in reversed(controls) if delta is not None),
+                          state.steering_angle)
+        for index in range(len(controls)-1, -1, -1):
+            speed, delta = controls[index]
+            if delta is not None:
+                next_delta = delta
+            controls[index] = (speed, next_delta)
+        controls.append((0., controls[-1][1] if controls else state.steering_angle))
         return self._bounded(np.asarray(controls))
 
     def _bounded(self, controls):
@@ -118,13 +126,14 @@ class WheeledMPCController:
         if trajectory is not self._trajectory:
             self._aligned = self.align_reference(trajectory)
             self._trajectory = trajectory
+            self._reference_controls = self._feedforward(self._aligned, state)
             self._index = int(np.argmin(np.square(self._aligned[:, :2]-[state.x, state.y]).sum(axis=1)))
         else:
             self._index = min(self._index+1, len(self._aligned)-1)
         indices = np.minimum(np.arange(self._index, self._index+self.horizon+1), len(self._aligned)-1)
         poses = self._aligned[indices]
         reference = poses[1:]
-        feedforward = self._feedforward(poses, state)
+        feedforward = self._reference_controls[indices[:-1]].copy()
         warm = feedforward if self._warm is None else np.vstack((self._warm[1:], self._warm[-1:]))
         hold = np.tile([0., state.steering_angle], (self.horizon, 1))
         best_cost, best_controls, best_prediction = math.inf, None, None

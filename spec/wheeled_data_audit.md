@@ -15,7 +15,7 @@
 ## 非目标
 
 - 静态必要条件通过不等于标签可直接复用；未知初始转角、停留段转角、碰撞与实际闭环仍需审核。
-- 不触碰保留test，不混入恢复数据，不训练，不自动运行正式批校准或下一阶段。
+- 不触碰保留test，不混入恢复数据，不训练。预计小时级任务由用户运行，短测试与短批量验证由Agent执行。
 
 ## 边界与约束
 
@@ -44,8 +44,14 @@
 
 ### `WHEEL-DATA-004`：长任务及产物核验
 
-- 正式run由用户运行，输出禁止覆盖，提供prepare/precheck/run/inspect与日志/退出记录。不存在缺失回合时才称complete；质量失败仍可形成完整负结果。
+- 预计小时级正式run由用户运行，短批量验证由Agent执行；输出禁止覆盖，提供prepare/precheck/run/inspect与日志/退出记录。不存在缺失回合时才称complete；质量失败仍可形成完整负结果。
 - 配置与逐例文件SHA绑定；inspect核分母、模型、逐控制重放与GT余量、终端及机动门槛，不依赖单个汇总数字；缺失/漂移拒绝，未知异常使作业显式失败。
+
+### `WHEEL-DATA-005`：全训练/验证源覆盖调查
+
+- 22面板联合关口通过后，prepare允许显式选择`all_train_val`，按原split与源索引顺序冻结全部训练/验证任务；默认仍为`scene_maneuver_first`。无选择字段的历史prepared保留原面板语义，不能静默扩大或缩小。
+- 同一模型、源几何、目标、各车位容差、600步及原控制/规划预算保持；失败不得删样本或替换任务。precheck必须重建选择方式和完整分母，test/恢复数据仍拒绝。
+- 输出仍仅供专家覆盖与必要重建决策，不是训练集或合格样本白名单。全量未核验或存在失败时不得宣称全量教师就绪，后续按原因定位再确定数据契约。
 
 ## 数据、接口与迁移
 
@@ -59,9 +65,10 @@
 |---|---|---|---|---|---|
 | WHEEL-DATA-001 | 正反必要条件及原分母 | tests.test_wheeled_data；scripts/audit_wheeled_dataset.py | dataset/wheeled_audit.py | train2400/val300只读审核完成；float32量化及JSON回归通过 | ✅ |
 | WHEEL-DATA-002 | 冻结源/面板与身份拒绝 | tests.test_wheeled_data；scripts/calibrate_wheeled_tasks.py --phase precheck | verification/wheeled_calibration.py::prepare_config/precheck | 22任务/333文件冻结通过；改分母/文件漂移拒绝 | ✅ |
-| WHEEL-DATA-003 | 面板联合教师/执行结果 | 用户正式run，LT-20261104-45 | verification/wheeled_calibration.py::run_case | 真实首例短检通过，完整22正式任务未运行 | ⏳ |
-| WHEEL-DATA-004 | 产物与逐控制独立审核 | tests.test_wheeled_data；用户正式inspect | scripts/calibrate_wheeled_tasks.py::inspect_formal；inspect_case | 状态/控制篡改、缺产物与负结果核验测试通过；正式inspect待运行 | ⚠️ |
+| WHEEL-DATA-003 | 面板联合教师/执行结果 | LT45 v1及修复后v3 run | verification/wheeled_calibration.py::run_case | v1为19/22；停车预转轮修复后最终源码v3为22/22，原门槛不变 | ✅ |
+| WHEEL-DATA-004 | 产物与逐控制独立审核 | tests.test_wheeled_data；v3正式inspect | scripts/calibrate_wheeled_tasks.py::inspect_formal；inspect_case | v1负结果完整审核；v3 verified=true/cases=22/passed=22，状态/控制逐步重放及GT检查通过 | ✅ |
+| WHEEL-DATA-005 | 全源身份/分母冻结与负结果保留 | tests.test_wheeled_data；LT46全源prepare/precheck/run/inspect | verification/wheeled_calibration.py::prepare_config/precheck | 2700唯一源/顺序/缩分母/模式/test/恢复拒绝及全源precheck通过；正式全量待用户运行 | ⚠️ |
 
 ## 待人工确认
 
-- 正式校准待用户运行；真实矿卡参数仍未标定。现有RS有限候选覆盖是否足够生成新监督，是本次校准要回答的问题。
+- LT46全2700源调查待用户运行；真实矿卡参数仍未标定。22源面板通过不等于全源监督就绪。

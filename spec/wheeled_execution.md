@@ -39,6 +39,7 @@
 
 - CEM保留原思路，比较采样、均值、移位热启动、几何前馈和停车候选，沿用同一跟踪代价；只选择实际计算过的有限代价结果。
 - 参考进度按控制时间推进，新参考重新初始化；reset同时恢复随机种子和控制上下文。短测覆盖直线、倒车、转弯以及定位偏差，达到既定位置/航向门槛。
+- 停车位姿段不唯一确定转角。几何前馈应从同一条已发出参考的后续移动曲率确定停车预转轮候选，允许查看短预测窗口之外的该条参考；末尾无后续移动时保持最近移动曲率（全静止参考保持当前转角）。所有候选仍经模型限速率与实际代价审核，不能读取专家控制/隐含转角标签。
 
 ### `WHEEL-EXEC-004`：独立闭环、失败与记录
 
@@ -56,9 +57,9 @@
 
 | Spec ID | 验收 | 测试或人工入口 | 实现符号 | 实际验证 | 状态 |
 |---|---|---|---|---|---|
-| WHEEL-EXEC-001 | 参考身份/类型/dt及重采样 | tests.test_wheeled_execution | interfaces.wheeled.WheeledTrajectory；WheeledMPCController.align_reference | 聚合88项通过，含类型/身份/时间与角度重采样 | ✅ |
+| WHEEL-EXEC-001 | 参考身份/类型/dt及重采样 | tests.test_wheeled_execution | interfaces.wheeled.WheeledTrajectory；WheeledMPCController.align_reference | 聚合92项通过，含类型/身份/时间与角度重采样 | ✅ |
 | WHEEL-EXEC-002 | 完整预测/执行一致 | tests.test_wheeled_execution | WheeledMPCController.rollout；WheeledExecutor.propose | 完整序列逐步一致、实际首步误差0；新旧对象拒绝 | ✅ |
-| WHEEL-EXEC-003 | 确定性与短跟踪 | tests.test_wheeled_execution；scripts/run_wheeled.py --mode tracking | controller/wheeled_mpc.py | reset确定性、偏差/直线/倒车/弯曲短测通过 | ✅ |
+| WHEEL-EXEC-003 | 确定性与短跟踪 | tests.test_wheeled_execution；scripts/run_wheeled.py --mode tracking | controller/wheeled_mpc.py | reset、偏差/直线/倒车/弯曲及长停车预转轮回归通过；LT45修复后22/22 | ✅ |
 | WHEEL-EXEC-004 | 闭环失败、拦截与结果 | tests.test_wheeled_execution | runtime/wheeled_execution.py；experiments/wheeled_evaluation.py | 规划失败/异常/转移拦截/资源预算/原容差传递通过 | ✅ |
 
 ## 待人工确认

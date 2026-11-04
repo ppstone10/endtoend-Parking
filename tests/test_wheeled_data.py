@@ -99,6 +99,38 @@ class TestWheeledData(unittest.TestCase):
             with self.assertRaises(ValueError):
                 inspect_case(config, case, altered)
 
+    def test_full_selection_preserves_every_source_index_and_rejects_shrinking(self):
+        sources = [ROOT/f"data/task_dataset/tracked_pivot_v8_3000/{s}.npz" for s in ("train", "val")]
+        config = prepare_config(sources, VEHICLE, case_selection="all_train_val")
+        self.assertEqual(config["case_selection"], "all_train_val")
+        self.assertEqual(len(config["cases"]), 2700)
+        for split, count in (("train", 2400), ("val", 300)):
+            self.assertEqual([case["index"] for case in config["cases"] if case["split"] == split],
+                             list(range(count)))
+        self.assertEqual(len({case["task_id"] for case in config["cases"]}), 2700)
+        self.assertEqual(precheck(config).identity, self.vehicle.identity)
+        for field, value in (("cases", config["cases"][:-1]),
+                             ("case_selection", "scene_maneuver_first")):
+            with self.subTest(field=field):
+                altered = {**config, field: value}
+                with self.assertRaisesRegex(ValueError, "语义"):
+                    precheck(altered)
+
+    def test_full_selection_rejects_unknown_mode_test_and_recovery(self):
+        with self.assertRaises(ValueError):
+            prepare_config([], VEHICLE, case_selection="arbitrary_successes")
+        with self.assertRaisesRegex(ValueError, "train/val"):
+            prepare_config([ROOT/"test.npz"], VEHICLE, case_selection="all_train_val")
+        data = dict(task_meta=[dict(task_id="r", scene_name="S1", difficulty=dict(maneuver="forward"),
+                                   recovery={})], states=np.zeros((1, 5)))
+        manifest = json.dumps(dict(vehicle_model=dict(name="legacy", length=6, width=3,
+                                                     collision_margin=.2, max_v=2., max_omega=1.)))
+        with patch("verification.wheeled_calibration.load_legacy_source", return_value=data), \
+                patch("verification.wheeled_calibration.load_wheeled_vehicle_config", return_value=self.vehicle), \
+                patch.object(Path, "read_text", return_value=manifest):
+            with self.assertRaisesRegex(ValueError, "恢复"):
+                prepare_config([ROOT/"train.npz"], VEHICLE, case_selection="all_train_val")
+
     def test_formal_inspection_requires_every_artifact_and_recomputes_gate(self):
         cases = [dict(split="train", index=0), dict(split="val", index=1)]
         config = dict(schema="wheeled_teacher_calibration_v1", cases=cases)

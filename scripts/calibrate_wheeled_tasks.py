@@ -91,16 +91,21 @@ def main():
     parser.add_argument("--output")
     parser.add_argument("--source", action="append")
     parser.add_argument("--vehicle", default="configs/vehicles/wheeled_research_v1.json")
+    parser.add_argument("--case-selection", choices=("scene_maneuver_first", "all_train_val"),
+                        help="仅prepare可用；默认分层22任务，all_train_val冻结全部训练/验证源")
     args = parser.parse_args()
     if args.phase == "prepare":
         if not args.output:
             parser.error("prepare要求--output新配置文件")
         sources = args.source or [f"data/task_dataset/tracked_pivot_v8_3000/{split}.npz" for split in ("train", "val")]
-        config = prepare_config(sources, args.vehicle)
+        config = prepare_config(sources, args.vehicle,
+                                case_selection=args.case_selection or "scene_maneuver_first")
         write_new(args.output, config)
         print(json.dumps(dict(prepared=str(Path(args.output).resolve()), sha256=sha256_file(args.output),
                               cases=len(config["cases"]), frozen_files=len(config["frozen_files"])), ensure_ascii=False))
         return
+    if args.case_selection is not None:
+        parser.error("选择方式只在prepare冻结；后续阶段禁止改面板")
     if not args.prepared:
         parser.error("本阶段要求--prepared")
     config = load_prepared(args.prepared)
