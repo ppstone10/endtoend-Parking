@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "motion_model": "kinematic_bicycle",
+  "pose_reference": "body_center",
+  "speed_reference": "rear_axle_longitudinal",
+  "actuation_model": "sampled_slew_zoh",
+  "parameters": {
+    "name": "wheeled_research",
+    "model_version": "bicycle_research_v1",
+    "length": 6.0,
+    "width": 3.0,
+    "wheelbase": 3.6,
+    "front_overhang": 1.2,
+    "rear_overhang": 1.2,
+    "max_forward_speed": 2.0,
+    "max_reverse_speed": 1.0,
+    "max_steering_angle": 0.5235987755982988,
+    "max_steering_rate": 0.5235987755982988,
+    "max_acceleration": 0.5,
+    "max_deceleration": 1.0,
+    "collision_margin": 0.2,
+    "parameter_source": "research_assumption",
+    "parameter_notes": "全部为用于轮式基础解析验证的研究假设，尺寸沿用6×3m实验尺度；轴距、前后悬、转向与速度响应尚无真实车型标定依据，不得据此宣称真实矿卡适用性。"
+  }
+}

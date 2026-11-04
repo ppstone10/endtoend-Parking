@@ -4,6 +4,7 @@
 
 | 模块 | 目录 | 职责 |
 |---|---|---|
+| 轮式基础（独立环节1） | `interfaces/wheeled.py`、`sim/wheeled_config.py`、`sim/wheeled_vehicle.py` | 显式速度/转角指令与车体中心状态；专用版本配置绑定模型/参考点/离散执行身份；无隐含状态的单轨模型按采样限速限转向及恒曲率解析积分推进。直接模块导入，旧包根导出、配置与默认闭环不变；MPC/规划接入尚未实施，详见`spec/wheeled_vehicle.md` |
 | 实际输出终点与可选保持训练 | `metrics/emitted_terminal.py`、`prediction_analysis.py`、`scripts/analyze_predictions.py`；`model/terminal_hold.py`与`training/trainer.py` | 指标层按原生截断检查真实输出末点/联合目标点并保留真实容差分母，CLI导出全部逐样本记录；模型包拥有专家末位姿补齐与样本等权后缀损失，Trainer仅在terminal_hold_weight>0时应用一致teacher输入，默认0保持旧行为，跨策略优化器恢复拒绝。静态诊断不授予闭环资格；生产参考扫掠/控制器保持原所有权 |
 | 相机target版本迁移 | `verification/surround_rebuild.py`、`scripts/repair_camera_targets.py` | 在新目录仅替换target并独立核验其他数组/通道；显式原任务归档与manifest拥有恢复身份权威，source_dataset_index/source_task_id关联原任务机动，恢复difficulty.maneuver保持监督语义。解析器仅在内存中解释身份，原公共复原器继续严格校验；来源/代码/产物及谱系登记SHA，不删帧、不去重、不放宽坐标检查 |
 | 生产分层验证v1（冻结） | `experiments/component_verification.py`、`component_capture.py`、`component_analysis.py`与`scripts/verify_closed_loop_components.py` | 分别拥有统一结果/准入、原生E5全程只读观察、生产组件独立重放、身份/预算编排。三个旧evaluate入口保持v1复现；历史诊断显式legacy。旧137源不因修正版迁移而改写；4个初态类型误报通过v2纠正，正式300/609旧产物只读 |
@@ -130,13 +131,14 @@ schema v2 NPZ + manifest + deployment checkpoint → 闭环评测编排
 - 传感器帧：`LiDARFrame`（N×4 `[x,y,z,intensity]` 点云）、`CameraFrame`（同步`CameraView`集合，各自图像/内参/yaw/height/pitch；旧image字段仅为预览；无views的旧单帧按单前视处理）。当前模拟相机共用车体中心上方安装点，不宣称已支持任意六自由度外参。
 - 环境表示：`BEVConfig`（分辨率、前后左右范围与确定栅格形状）和 `BEVTensor`（`[C,H,W]`，通道语义：障碍物占据、高度、点云密度、目标区域、车辆轮廓）。
 - 运动状态：`VehicleState`（`[x,y,yaw,v,omega]`）。
+- 独立轮式基础：`interfaces.wheeled.WheeledVehicleState`为`[x,y,yaw,v,steering_angle]`，位姿为车体中心、v为后轴纵向速度；`WheeledControlCmd(v,steering_angle)`使用转角而非omega。数组必须连同轮式配置身份使用，不能因维度相同隐式转换旧状态；尚未接入默认运行时。
 - 目标位姿：`GoalPose`（`[x_goal,y_goal,yaw_goal]`）。
 - 轨迹：`Trajectory`（未来 N 个局部轨迹点 `[x_i,y_i,yaw_i]`）。
 - 控制指令：`ControlCmd`（`[v_cmd, omega_cmd]`）。
 
 ## 不变量
 
-- 网络输入输出契约在三个阶段保持不变；迁移只替换传感器来源和底盘执行接口。
+- 网络张量形式优先复用；跨平台迁移仍须核对传感器、运动模型、控制、参考点和数据/检查点身份。轮式基础模块不自动进入旧闭环，不能只替换车辆step而继续使用差速MPC预测。
 - 坐标统一使用车辆中心局部坐标系。
 - 专家验收图的数值局部系为前方 `x`、车体左方 `y`、正 `yaw` 为车体左转；画面水平轴反向显示数值 `y`，使数值正 Left 在画面上仍为左，不得直接按屏幕右正方向绘制。
 - `interfaces/` 不依赖任何仿真、网络或硬件实现，反向依赖。

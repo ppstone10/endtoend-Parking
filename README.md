@@ -4,6 +4,8 @@
 
 ## 环境要求
 
+轮式迁移已完成独立基础模型（环节1），默认闭环仍为履带版本；新配置是研究假设，尚无轮式MPC或训练结果。显式调用方式及后续顺序见[分环节状态](docs/wheeled_migration_status.md)与[轮式契约](spec/wheeled_vehicle.md)。
+
 - 本项目的开发、测试、运行、装包一律使用 conda 虚拟环境 `endtoend-parking`（Python 3.12，位于 `D:\conda\envs\endtoend-parking`），禁止使用本地环境 `C:\Python314`。
 - numpy、PyTorch（CPU 版即可）；配置化训练额外使用 PyYAML 与 matplotlib
 - 测试使用标准库 `unittest`，无需额外安装
